@@ -5,6 +5,21 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added / Fixed (Phase 18 — full outer perimeter + 45° diagonal entry + 45° diagonal hatch)
+- **Full outer-boundary trace**: outside-in archimedean spiral now opens with a
+  complete closed lap of the outermost ring before stepping inward, guaranteeing
+  full perimeter coverage on every even layer.
+- **45° diagonal entry segment**: after the outer lap, a 3 mm bridging segment
+  exits the perimeter seam at ~45° (bisector of ring tangent and inward normal)
+  and lands on ring-1, replacing the previous abrupt radial step.
+- **45° Diagonal Hatch** infill pattern: new option in the infill dropdown.
+  Uses `oriented_serpentine` at +45° on even layers and −45° on odd layers for
+  balanced cross-ply coverage.
+- **Seam-trim ramp fix** (triangle and other narrow shapes): passes the previous
+  layer's endpoint as `seam_hint` to inside-out `archimedean_path`, aligning the
+  innermost-ring phase anchor with the outside-in seam so the layer-to-layer
+  ramp trim cuts diverge correctly and the ≤30° ramp limit is always met.
+
 ### Fixed (Phase 12 — Fermat 2+ islands ring-arc fix)
 - **Fermat connector no longer crosses printed rings** in non-convex shapes with
   2+ simultaneously-open child branches.  Root cause: the straight connector

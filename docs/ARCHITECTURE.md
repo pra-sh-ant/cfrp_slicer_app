@@ -1,6 +1,8 @@
 # Architecture
 
-Status: **Phase 12** (Fermat 2+ islands ring-arc fix; prior: About dialog +
+Status: **Phase 18** (full outer-perimeter lap + 45° diagonal entry + 45° Diagonal
+Hatch infill + seam-trim ramp fix; prior: smooth archimedean transitions, 3D viewer
+presets, track-gap coverage, L-Bracket removed, Fermat ring-arc fix, About dialog +
 CSV export, keyboard shortcuts, cancel + geometry persistence, print stats,
 recent files, layer-height clamp, Fermat seam phase-shift, spiral Z, Torus
 removed, Conical Dome promoted, PySide6 GUI, parameter save/load, packaging).
@@ -102,7 +104,7 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
 
 ## 6. Known issues
 
-*(No open slicer bugs — all known issues resolved through Phase 12.)*
+*(No open slicer bugs — all known issues resolved through Phase 18.)*
 
 ## 7. Phase 2 behaviour changes
 
