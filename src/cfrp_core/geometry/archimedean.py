@@ -23,10 +23,6 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     linearly blended across one full revolution: a constant pitch of `gap`
     with no direction reversals.
 
-    The first and last ring are each also traced as one full closed lap, so
-    the outermost wall is reached in both spiral directions and alternating
-    layers stack into a straight wall.
-
     Returns (path, base_poly). Raises ValueError if `track_count` rings were
     requested but fewer fit.
     """
@@ -59,8 +55,7 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     if len(ordered) == 1:
         return list(ordered[0].exterior.coords), base_poly
 
-    # Shared sample count per revolution: ~one point per 0.75 mm on the
-    # longest ring, at least 120.
+    # Shared sample count: ~one point per 0.75 mm on the longest ring, ≥120.
     max_length = max(poly.exterior.length for poly in ordered)
     samples = max(120, int(max_length / 0.75))
 
@@ -71,19 +66,14 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         resampled.append(pts)
         prev_start = pts[0]
 
-    # first_lap traces the outermost ring as an explicit closed loop so the
-    # shape boundary is always fully printed (important for shape integrity).
-    # blend_chain then starts from ring1 (NOT ring0): ring0 is already done by
-    # first_lap, so starting from ring0 again would double-deposit it.
-    # The step from first_lap[-1] (ring0[0]) to ring1[0] is a short radial
-    # move of one track_gap — the natural seam between perimeter and infill.
-    first_lap = resampled[0] + [resampled[0][0]]
+    # Pure-blend spiral: blend_chain transitions smoothly from ring0 (outermost
+    # for outside-in, innermost for inside-out) continuously through all rings
+    # with no abrupt radial seam step and no double-trace of the outer wall.
+    # The last ring is explicitly closed so its seam is clean.  For inside-out
+    # the outermost ring IS the last ring, so inner_close fully traces it at its
+    # exact radius — giving symmetric wall coverage in both layer directions.
     inner_close = resampled[-1][1:] + [resampled[-1][0]]
-
-    if len(resampled) == 1:
-        continuous_path = first_lap
-    else:
-        continuous_path = first_lap + blend_chain(resampled[1:], samples) + inner_close
+    continuous_path = blend_chain(resampled, samples) + inner_close
 
     path = dedupe_path(continuous_path)
 

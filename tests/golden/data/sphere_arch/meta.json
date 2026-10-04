@@ -1,10 +1,7 @@
 {
-  "status": "Warning",
+  "status": "Pass",
   "messages": [
-    "Layer 4 path crosses itself (107 internal intersections). Tangent peeling may intersect. Proceed with caution.",
-    "Layer 5 path crosses itself (106 internal intersections). Tangent peeling may intersect. Proceed with caution.",
-    "Layer 37 path crosses itself (106 internal intersections). Tangent peeling may intersect. Proceed with caution.",
-    "Layer 38 path crosses itself (107 internal intersections). Tangent peeling may intersect. Proceed with caution."
+    "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
   ],
   "max_z": 20.2,
   "constraint_notes": []
