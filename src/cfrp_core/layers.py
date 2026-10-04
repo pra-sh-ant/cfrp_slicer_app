@@ -128,15 +128,16 @@ def trim_path_head(points, trim_length):
 # --- Per-layer building blocks -----------------------------------------------
 
 def add_lead_in_anchor(raw_path, anchor_length):
-    """Prepend a straight lead-in of `anchor_length` mm in the −Y direction.
+    """Prepend a straight lead-in of `anchor_length` mm in the −X direction.
 
-    The anchor always approaches from below (outside the part boundary) so it
-    can be physically cut away after printing.  A single point is enough to
-    mark the anchor start; the planner then ramps speed from rest."""
+    The anchor always approaches from the left (outside the part boundary) so it
+    can be physically cut away after printing.  For Archimedean infill the seam
+    is at the left-most ring point, so the anchor aligns naturally with the seam
+    column.  A single point marks the anchor start; the planner ramps from rest."""
     if anchor_length <= 0 or len(raw_path) < 1:
         return raw_path
     p0 = raw_path[0]
-    return [(p0[0], p0[1] - anchor_length)] + list(raw_path)
+    return [(p0[0] - anchor_length, p0[1])] + list(raw_path)
 
 
 def plan_layer(raw_path, layer_z, layer_num, kin: KinematicsParams):

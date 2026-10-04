@@ -15,28 +15,27 @@ from ._common import (
 _CONNECTOR_STEP_MM = 0.75   # max segment length inside ring-to-ring connectors
 
 
-def _bottom_most(ring_poly):
-    """Return the (x, y) point with minimum Y (then minimum X) on a ring."""
+def _left_most(ring_poly):
+    """Return the (x, y) point with minimum X (then minimum Y) on a ring."""
     coords = list(ring_poly.exterior.coords)[:-1]
-    return min(coords, key=lambda p: (p[1], p[0]))
+    return min(coords, key=lambda p: (p[0], p[1]))
 
 
 def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False,
                      seam_hint=None):
-    """Concentric ring infill with Y-column seam transitions.
+    """Concentric ring infill with left-side seam column.
 
-    Each ring is a fully closed loop.  Rings are connected by short straight
-    segments that run approximately in the +Y direction (from the bottom-most
-    seam of one ring to the bottom-most seam of the next inward ring).  This
-    keeps all seam transitions on a single vertical column so the lead-in
-    anchor (outside the part, in −Y) and all inter-ring connectors align on
-    one vertical line — no diagonal hacks required.
+    Each ring is traversed from its left-most point (min X, then min Y) almost
+    all the way around, ending one sample step before the seam.  A short
+    straight connector then steps inward to the left-most seam of the next
+    ring.  Because every ring's seam is on the left edge, all connectors form a
+    single vertical column on the left side of the part — matching the anchor
+    direction (−X, approaching from the left).
 
     Seam selection:
-      • For outside-in (default): bottom-most point of the outermost ring.
-      • For inside-out: bottom-most point of the innermost ring, or `seam_hint`
-        when supplied (aligns with the previous outside-in layer's seam so the
-        layer-to-layer ramp trim cuts diverge correctly).
+      • For outside-in (default): left-most point of the outermost ring.
+      • For inside-out: left-most point of the innermost ring, or `seam_hint`
+        when supplied (aligns with the previous outside-in layer's seam).
 
     Returns (path, base_poly).  Raises ValueError if `track_count` rings were
     requested but fewer fit.
@@ -82,7 +81,7 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     if seam_hint is not None:
         initial_seam = seam_hint
     else:
-        initial_seam = _bottom_most(ordered[0])
+        initial_seam = _left_most(ordered[0])
 
     path = []
     prev_seam = initial_seam
@@ -93,9 +92,9 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         ring_seam = ring_pts[0]
 
         if path:
-            # Straight connector from the previous ring's seam to this ring's seam.
-            # For convex shapes this connector is approximately vertical (+Y direction)
-            # because consecutive ring seams are bottom-most points at similar X.
+            # Short straight connector from the last traversal point of the previous ring
+            # (one step before its left-most seam) to the left-most seam of this ring.
+            # For convex shapes this step is nearly horizontal (+X, inward).
             seg_len = math.hypot(ring_seam[0] - prev_seam[0], ring_seam[1] - prev_seam[1])
             n_conn = max(2, int(math.ceil(seg_len / _CONNECTOR_STEP_MM)))
             for i in range(1, n_conn + 1):
@@ -105,13 +104,11 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
                     prev_seam[1] + t * (ring_seam[1] - prev_seam[1]),
                 ))
 
-        # Traverse the ring. resample_closed_ring returns `samples` points that
-        # cover one full revolution, ending one step before the seam.  We do NOT
-        # add an explicit closing point because that would repeat ring_pts[0]
-        # later in the path and cause Shapely's is_simple check to fail.  The
-        # sub-step gap (~perimeter/samples ≤ 0.75 mm) is negligible for printing
-        # and is bridged by the connector to the next ring.
+        # Traverse the ring.  resample_closed_ring returns `samples` points covering
+        # one full revolution starting at the left-most seam, ending one step before
+        # it.  prev_seam is updated to ring_pts[-1] so the next connector starts from
+        # the natural end of this traversal — no jump back to the seam point.
         path.extend(ring_pts)
-        prev_seam = ring_pts[0]
+        prev_seam = ring_pts[-1]  # last traversal point, one step before the seam
 
     return dedupe_path(path), base_poly
