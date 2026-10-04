@@ -23,7 +23,8 @@ def _reverse_winding(ring_pts):
     return [ring_pts[0]] + list(reversed(ring_pts[1:]))
 
 
-def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False):
+def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
+                       start_from_inside=False, entry_hint=None):
     """One continuous "connected Fermat spiral" covering base_poly --
     including holes, and shapes that split into islands as they're offset.
 
@@ -40,6 +41,10 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None, start
 
     `track_count` is a soft global cap on tracks across the whole branch
     tree (2 per ring pair); unlike the Archimedean spiral this never raises.
+
+    `entry_hint` steers where on the outer ring the spiral starts/ends.
+    Pass the diametrically-opposite point of the previous layer's end to
+    phase-shift the seam ~180°, giving the Z-ramp a long horizontal run.
     """
     check_gap_radius(track_gap, min_radius)
     if base_poly.is_empty or base_poly.geom_type != 'Polygon':
@@ -124,7 +129,7 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None, start
 
         return in_path + child_path + out_path
 
-    path = spiral_region(base_poly, None)
+    path = spiral_region(base_poly, entry_hint)
     if not path:
         return []
     if start_from_inside:

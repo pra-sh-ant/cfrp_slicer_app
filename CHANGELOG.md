@@ -5,6 +5,18 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Fixed (Phase 6 — Fermat seam phase-shift)
+- **Fermat layer transitions now Pass validation** (previously Warning for all
+  Fermat cases including `cylinder_fermat`).  Root cause: both the end of
+  layer N and the start of layer N+1 landed on the outer ring at nearly the
+  same angular position → XY gap ≈ `track_gap` → near-vertical ramp.
+  Fix: pass `entry_hint = opposite(previous_layer_end)` to
+  `fermat_spiral_path`, rotating the outer-ring phase-anchor ~180° each
+  layer.  XY gap is now ≈ infill diameter, ramp angle ≈ 0.3°.
+- Applies to flat laminates (`laminate_layer`) and revolve shells
+  (`build_revolve_shell`) using Fermat infill.
+- Golden data regenerated for all 6 Fermat cases; all now Pass.
+
 ### Added (Phase 3 — PySide6 desktop app)
 - `gui_app.py` — entry point: `.venv312\Scripts\python.exe gui_app.py`
 - `gui/` package: `main_window`, `controls_panel`, `viewer_gl`, `results_panel`,

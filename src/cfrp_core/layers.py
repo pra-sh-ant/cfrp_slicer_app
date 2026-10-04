@@ -255,6 +255,7 @@ def build_revolve_shell(config: ProcessConfig):
     target_shapes = []
     max_z = z0
     anchored = False
+    fermat_last_pt = None   # end of the previous revolve layer, for seam phase-shifting
 
     for i in range(num_layers):
         progress = i / (num_layers - 1)
@@ -270,8 +271,16 @@ def build_revolve_shell(config: ProcessConfig):
         is_outward = (i % 2 != 0)
         try:
             if use_fermat:
+                # Phase-shift seam ~180° each layer so the Z-ramp has a long XY run.
+                fermat_hint = None
+                if fermat_last_pt is not None:
+                    ccx = cross_section.centroid.x
+                    ccy = cross_section.centroid.y
+                    fermat_hint = (2.0 * ccx - fermat_last_pt[0],
+                                   2.0 * ccy - fermat_last_pt[1])
                 raw_path = geo.fermat_spiral_path(
-                    cross_section, gap, 0.0, track_count=None, start_from_inside=is_outward
+                    cross_section, gap, 0.0, track_count=None,
+                    start_from_inside=is_outward, entry_hint=fermat_hint
                 )
             else:
                 raw_path, _ = geo.archimedean_path(
@@ -323,6 +332,9 @@ def build_revolve_shell(config: ProcessConfig):
                 })
 
         trajectory.extend(layer_trajectory)
+
+        if use_fermat and layer_trajectory:
+            fermat_last_pt = (layer_trajectory[-1]['x'], layer_trajectory[-1]['y'])
 
     return trajectory, target_shapes, max_z
 

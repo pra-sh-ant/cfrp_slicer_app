@@ -1,7 +1,8 @@
 # Architecture
 
-Status: **Phase 2** (behaviour changes: spiral Z-ramping, Torus removed,
-Conical Dome promoted to revolve pipeline, default part fixed).
+Status: **Phase 6** (Fermat seam phase-shift fix: all Fermat cases now Pass
+validation; previous phases: spiral Z, Torus removed, Conical Dome promoted,
+PySide6 GUI, parameter save/load, PyInstaller packaging).
 
 ## 1. Layout
 
@@ -98,12 +99,7 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
 
 ## 6. Known issues (pinned by golden/UI tests, not yet fixed)
 
-1. **Fermat layer transitions are near-vertical.** A Fermat layer ends on its
-   return arm and the next layer is the same path reversed, so both seam
-   trims land on the same track and the ramp gets almost no horizontal run.
-   Every transition of `cylinder_fermat` and the 2D Fermat cases exceeds the
-   30 deg ramp limit (validation warns).
-2. **Fermat with 2+ islands:** the straight connector can cross printed track.
+1. **Fermat with 2+ islands:** the straight connector can cross printed track.
 3. **Mushroom stem height is absolute**, not relative to the Z-offset (labelled
    clearly in the UI).
 4. **Pump floor is unmeasured** (defaults to `v_min`): no real stall protection.

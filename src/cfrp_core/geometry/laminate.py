@@ -42,8 +42,16 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward
         )
     elif infill_type == FERMAT:
+        # Phase-shift consecutive seams ~180° apart so the Z-ramp between
+        # layers has a horizontal run ≈ the infill diameter rather than ~gap.
+        fermat_hint = None
+        if last_pt is not None:
+            cx = infill_bounds.centroid.x
+            cy = infill_bounds.centroid.y
+            fermat_hint = (2.0 * cx - last_pt[0], 2.0 * cy - last_pt[1])
         infill_path = fermat_spiral_path(
-            infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward
+            infill_bounds, gap, min_rad, track_count=tracks_per_layer,
+            start_from_inside=is_outward, entry_hint=fermat_hint,
         )
     else:
         infill_path = oriented_serpentine(infill_bounds, angle, gap, min_rad, start_from_end=is_outward)

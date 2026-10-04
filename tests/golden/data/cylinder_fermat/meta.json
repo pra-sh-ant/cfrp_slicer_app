@@ -1,7 +1,7 @@
 {
-  "status": "Warning",
+  "status": "Pass",
   "messages": [
-    "Layer transition ramp exceeded the configured 30.0 deg limit on layer(s) [3, 5, 7, 9, 11, 13, 15, 17, 19]: the part footprint is too small to fit a full ramp at this layer height, so the climb is steeper than requested there. Reduce layer height, enlarge the part, or increase the transition angle allowance."
+    "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
   ],
   "max_z": 10.2,
   "constraint_notes": []
