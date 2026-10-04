@@ -145,18 +145,27 @@ class ViewerTab(QWidget):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(2)
 
-        # Layer slider
+        # Layer isolation row
         ctrl_row = QHBoxLayout()
-        self._layer_lbl = QLabel("Layer: all")
+        ctrl_row.setSpacing(6)
+        ctrl_row.addWidget(QLabel("Layer:"))
         self._slider = QSlider(Qt.Horizontal)
         self._slider.setMinimum(0)
         self._slider.setMaximum(0)
         self._slider.setValue(0)
-        self._slider.setToolTip("0 = show all; >0 = isolate that layer")
-        ctrl_row.addWidget(QLabel("Isolate layer:"))
-        ctrl_row.addWidget(self._slider)
+        self._slider.setToolTip("0 = show all layers; drag to isolate one layer")
+        ctrl_row.addWidget(self._slider, stretch=1)
+        self._layer_lbl = QLabel("all")
+        self._layer_lbl.setFixedWidth(36)
+        self._layer_lbl.setStyleSheet("color:#80c0ff;font-weight:bold;")
         ctrl_row.addWidget(self._layer_lbl)
+
+        # Part stats mini-bar
+        self._stats_lbl = QLabel("")
+        self._stats_lbl.setStyleSheet("color:#606080;font-size:10px;")
+        ctrl_row.addWidget(self._stats_lbl)
         layout.addLayout(ctrl_row)
 
         self._viewer = ViewerGL(machine)
@@ -179,6 +188,18 @@ class ViewerTab(QWidget):
         self._slider.setValue(0)
         self._slider.blockSignals(False)
         self._layer_lbl.setText("all")
+        if trajectory:
+            xs = [p['x'] for p in trajectory]
+            ys = [p['y'] for p in trajectory]
+            self._stats_lbl.setText(
+                f"{len(trajectory):,} pts  ·  "
+                f"X {min(xs):.0f}–{max(xs):.0f}  "
+                f"Y {min(ys):.0f}–{max(ys):.0f}  "
+                f"Z 0–{max_z:.1f} mm  ·  "
+                f"{self._max_layer} layers"
+            )
+        else:
+            self._stats_lbl.setText("")
         self._viewer.update_scene(trajectory, target_shapes, max_z)
 
     def _on_layer_changed(self, val):
