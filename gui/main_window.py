@@ -6,6 +6,7 @@ import math
 import pathlib
 
 from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
@@ -76,19 +77,31 @@ class MainWindow(QMainWindow):
         mb = self.menuBar()
         file_menu = mb.addMenu("File")
         act_save = file_menu.addAction("Save Parameters…")
+        act_save.setShortcut(QKeySequence("Ctrl+S"))
         act_load = file_menu.addAction("Load Parameters…")
+        act_load.setShortcut(QKeySequence("Ctrl+O"))
         file_menu.addSeparator()
         self._recent_menu = QMenu("Open Recent", self)
         file_menu.addMenu(self._recent_menu)
         file_menu.addSeparator()
         act_reset = file_menu.addAction("Reset to Defaults")
+        act_reset.setShortcut(QKeySequence("Ctrl+Shift+R"))
+        file_menu.addSeparator()
+        act_slice = file_menu.addAction("Slice Now")
+        act_slice.setShortcut(QKeySequence("F5"))
         file_menu.addSeparator()
         act_quit = file_menu.addAction("Quit")
+        act_quit.setShortcut(QKeySequence("Ctrl+Q"))
 
         act_save.triggered.connect(self._save_params)
         act_load.triggered.connect(self._load_params)
         act_reset.triggered.connect(self._reset_params)
+        act_slice.triggered.connect(self._slice)
         act_quit.triggered.connect(self.close)
+
+        # Escape cancels a running slice from anywhere in the window
+        esc = QShortcut(QKeySequence("Escape"), self)
+        esc.activated.connect(self._cancel_slice)
 
         self._rebuild_recent_menu()
 

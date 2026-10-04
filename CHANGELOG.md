@@ -5,6 +5,15 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 10 — keyboard shortcuts)
+- Ctrl+S → Save Parameters
+- Ctrl+O → Load Parameters
+- Ctrl+Shift+R → Reset to Defaults
+- F5 → Slice Now (bypass debounce, force immediate re-slice)
+- Ctrl+Q → Quit
+- Escape → Cancel running slice (window-level shortcut, works without opening menu)
+- All shortcuts shown in the File menu next to their actions.
+
 ### Added (Phase 9 — cancel button + window geometry persistence)
 - **Cancel button** in the status bar: visible while slicing, hides on
   completion. Calls `SlicerWorker.cancel()` (cooperative flag) then
