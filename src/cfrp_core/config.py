@@ -43,10 +43,12 @@ SPECIALTY_SHAPES = REVOLVE_SHAPES | FLAT_SPECIALTY_SHAPES
 ARCHIMEDEAN = "Archimedean (Concentric Spiral)"
 FERMAT = "Fermat Spiral (Connected Double Spiral)"
 ORIENTED_SERPENTINE = "Oriented Serpentine"
+DIAGONAL_45 = "45° Diagonal Hatch"
 InfillPattern = Literal[
     "Archimedean (Concentric Spiral)",
     "Fermat Spiral (Connected Double Spiral)",
     "Oriented Serpentine",
+    "45° Diagonal Hatch",
     "N/A",  # specialty shapes: no infill pattern applies
 ]
 

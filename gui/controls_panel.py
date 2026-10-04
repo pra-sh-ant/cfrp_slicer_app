@@ -31,6 +31,7 @@ INFILL_OPTIONS = [
     "Archimedean (Concentric Spiral)",
     "Fermat Spiral (Connected Double Spiral)",
     "Oriented Serpentine",
+    "45° Diagonal Hatch",
 ]
 REVOLVE_INFILL_OPTIONS = [
     "Archimedean (Concentric Spiral)",

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from ..config import ARCHIMEDEAN, FERMAT
+from ..config import ARCHIMEDEAN, DIAGONAL_45, FERMAT
 from ._common import check_gap_radius, dedupe_path, largest_polygon
 from .archimedean import archimedean_path
 from .fermat import fermat_spiral_path
@@ -45,7 +45,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
 
     if infill_type == ARCHIMEDEAN:
         infill_path, _ = archimedean_path(
-            infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward
+            infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward,
+            seam_hint=last_pt if is_outward else None,
         )
     elif infill_type == FERMAT:
         # Phase-shift consecutive seams ~180° apart so the Z-ramp between
@@ -59,6 +60,11 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             infill_bounds, gap, min_rad, track_count=tracks_per_layer,
             start_from_inside=is_outward, entry_hint=fermat_hint,
         )
+    elif infill_type == DIAGONAL_45:
+        # Fixed 45° hatching: serpentine at 45° regardless of the layup angle.
+        # Alternating layers run +45° and -45° for balanced cross-ply coverage.
+        hatch_angle = 45.0 if layer_idx % 2 == 0 else -45.0
+        infill_path = oriented_serpentine(infill_bounds, hatch_angle, gap, min_rad, start_from_end=is_outward)
     else:
         infill_path = oriented_serpentine(infill_bounds, angle, gap, min_rad, start_from_end=is_outward)
 
@@ -100,7 +106,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         peel_pt = continuous_path[-1]
         # Both spirals keep one monotonic winding direction end to end, so
         # only the plain zigzag pattern gets end-swapped here.
-        if infill_type not in (ARCHIMEDEAN, FERMAT):
+        if infill_type not in (ARCHIMEDEAN, FERMAT, DIAGONAL_45):
             d_start = math.hypot(infill_path[0][0] - peel_pt[0], infill_path[0][1] - peel_pt[1])
             d_end = math.hypot(infill_path[-1][0] - peel_pt[0], infill_path[-1][1] - peel_pt[1])
             if d_end < d_start:
