@@ -68,9 +68,9 @@ def test_concave_shape_does_not_trigger_false_seam_jump_error():
     """Regression: layer_start was flagged on the next original path vertex
     (which can be a long, normal straight run away, e.g. a full wall edge)
     instead of the ramp's own landing point, tripping a false 'Disjointed
-    Z-Seam' error on concave shapes like the L-Bracket."""
+    Z-Seam' error on non-rectangular shapes like a Triangle."""
     cfg = base_2d_config(
-        shape="L-Bracket", width=60.0, height=60.0, thickness=15.0,
+        shape="Triangle", width=60.0, height=60.0,
         layers=6, tracks_per_layer=3, include_boundary=True,
         layer_height=1.5, transition_angle=15.0,
     )

@@ -16,7 +16,6 @@ _FIELD_MAP = {
     "shape": ("geometry", "shape"),
     "width": ("geometry", "width_mm"),
     "height": ("geometry", "height_mm"),
-    "thickness": ("geometry", "thickness_mm"),
     "invert_bends": ("geometry", "invert_bends"),
     "include_boundary": ("geometry", "include_boundary"),
     "base_radius": ("geometry", "base_radius_mm"),

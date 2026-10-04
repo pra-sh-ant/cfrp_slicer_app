@@ -23,7 +23,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, mo
 # --- Shapes and patterns -----------------------------------------------------
 
 ShapeName = Literal[
-    "Square/Rectangle", "Triangle", "Hexagon", "Circle", "L-Bracket",
+    "Square/Rectangle", "Triangle", "Hexagon", "Circle",
     "Serpentine Infill", "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
     "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)",
     "Conical Dome (Z)", "3D Overhang (Mushroom)",
@@ -102,7 +102,6 @@ class GeometryConfig(_Frozen):
     shape: ShapeName = "Square/Rectangle"
     width_mm: float = 135.0              # flat shapes (also hexagon/circle diameter)
     height_mm: float = 25.0              # flat shapes (XY height, not Z)
-    thickness_mm: float = 10.0           # L-bracket leg thickness
     invert_bends: bool = False           # Serpentine Infill: loop outside
     include_boundary: bool = False       # flat shapes: add one perimeter pass
     base_radius_mm: float = 10.0         # revolve outer radius / mushroom base

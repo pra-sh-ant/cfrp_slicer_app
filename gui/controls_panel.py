@@ -111,9 +111,6 @@ class ControlsPanel(QWidget):
         self._w_row = fl.addRow("Width (mm)", self.w_spin)
         self._h_row = fl.addRow("Height (mm)", self.h_spin)
 
-        self.thick_spin = _spin(0.1, 200, 0.5, 10.0, 1)
-        self._thick_row = fl.addRow("Bracket Thickness (mm)", self.thick_spin)
-
         self.boundary_chk = QCheckBox("Print Outer Boundary")
         self._boundary_row = fl.addRow("", self.boundary_chk)
 
@@ -137,7 +134,7 @@ class ControlsPanel(QWidget):
         self._vbox.addWidget(_group("Target Geometry", fl))
 
         # wire signals
-        for w in (self.w_spin, self.h_spin, self.thick_spin, self.base_r_spin,
+        for w in (self.w_spin, self.h_spin, self.base_r_spin,
                   self.stem_h_spin, self.disc_r_spin, self.stem_top_spin):
             w.valueChanged.connect(self._emit)
         for w in (self.boundary_chk, self.invert_chk):
@@ -297,14 +294,12 @@ class ControlsPanel(QWidget):
         is_specialty = is_revolve or is_flat_specialty
         is_flat = not is_specialty
         is_serpentine = shape == "Serpentine Infill"
-        is_lbracket = shape == "L-Bracket"
         is_circle_hex = shape in {"Hexagon", "Circle"}
         is_sphere = shape == "Hollow Sphere (Z)"
 
         # Flat shape geometry
         self.w_spin.setVisible(is_flat)
         self.h_spin.setVisible(is_flat and not is_circle_hex)
-        self.thick_spin.setVisible(is_lbracket)
         self.boundary_chk.setVisible(is_flat and not is_serpentine)
         self.invert_chk.setVisible(is_serpentine)
 
@@ -392,7 +387,6 @@ class ControlsPanel(QWidget):
             "shape": shape,
             "width": self.w_spin.value(),
             "height": self.h_spin.value(),
-            "thickness": self.thick_spin.value(),
             "invert_bends": self.invert_chk.isChecked(),
             "include_boundary": self.boundary_chk.isChecked(),
             "base_radius": self.base_r_spin.value(),
@@ -462,7 +456,6 @@ class ControlsPanel(QWidget):
 
         _set(self.w_spin, "width")
         _set(self.h_spin, "height")
-        _set(self.thick_spin, "thickness")
         _set(self.boundary_chk, "include_boundary")
         _set(self.invert_chk, "invert_bends")
         _set(self.base_r_spin, "base_radius")

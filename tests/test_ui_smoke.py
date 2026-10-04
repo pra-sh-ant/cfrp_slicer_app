@@ -13,7 +13,7 @@ from streamlit.testing.v1 import AppTest
 APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 
 ALL_SHAPES = [
-    "Square/Rectangle", "Triangle", "Hexagon", "Circle", "L-Bracket",
+    "Square/Rectangle", "Triangle", "Hexagon", "Circle",
     "Serpentine Infill", "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
     "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)",
     "Conical Dome (Z)", "3D Overhang (Mushroom)",

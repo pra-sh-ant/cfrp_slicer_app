@@ -279,12 +279,13 @@ def build_revolve_shell(config: ProcessConfig):
                     fermat_hint = (2.0 * ccx - fermat_last_pt[0],
                                    2.0 * ccy - fermat_last_pt[1])
                 raw_path = geo.fermat_spiral_path(
-                    cross_section, gap, 0.0, track_count=None,
+                    cross_section, gap, float(config.min_radius_mm), track_count=None,
                     start_from_inside=is_outward, entry_hint=fermat_hint
                 )
             else:
                 raw_path, _ = geo.archimedean_path(
-                    cross_section, gap, 0.0, track_count=None, start_from_inside=is_outward
+                    cross_section, gap, float(config.min_radius_mm), track_count=None,
+                    start_from_inside=is_outward
                 )
         except ValueError:
             continue

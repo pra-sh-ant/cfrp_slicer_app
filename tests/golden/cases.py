@@ -78,7 +78,6 @@ _SHAPES_2D = {
     "triangle": ("Triangle", {"width": 60.0, "height": 50.0}),
     "hexagon": ("Hexagon", {"width": 50.0, "height": 50.0}),
     "circle": ("Circle", {"width": 40.0, "height": 40.0}),
-    "lbracket": ("L-Bracket", {"width": 60.0, "height": 60.0, "thickness": 15.0}),
 }
 _PATTERNS = {"arch": ARCH, "fermat": FERMAT, "serp": SERP}
 
@@ -98,10 +97,6 @@ CASES += [
     {"name": "rectangle_arch_boundary",
      "config": _flat("Square/Rectangle", ARCH, include_boundary=True, layers=3),
      "layup": [0.0]},
-    {"name": "lbracket_serp_boundary",
-     "config": _flat("L-Bracket", SERP, width=60.0, height=60.0, thickness=15.0,
-                     include_boundary=True, layers=3),
-     "layup": [0.0, 90.0]},
     {"name": "serpentine_infill_shape",
      "config": _flat("Serpentine Infill", ARCH, width=60.0, height=30.0, layers=2),
      "layup": [0.0, 90.0]},

@@ -44,9 +44,6 @@ def base_polygon(geometry: GeometryConfig, track_gap, min_radius):
             (start_x, 0), (end_x + pad, 0),
             (end_x + pad, end_y), (start_x, end_y),
         ])
-    elif shape == "L-Bracket":
-        t = geometry.thickness_mm
-        poly = Polygon([(0, 0), (w, 0), (w, t), (t, t), (t, h), (0, h)])
     elif shape == "Triangle":
         poly = Polygon([(0, 0), (w, 0), (w / 2.0, h)])
     elif shape == "Hexagon":

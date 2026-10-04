@@ -31,7 +31,7 @@ _APP = "CFRPSlicerPro"
 
 _DEFAULTS = {
     "shape": "Square/Rectangle",
-    "width": 135.0, "height": 25.0, "thickness": 10.0,
+    "width": 135.0, "height": 25.0,
     "include_boundary": False, "invert_bends": False,
     "base_radius": 20.0, "disc_radius": 15.0, "stem_height": 25.0,
     "start_x": 26.0, "start_y": 40.0, "track_gap": 1.2, "z_offset": 0.2,
