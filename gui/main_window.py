@@ -99,6 +99,10 @@ class MainWindow(QMainWindow):
         act_slice.triggered.connect(self._slice)
         act_quit.triggered.connect(self.close)
 
+        help_menu = mb.addMenu("Help")
+        act_about = help_menu.addAction("About CFRP Slicer Pro…")
+        act_about.triggered.connect(self._show_about)
+
         # Escape cancels a running slice from anywhere in the window
         esc = QShortcut(QKeySequence("Escape"), self)
         esc.activated.connect(self._cancel_slice)
@@ -282,3 +286,39 @@ class MainWindow(QMainWindow):
     def _clear_recent(self):
         self._settings.remove("recentFiles")
         self._rebuild_recent_menu()
+
+    # ------------------------------------------------------------------
+    # About dialog
+    # ------------------------------------------------------------------
+    def _show_about(self):
+        import sys
+
+        import PySide6
+        from PySide6.QtWidgets import QDialog, QDialogButtonBox, QVBoxLayout
+        dlg = QDialog(self)
+        dlg.setWindowTitle("About CFRP Slicer Pro")
+        dlg.setMinimumWidth(380)
+        layout = QVBoxLayout(dlg)
+
+        lines = [
+            "<b>CFRP Slicer Pro</b>",
+            "Continuous Fiber Reinforced Polymer multi-layer slicer",
+            "",
+            f"Python {sys.version.split()[0]}",
+            f"PySide6 {PySide6.__version__}",
+            "",
+            "Phases completed: 0–10",
+            "(safety net · cfrp_core extraction · spiral Z · GUI · "
+            "save/load · packaging · Fermat seam fix · recent files · "
+            "print stats · cancel · shortcuts)",
+        ]
+        for line in lines:
+            lbl = QLabel(line)
+            lbl.setWordWrap(True)
+            lbl.setAlignment(Qt.AlignCenter)
+            layout.addWidget(lbl)
+
+        bb = QDialogButtonBox(QDialogButtonBox.Ok)
+        bb.accepted.connect(dlg.accept)
+        layout.addWidget(bb)
+        dlg.exec()

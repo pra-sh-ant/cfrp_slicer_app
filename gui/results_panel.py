@@ -200,7 +200,10 @@ class GcodeTab(QWidget):
         btn_row = QHBoxLayout()
         self._save_btn = QPushButton("💾  Save G-code…")
         self._save_btn.setEnabled(False)
+        self._csv_btn = QPushButton("📄  Export CSV…")
+        self._csv_btn.setEnabled(False)
         btn_row.addWidget(self._save_btn)
+        btn_row.addWidget(self._csv_btn)
         btn_row.addStretch()
         layout.addLayout(btn_row)
 
@@ -211,15 +214,19 @@ class GcodeTab(QWidget):
         layout.addWidget(self._editor, stretch=1)
 
         self._gcode = ""
-        self._save_btn.clicked.connect(self._save)
+        self._trajectory: list[dict] = []
+        self._save_btn.clicked.connect(self._save_gcode)
+        self._csv_btn.clicked.connect(self._save_csv)
 
-    def set_gcode(self, gcode: str, layers: int):
+    def set_gcode(self, gcode: str, layers: int, trajectory: list[dict] | None = None):
         self._gcode = gcode
+        self._trajectory = trajectory or []
         self._editor.setPlainText(gcode)
         self._save_btn.setEnabled(bool(gcode))
         self._save_btn.setText(f"💾  Save G-code  ({layers}L)")
+        self._csv_btn.setEnabled(bool(self._trajectory))
 
-    def _save(self):
+    def _save_gcode(self):
         from PySide6.QtWidgets import QFileDialog
         path, _ = QFileDialog.getSaveFileName(
             self, "Save G-code", "CFRP_toolpath.gcode",
@@ -228,6 +235,35 @@ class GcodeTab(QWidget):
         if path:
             with open(path, 'w', encoding='utf-8', newline='\n') as f:
                 f.write(self._gcode)
+
+    def _save_csv(self):
+        import csv
+
+        from PySide6.QtWidgets import QFileDialog
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Export Trajectory CSV", "CFRP_trajectory.csv",
+            "CSV files (*.csv);;All files (*)"
+        )
+        if not path:
+            return
+        fields = ["idx", "x", "y", "z", "v", "dist", "e_mult",
+                  "layer", "is_transition", "layer_start"]
+        with open(path, 'w', encoding='utf-8', newline='') as f:
+            w = csv.DictWriter(f, fieldnames=fields, extrasaction='ignore')
+            w.writeheader()
+            for i, pt in enumerate(self._trajectory):
+                w.writerow({
+                    "idx": i,
+                    "x": round(pt.get("x", 0.0), 4),
+                    "y": round(pt.get("y", 0.0), 4),
+                    "z": round(pt.get("z", 0.0), 4),
+                    "v": round(pt.get("v", 0.0), 4),
+                    "dist": round(pt.get("dist", 0.0), 4),
+                    "e_mult": round(pt.get("e_mult", 1.0), 4),
+                    "layer": pt.get("layer", 1),
+                    "is_transition": int(bool(pt.get("is_transition", False))),
+                    "layer_start": int(bool(pt.get("layer_start", False))),
+                })
 
 
 class ResultsPanel(QWidget):
@@ -255,7 +291,9 @@ class ResultsPanel(QWidget):
         self._viewer_tab.update_view(
             result.trajectory, result.target_shapes, result.max_z
         )
-        self._gcode_tab.set_gcode(result.gcode, result.config.layers)
+        self._gcode_tab.set_gcode(
+            result.gcode, result.config.layers, trajectory=result.trajectory
+        )
         self._dash_tab.update_stats(
             result.trajectory, result.gcode,
             result.constraint_notes, result.info,

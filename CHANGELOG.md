@@ -5,6 +5,13 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 11 — About dialog + trajectory CSV export)
+- **Help → About**: dialog showing Python version, PySide6 version, and a
+  one-line summary of completed phases.
+- **Export CSV** button in G-code tab: writes the full trajectory as a CSV
+  (columns: idx, x, y, z, v, dist, e_mult, layer, is_transition, layer_start).
+  Enabled only when a trajectory exists; disabled until first successful slice.
+
 ### Added (Phase 10 — keyboard shortcuts)
 - Ctrl+S → Save Parameters
 - Ctrl+O → Load Parameters
