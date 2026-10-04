@@ -438,5 +438,81 @@ class ControlsPanel(QWidget):
         except ValueError:
             return [0.0]
 
+    def load_params(self, p: dict) -> None:
+        """Populate all widgets from a params dict (same format as get_params)."""
+        def _set(widget, key, cast=float):
+            if key in p:
+                widget.blockSignals(True)
+                try:
+                    if isinstance(widget, QCheckBox):
+                        widget.setChecked(bool(p[key]))
+                    elif isinstance(widget, (QSpinBox,)):
+                        widget.setValue(int(p[key]))
+                    elif isinstance(widget, QComboBox):
+                        widget.setCurrentText(str(p[key]))
+                    elif isinstance(widget, QLineEdit):
+                        widget.setText(str(p[key]))
+                    else:
+                        widget.setValue(cast(p[key]))
+                finally:
+                    widget.blockSignals(False)
+
+        _set(self.shape_cb, "shape")
+        self._update_shape_visibility()
+
+        _set(self.w_spin, "width")
+        _set(self.h_spin, "height")
+        _set(self.thick_spin, "thickness")
+        _set(self.boundary_chk, "include_boundary")
+        _set(self.invert_chk, "invert_bends")
+        _set(self.base_r_spin, "base_radius")
+        _set(self.disc_r_spin, "disc_radius")
+        # stem_height maps to stem_h_spin or stem_top_spin depending on shape
+        if "stem_height" in p:
+            shape = self.shape_cb.currentText()
+            if shape == "3D Overhang (Mushroom)":
+                self.stem_top_spin.blockSignals(True)
+                self.stem_top_spin.setValue(float(p["stem_height"]))
+                self.stem_top_spin.blockSignals(False)
+            else:
+                self.stem_h_spin.blockSignals(True)
+                self.stem_h_spin.setValue(float(p["stem_height"]))
+                self.stem_h_spin.blockSignals(False)
+
+        _set(self.x_spin, "start_x")
+        _set(self.y_spin, "start_y")
+        _set(self.gap_spin, "track_gap")
+        _set(self.z_off_spin, "z_offset")
+        _set(self.layers_spin, "layers", int)
+        _set(self.tracks_spin, "tracks_per_layer", int)
+        _set(self.infill_cb, "infill_type")
+        _set(self.layup_edit, "layup_seq")
+
+        _set(self.needle_spin, "needle_dia")
+        _set(self.lh_spin, "layer_height")
+        _set(self.emult_spin, "e_mult")
+        _set(self.density_spin, "density")
+        _set(self.weight_spin, "weight")
+
+        _set(self.vmax_spin, "v_max")
+        _set(self.vmin_spin, "v_min")
+        _set(self.accel_spin, "accel")
+        _set(self.decel_spin, "decel")
+        _set(self.p_adv_spin, "p_advance")
+        _set(self.pump_floor_spin, "pump_stall_floor")
+        _set(self.trans_angle_spin, "transition_angle")
+        _set(self.seam_trim_spin, "seam_trim_length")
+        _set(self.anchor_spin, "anchor_length")
+        _set(self.min_r_spin, "min_radius")
+        _set(self.vz_spin, "v_z")
+        _set(self.v_overhang_spin, "v_overhang")
+        _set(self.dwell_spin, "dwell")
+        _set(self.uv_spin, "uv", int)
+        _set(self.purge_e_spin, "purge_e")
+        _set(self.purge_f_spin, "purge_f")
+        _set(self.travel_f_spin, "travel_f")
+
+        self._emit()
+
     def _emit(self):
         self.params_changed.emit()

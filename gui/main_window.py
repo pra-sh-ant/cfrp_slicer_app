@@ -1,10 +1,15 @@
 """Main application window."""
 from __future__ import annotations
 
+import json
+import pathlib
+
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
+    QFileDialog,
     QLabel,
     QMainWindow,
+    QMessageBox,
     QSplitter,
     QStatusBar,
 )
@@ -42,6 +47,20 @@ class MainWindow(QMainWindow):
         splitter.setSizes([360, 1020])
 
         self.setCentralWidget(splitter)
+
+        # --- menu bar -------------------------------------------------------
+        mb = self.menuBar()
+        file_menu = mb.addMenu("File")
+        act_save = file_menu.addAction("Save Parameters…")
+        act_load = file_menu.addAction("Load Parameters…")
+        file_menu.addSeparator()
+        act_reset = file_menu.addAction("Reset to Defaults")
+        file_menu.addSeparator()
+        act_quit = file_menu.addAction("Quit")
+        act_save.triggered.connect(self._save_params)
+        act_load.triggered.connect(self._load_params)
+        act_reset.triggered.connect(self._reset_params)
+        act_quit.triggered.connect(self.close)
 
         # --- status bar -----------------------------------------------------
         sb = QStatusBar()
@@ -117,3 +136,54 @@ class MainWindow(QMainWindow):
     def _on_failed(self, msg: str):
         self._results.set_error(msg)
         self._status_lbl.setText(f"Failed: {msg[:80]}")
+
+    # ------------------------------------------------------------------
+    # Parameter save / load / reset
+    # ------------------------------------------------------------------
+    def _save_params(self):
+        path, _ = QFileDialog.getSaveFileName(
+            self, "Save Parameters", "cfrp_params.json",
+            "JSON files (*.json);;All files (*)"
+        )
+        if not path:
+            return
+        params = self._controls.get_params()
+        params["layup_seq"] = self._controls.layup_edit.text()
+        pathlib.Path(path).write_text(
+            json.dumps(params, indent=2), encoding="utf-8"
+        )
+        self._status_lbl.setText(f"Saved: {pathlib.Path(path).name}")
+
+    def _load_params(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Load Parameters", "",
+            "JSON files (*.json);;All files (*)"
+        )
+        if not path:
+            return
+        try:
+            params = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
+        except Exception as exc:
+            QMessageBox.critical(self, "Load failed", str(exc))
+            return
+        self._controls.load_params(params)
+        self._status_lbl.setText(f"Loaded: {pathlib.Path(path).name}")
+
+    def _reset_params(self):
+        import math
+        self._controls.load_params({
+            "shape": "Square/Rectangle",
+            "width": 135.0, "height": 25.0, "thickness": 10.0,
+            "include_boundary": False, "invert_bends": False,
+            "base_radius": 20.0, "disc_radius": 15.0, "stem_height": 25.0,
+            "start_x": 26.0, "start_y": 40.0, "track_gap": 1.2, "z_offset": 0.2,
+            "layers": 1, "tracks_per_layer": 7,
+            "infill_type": "Archimedean (Concentric Spiral)", "layup_seq": "0",
+            "needle_dia": 0.8, "layer_height": 0.2, "e_mult": 1.6,
+            "density": 0.00115, "weight": 0.55 / (math.pi * 39),
+            "v_max": 10.0, "v_min": 5.0, "accel": 25.0, "decel": 15.0,
+            "p_advance": 3.0, "pump_stall_floor": 5.0, "transition_angle": 30.0,
+            "seam_trim_length": 3.0, "anchor_length": 15.0, "min_radius": 3.0,
+            "v_z": 2.0, "v_overhang": 5.0, "dwell": 1.5,
+            "uv": 225, "purge_e": 15.0, "purge_f": 60.0, "travel_f": 600.0,
+        })
