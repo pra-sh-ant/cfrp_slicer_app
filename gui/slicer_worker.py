@@ -18,21 +18,36 @@ class SlicerWorker(QThread):
         self._params = params
         self._layup = layup
         self._machine = machine
+        self._cancelled = False
+
+    def cancel(self):
+        """Request cancellation. The thread will finish its current Python call
+        before checking, so it may emit finished/failed after this returns."""
+        self._cancelled = True
 
     def run(self):
         try:
             config = from_legacy_dict(self._params, layup=self._layup)
         except ConfigError as exc:
-            self.failed.emit(str(exc))
+            if not self._cancelled:
+                self.failed.emit(str(exc))
             return
         except Exception as exc:
-            self.failed.emit(f"Config error: {exc}")
+            if not self._cancelled:
+                self.failed.emit(f"Config error: {exc}")
             return
+
+        if self._cancelled:
+            return
+
         try:
             result = slice_part(config, self._machine)
         except ValueError as exc:
-            self.failed.emit(str(exc))
+            if not self._cancelled:
+                self.failed.emit(str(exc))
         except Exception as exc:
-            self.failed.emit(f"Internal slicer error: {exc}")
+            if not self._cancelled:
+                self.failed.emit(f"Internal slicer error: {exc}")
         else:
-            self.finished.emit(result)
+            if not self._cancelled:
+                self.finished.emit(result)

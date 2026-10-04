@@ -5,13 +5,14 @@ import json
 import math
 import pathlib
 
-from PySide6.QtCore import QSettings, Qt, QTimer
+from PySide6.QtCore import QByteArray, QSettings, Qt, QTimer
 from PySide6.QtWidgets import (
     QFileDialog,
     QLabel,
     QMainWindow,
     QMenu,
     QMessageBox,
+    QPushButton,
     QSplitter,
     QStatusBar,
 )
@@ -95,6 +96,11 @@ class MainWindow(QMainWindow):
         sb = QStatusBar()
         self._status_lbl = QLabel("Ready.")
         sb.addWidget(self._status_lbl)
+        self._cancel_btn = QPushButton("Cancel")
+        self._cancel_btn.setFixedWidth(70)
+        self._cancel_btn.setVisible(False)
+        self._cancel_btn.clicked.connect(self._cancel_slice)
+        sb.addPermanentWidget(self._cancel_btn)
         self.setStatusBar(sb)
 
         # --- dark theme -----------------------------------------------------
@@ -136,29 +142,49 @@ class MainWindow(QMainWindow):
         self._timer.timeout.connect(self._slice)
         self._controls.params_changed.connect(self._schedule_slice)
 
+        # Restore window geometry from last session
+        geom = self._settings.value("windowGeometry")
+        if isinstance(geom, QByteArray):
+            self.restoreGeometry(geom)
+
         # Initial slice
         QTimer.singleShot(100, self._slice)
 
     # ------------------------------------------------------------------
+    def closeEvent(self, event):
+        self._settings.setValue("windowGeometry", self.saveGeometry())
+        super().closeEvent(event)
+
     def _schedule_slice(self):
         self._timer.start(_DEBOUNCE_MS)
 
     def _slice(self):
         if self._worker is not None and self._worker.isRunning():
+            self._worker.cancel()
             self._worker.finished.disconnect()
             self._worker.failed.disconnect()
-            self._worker.quit()
 
         params = self._controls.get_params()
         layup = self._controls.get_layup()
         self._status_lbl.setText("Slicing…")
+        self._cancel_btn.setVisible(True)
 
         self._worker = SlicerWorker(params, layup, self._machine)
         self._worker.finished.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
 
+    def _cancel_slice(self):
+        if self._worker is not None and self._worker.isRunning():
+            self._worker.cancel()
+            self._worker.finished.disconnect()
+            self._worker.failed.disconnect()
+            self._worker = None
+        self._cancel_btn.setVisible(False)
+        self._status_lbl.setText("Cancelled.")
+
     def _on_finished(self, result):
+        self._cancel_btn.setVisible(False)
         self._results.update(result)
         n = len(result.trajectory)
         v = result.validation["status"]
@@ -167,6 +193,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_failed(self, msg: str):
+        self._cancel_btn.setVisible(False)
         self._results.set_error(msg)
         self._status_lbl.setText(f"Failed: {msg[:80]}")
 

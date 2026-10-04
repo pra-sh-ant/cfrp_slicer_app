@@ -5,6 +5,13 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 9 — cancel button + window geometry persistence)
+- **Cancel button** in the status bar: visible while slicing, hides on
+  completion. Calls `SlicerWorker.cancel()` (cooperative flag) then
+  disconnects signals so stale results are silently dropped.
+- **Window geometry persistence**: `closeEvent` saves geometry via QSettings;
+  `__init__` restores it on next launch (size, position, maximised state).
+
 ### Added (Phase 8 — print time, fiber length, fiber mass)
 - `SliceResult.stats`: pre-computed dict of `print_time_s`, `fiber_length_mm`,
   `fiber_mass_g` (sum over non-transition trajectory points using `dist/v` for
