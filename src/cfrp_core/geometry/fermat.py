@@ -190,4 +190,13 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
     if start_from_inside:
         path = list(reversed(path))
 
-    return dedupe_path(path)
+    path = dedupe_path(path)
+
+    # Close the outer-ring loop when start and end land near each other
+    # (no seam phase shift on first layer, or very small shapes).
+    if len(path) >= 2:
+        d = (path[-1][0] - path[0][0]) ** 2 + (path[-1][1] - path[0][1]) ** 2
+        if d < track_gap ** 2:
+            path = path + [path[0]]
+
+    return path

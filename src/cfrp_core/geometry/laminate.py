@@ -30,10 +30,16 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         return []
     wall_coords = list(wall_poly.exterior.coords)
 
-    infill_bounds = wall_poly.buffer(-gap * 0.6, join_style=1)
-    if infill_bounds.is_empty:
-        return wall_coords
-    infill_bounds = largest_polygon(infill_bounds)
+    # Without boundary: spiral IS the whole fill — start at gap/2 from edge.
+    # With boundary: the wall ring is already printed; space the first infill
+    # ring exactly track_gap from it (gap/2 inside wall_poly → gap from wall).
+    if include_boundary:
+        infill_bounds = wall_poly.buffer(-gap / 2.0, join_style=1)
+        if infill_bounds.is_empty:
+            return wall_coords
+        infill_bounds = largest_polygon(infill_bounds)
+    else:
+        infill_bounds = base_poly
 
     is_outward = (layer_idx % 2 != 0)
 

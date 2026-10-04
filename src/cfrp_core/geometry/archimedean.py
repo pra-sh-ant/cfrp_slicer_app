@@ -1,6 +1,8 @@
 """Concentric (Archimedean) spiral infill (spec §5.4)."""
 from __future__ import annotations
 
+import math
+
 from ._common import (
     blend_chain,
     check_gap_radius,
@@ -73,4 +75,15 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     last_lap = resampled[-1][1:] + [resampled[-1][0]]
     continuous_path = first_lap + blend_chain(resampled, samples) + last_lap
 
-    return dedupe_path(continuous_path), base_poly
+    path = dedupe_path(continuous_path)
+
+    # Merge first track when near end: if the spiral ends close to where it
+    # started (innermost ring nearly coincides with the outermost ring, or the
+    # reversed path ends near its own start), close the loop so the shape
+    # outline is maintained with no visible open seam.
+    if len(path) >= 2:
+        d = math.hypot(path[-1][0] - path[0][0], path[-1][1] - path[0][1])
+        if d < track_gap:
+            path = path + [path[0]]
+
+    return path, base_poly
