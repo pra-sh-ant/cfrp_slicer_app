@@ -71,16 +71,23 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         resampled.append(pts)
         prev_start = pts[0]
 
+    # first_lap traces the outermost ring as an explicit closed loop so the
+    # shape boundary is always fully printed (important for shape integrity).
+    # blend_chain then starts from ring1 (NOT ring0): ring0 is already done by
+    # first_lap, so starting from ring0 again would double-deposit it.
+    # The step from first_lap[-1] (ring0[0]) to ring1[0] is a short radial
+    # move of one track_gap — the natural seam between perimeter and infill.
     first_lap = resampled[0] + [resampled[0][0]]
-    last_lap = resampled[-1][1:] + [resampled[-1][0]]
-    continuous_path = first_lap + blend_chain(resampled, samples) + last_lap
+    inner_close = resampled[-1][1:] + [resampled[-1][0]]
+
+    if len(resampled) == 1:
+        continuous_path = first_lap
+    else:
+        continuous_path = first_lap + blend_chain(resampled[1:], samples) + inner_close
 
     path = dedupe_path(continuous_path)
 
-    # Merge first track when near end: if the spiral ends close to where it
-    # started (innermost ring nearly coincides with the outermost ring, or the
-    # reversed path ends near its own start), close the loop so the shape
-    # outline is maintained with no visible open seam.
+    # Close the loop when end lands near start (tight shapes, 1-2 tracks).
     if len(path) >= 2:
         d = math.hypot(path[-1][0] - path[0][0], path[-1][1] - path[0][1])
         if d < track_gap:

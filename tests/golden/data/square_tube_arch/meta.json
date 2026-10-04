@@ -1,7 +1,27 @@
 {
-  "status": "Pass",
+  "status": "Warning",
   "messages": [
-    "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
+    "Layer 1 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 2 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 3 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 4 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 5 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 6 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 7 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 8 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 9 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 10 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 11 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 12 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 13 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 14 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 15 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 16 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 17 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 18 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 19 path crosses itself (141 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 20 path crosses itself (142 internal intersections). Tangent peeling may intersect. Proceed with caution.",
+    "Layer 21 path crosses itself (146 internal intersections). Tangent peeling may intersect. Proceed with caution."
   ],
   "max_z": 10.2,
   "constraint_notes": []
