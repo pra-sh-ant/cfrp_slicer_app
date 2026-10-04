@@ -63,5 +63,12 @@ def revolve_radius_profile(shape, base_radius, tracks, gap):
 
         return taper
 
+    if shape == 'Conical Dome (Z)':
+        def cone(progress):
+            r = outer_radius * (1.0 - progress)
+            return r, max(0.0, r - wall)
+
+        return cone
+
     # Hollow Cylinder / Hollow Square Tube: constant outer radius.
     return lambda progress: (outer_radius, max(0.0, outer_radius - wall))

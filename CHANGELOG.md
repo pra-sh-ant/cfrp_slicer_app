@@ -5,6 +5,34 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 3 — PySide6 desktop app)
+- `gui_app.py` — entry point: `.venv312\Scripts\python.exe gui_app.py`
+- `gui/` package: `main_window`, `controls_panel`, `viewer_gl`, `results_panel`,
+  `slicer_worker` (slicing runs in a background QThread; UI stays responsive).
+- Dark-themed PySide6 window: left parameter panel + right tabs (3D View /
+  Dashboard / G-code). Slices automatically 500 ms after any parameter change.
+- 3D viewer uses pyqtgraph OpenGL — fiber path coloured by speed (Turbo
+  palette), layer isolation slider, print-bed mesh.
+- G-code export via Save dialog.
+- `pyproject.toml` `[gui]` extra: `PySide6 ≥ 6.7`, `pyqtgraph ≥ 0.13`,
+  `PyOpenGL ≥ 3.1`.
+
+### Changed (Phase 2)
+- **Spiral Z-ramping** for all revolve shells (sphere, dome, cylinder, tube,
+  taper, conical dome). Z increases continuously along each layer's path
+  instead of stepping at the seam, eliminating the visible layer transition.
+- **Conical Dome** promoted from a fixed-speed specialty shape to the revolve
+  pipeline: now gets multi-track walls, speed planning, and spiral Z-ramping.
+  Radius profile: r = R(1 - progress).
+- **Default part** changed from 10 to 7 tracks per layer so the default
+  135 × 25 mm rectangle slices successfully at startup.
+- **Mushroom stem height** labelled as "Stem Top Height (absolute Z, mm)" in
+  the UI for clarity.
+
+### Removed
+- **Torus (Z)** shape deleted (was a decorative looping curve with 360
+  self-intersections, not a printable geometric torus).
+
 ### Internal
 - Phase 1: all slicing logic moved into the UI-free `src/cfrp_core` package
   (golden outputs unchanged: G-code byte-identical, arrays within 4e-15).
@@ -23,6 +51,6 @@ outputs identical are listed under "Internal".
     thin front end over the core.
 - Phase 0: git repository, `pyproject.toml` (ruff, pytest, hypothesis
   config), `requirements.lock` pinned for Python 3.12, CI workflow for
-  `windows-latest`, 28 golden characterization cases, `docs/ARCHITECTURE.md`,
+  `windows-latest`, 27 golden characterization cases, `docs/ARCHITECTURE.md`,
   `docs/SPEC_current.md`. Lint-only code fixes (import order, explicit
   `zip(strict=False)`, one statement per line); no behaviour change.

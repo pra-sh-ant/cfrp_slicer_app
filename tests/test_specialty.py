@@ -1,4 +1,4 @@
-"""Tests for the flat-speed specialty generators (Torus, Conical Dome, Mushroom)."""
+"""Tests for the flat-speed specialty generator (Mushroom)."""
 import pytest
 
 from cfrp_core import ConfigError, from_legacy_dict

@@ -15,7 +15,7 @@ APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 ALL_SHAPES = [
     "Square/Rectangle", "Triangle", "Hexagon", "Circle", "L-Bracket",
     "Serpentine Infill", "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
-    "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)", "Torus (Z)",
+    "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)",
     "Conical Dome (Z)", "3D Overhang (Mushroom)",
 ]
 
@@ -52,11 +52,11 @@ def test_revolve_shape_exposes_tracks_per_layer_and_full_kinematics():
 
 
 def test_flat_specialty_shape_keeps_simplified_kinematics():
-    """Torus/Conical Dome/Mushroom are not part of the revolve pipeline and
-    should keep the flat-speed kinematics panel, not the full one."""
+    """Mushroom is not part of the revolve pipeline and should keep the
+    flat-speed kinematics panel, not the full one."""
     at = AppTest.from_file(APP_PATH)
     at.run(timeout=60)
-    at.selectbox(key="shape_select").select("Torus (Z)").run(timeout=60)
+    at.selectbox(key="shape_select").select("3D Overhang (Mushroom)").run(timeout=60)
     assert not at.exception
 
     labels = {w.label for w in at.number_input}
@@ -75,18 +75,12 @@ def test_sidebar_only_shows_controls_used_by_the_selected_shape():
     assert "Tracks Per Layer" not in labels
     assert "Print Outer Boundary" not in {widget.label for widget in at.checkbox}
 
-    at.selectbox(key="shape_select").select("Torus (Z)").run(timeout=60)
-    labels = {widget.label for widget in at.number_input}
-    assert "Height (Z mm)" in labels
-    assert "Layer Transition Angle (deg)" not in labels
-    assert "Min Bend Speed (mm/s)" not in labels
-    assert "Top Disc Overhang Speed (mm/s)" not in labels
-
     at.selectbox(key="shape_select").select("3D Overhang (Mushroom)").run(timeout=60)
     labels = {widget.label for widget in at.number_input}
     assert "Top Disc Overhang Speed (mm/s)" in labels
     assert "Top Dwell (sec)" in labels
-    assert "Tube Radius (mm)" not in labels
+    assert "Layer Transition Angle (deg)" not in labels
+    assert "Min Bend Speed (mm/s)" not in labels
 
 
 @pytest.mark.parametrize("shape", ALL_SHAPES)
@@ -121,11 +115,9 @@ def test_changing_tracks_per_layer_reslices_without_exception():
     assert not at.exception
 
 
-def test_default_part_reports_known_track_count_problem():
-    """Pins a known issue (docs/ARCHITECTURE.md): the legacy default part
-    (135 x 25 mm, 10 tracks, 1.2 mm gap, 3 mm radius) does not fit, so the
-    app opens on an error. Update this test when the defaults are changed."""
+def test_default_part_slices_successfully():
+    """The default part (135 x 25 mm, 7 tracks) must slice without errors."""
     at = AppTest.from_file(APP_PATH)
     at.run(timeout=60)
     assert not at.exception
-    assert any("only 7 fit" in e.value for e in at.error)
+    assert not at.error

@@ -10,6 +10,11 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+gui = [
+    "PySide6>=6.7",
+    "pyqtgraph>=0.13",
+    "PyOpenGL>=3.1",
+]
 # Legacy Streamlit front end (removed in Phase 10).
 streamlit-ui = [
     "streamlit==1.62.0",

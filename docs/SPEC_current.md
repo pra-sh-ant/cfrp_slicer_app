@@ -136,8 +136,7 @@ Bed 180 × 220 × 200 mm, 1 mm margin. Error if footprint > `bed − 2·margin`;
 
 ## 11. Specialty generators
 - **Mushroom:** base spiral inward `r(t) = base_r − gap·t/(2π)` from `θ0 = atan2(−cy, −cx)`, 36 steps/turn (≥ 1); centre; stem to absolute `z = stem_height` with `cure_dwell`; top spiral outward `r = r_min + gap·t/(2π)`, `v_z` within `r_min + 2·gap`, else `v_overhang`.
-- **Torus:** `max(10, H/max(gap,1) + 1)` rings × 40 points, `x = cx + (R + r·cos a)·cos(1.7a)` (decorative, not a true torus).
-- **Conical Dome:** stacked circles `r = R(1 − t)`, no ramps.
+- **Conical Dome:** revolve shell with `r = R(1 − progress)`, spiral Z-ramping.
 
 ## 12. G-code
 Header; `G28 / G92 E0 / G90 / G0 Z15`; purge `G1 F{purge_f} E{purge_e}`, `G4 P1500`, `G92 E0`; approach `G0 F{travel_f}`; `M1995 P47 S{uv}`; plunge `G1 F300 Z{z_offset}`, `G4 P500`; per point `G1 F{v·60} X Y Z E{cumulative}`; layer banners; `G4` at `cure_dwell`; `M1995 P47 S0`, lift +15, park, `M84`.

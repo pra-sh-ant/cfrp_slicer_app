@@ -78,13 +78,14 @@ def test_rejects_values_that_crash_or_emit_unsafe_gcode(key, value):
 
 
 def test_flat_specialty_requires_positive_z_pull_speed():
-    cfg = base_2d_config(shape="Torus (Z)", v_z=0.0, accel=0.0, decel=0.0)
+    cfg = base_2d_config(shape="3D Overhang (Mushroom)", v_z=0.0, accel=0.0, decel=0.0)
     with pytest.raises(ValueError, match="Z Pull Speed"):
         _resolve(cfg)
 
 
 def test_flat_specialty_skips_cornering_planner_checks():
-    """Torus/Conical Dome/Mushroom never run the speed planner, and the
-    sidebar zeroes its fields for them -- that must not be rejected."""
-    cfg = base_2d_config(shape="Conical Dome (Z)", v_z=2.0, accel=0.0, decel=0.0, v_min=0.0)
+    """Mushroom never runs the speed planner, and the sidebar zeroes its
+    fields for it -- that must not be rejected."""
+    cfg = base_2d_config(shape="3D Overhang (Mushroom)", v_z=2.0, v_overhang=5.0, dwell=1.5,
+                         accel=0.0, decel=0.0, v_min=0.0)
     _resolve(cfg)

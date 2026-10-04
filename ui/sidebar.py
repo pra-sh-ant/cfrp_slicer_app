@@ -143,7 +143,11 @@ def render_geometry_section(p):
             c1, c2 = st.columns(2)
             cfg_base_r = c1.number_input("Base Anchor Radius (mm)", value=float(p["base_r"]), min_value=0.1, step=1.0)
             cfg_top_r = c2.number_input("Top Disc Radius (mm)", value=float(p["top_r"]), min_value=0.1, step=1.0)
-            cfg_stem_h = st.number_input("Stem Height (Z mm)", value=float(p["stem_h"]), min_value=0.1, step=1.0)
+            cfg_stem_h = st.number_input(
+                "Stem Top Height (absolute Z, mm)",
+                value=float(p["stem_h"]), min_value=0.1, step=1.0,
+                help="Absolute Z coordinate of the stem top, not relative to the Z-offset."
+            )
             cfg_wall_t, cfg_w, cfg_h, cfg_thick, cfg_invert, cfg_boundary = 0.0, 0, 0, 0, False, False
         elif cfg_shape == "Hollow Sphere (Z)":
             # A sphere's height is exactly one diameter -- it isn't a free
@@ -154,23 +158,10 @@ def render_geometry_section(p):
             cfg_stem_h = 2.0 * cfg_base_r
             st.caption(f"Height = 2 x Outer Radius = {cfg_stem_h:.1f} mm (fixed by geometry)")
             cfg_wall_t, cfg_top_r, cfg_w, cfg_h, cfg_thick, cfg_invert, cfg_boundary = 0.0, 0.0, 0, 0, 0, False, False
-        elif cfg_shape in {"Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Dome (Z)", "Tapered Cylinder (Z)"}:
-            # Wall thickness for the revolve shells is set by Tracks Per
-            # Layer (see Layering & Layup), not an independent field here --
-            # more tracks = thicker wall, spaced by the process's own Track
-            # Gap, instead of a number that could silently mismatch it.
+        elif cfg_shape in {"Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Dome (Z)", "Tapered Cylinder (Z)", "Conical Dome (Z)"}:
             cfg_base_r = st.number_input("Outer Radius (mm)", value=float(p.get("base_r", 20.0)), min_value=1.0, step=1.0)
             cfg_stem_h = st.number_input("Height (Z mm)", value=float(p.get("stem_h", 25.0)), min_value=1.0, step=1.0)
             cfg_wall_t, cfg_top_r, cfg_w, cfg_h, cfg_thick, cfg_invert, cfg_boundary = 0.0, 0.0, 0, 0, 0, False, False
-        elif cfg_shape == "Conical Dome (Z)":
-            cfg_base_r = st.number_input("Outer Radius (mm)", value=float(p.get("base_r", 20.0)), min_value=1.0, step=1.0)
-            cfg_stem_h = st.number_input("Height (Z mm)", value=float(p.get("stem_h", 25.0)), min_value=1.0, step=1.0)
-            cfg_wall_t, cfg_top_r, cfg_w, cfg_h, cfg_thick, cfg_invert, cfg_boundary = 0.0, 0.0, 0, 0, 0, False, False
-        elif cfg_shape == "Torus (Z)":
-            cfg_base_r = st.number_input("Major Radius (mm)", value=float(p.get("base_r", 20.0)), min_value=1.0, step=1.0)
-            cfg_wall_t = st.number_input("Tube Radius (mm)", value=float(p.get("wall_t", 2.5)), min_value=0.1, step=0.1)
-            cfg_stem_h = st.number_input("Height (Z mm)", value=float(p.get("stem_h", 10.0)), min_value=1.0, step=1.0)
-            cfg_top_r, cfg_w, cfg_h, cfg_thick, cfg_invert, cfg_boundary = 0.0, 0, 0, 0, False, False
         else:
             cfg_invert = (
                 st.checkbox("Invert Bends (Loop Outside)", value=p.get("invert", False), help="Flip the bend direction for loop-outside research layouts.")
@@ -258,17 +249,10 @@ def render_kinematics_section(p, is_3d, is_revolve=False, shape=None):
         )
 
         if is_3d and not is_revolve:
-            # Torus / Conical Dome / Mushroom: flat-speed specialty generators,
-            # single trajectory with no per-layer seam ramp and no cornering-speed
-            # planning -- Layer Transition Angle / Seam Trim Length are never read
-            # for this group (see _run_slicing_pipeline, which calls
-            # SpecialtyEngine.generate_specialty_shape directly, skipping the
-            # per-layer stitching loop entirely), so they're omitted here.
+            # Mushroom: flat-speed specialty generator, single trajectory with
+            # no per-layer seam ramp and no cornering-speed planning.
             cfg_vz = st.number_input("Z Pull Speed (mm/s)", value=float(p.get("v_z", 2.0)), min_value=0.1, step=0.5)
             if shape == "3D Overhang (Mushroom)":
-                # Top Disc Overhang Speed / Top Dwell only ever apply to the
-                # mushroom's top-disc cure step (SpecialtyEngine.generate_overhang_test);
-                # Torus and Conical Dome never read either field.
                 cfg_v_overhang = st.number_input("Top Disc Overhang Speed (mm/s)", value=float(p.get("v_overhang", 5.0)), min_value=0.1, step=0.5)
                 cfg_dwell = st.number_input("Top Dwell (sec)", value=float(p.get("dwell", 1.5)), min_value=0.0, step=0.5)
             else:

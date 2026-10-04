@@ -201,13 +201,33 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed)
 
 # --- Layer loops -------------------------------------------------------------
 
+def _apply_spiral_z(layer_trajectory, z_start, z_end):
+    """Reassign Z to ramp linearly from z_start to z_end based on cumulative
+    path distance, so the layer transition is invisible."""
+    if not layer_trajectory:
+        return
+    cum = 0.0
+    cum_dists = [0.0]
+    for i in range(1, len(layer_trajectory)):
+        cum += layer_trajectory[i]['dist']
+        cum_dists.append(cum)
+    total = cum_dists[-1]
+    if total < 1e-9:
+        for pt in layer_trajectory:
+            pt['z'] = z_start
+        return
+    for i, pt in enumerate(layer_trajectory):
+        pt['z'] = z_start + (z_end - z_start) * (cum_dists[i] / total)
+
+
 def build_revolve_shell(config: ProcessConfig):
-    """Z-revolve shell (sphere/dome/cylinder/tube/taper): slice the height
-    into layers, fill each slice's wall with concentric tracks alternating
-    outside-in/inside-out, and bridge layers with seam-trimmed ramps.
+    """Z-revolve shell (sphere/dome/cylinder/tube/taper/cone) with spiral
+    Z-ramping: Z increases continuously along each layer's path so there
+    is no sudden ramp between layers.
 
         num_layers = max(2, round(H / layer_height) + 1),  layer_height ≥ 0.05
-        z_i = z0 + H·i/(num_layers − 1)
+        Layer i: Z ramps from z0 + H·i/(n-1) to z0 + H·(i+1)/(n-1)
+        Last layer stays flat at z0 + H.
 
     Returns (trajectory, target_shapes, max_z)."""
     g = config.geometry
@@ -223,7 +243,6 @@ def build_revolve_shell(config: ProcessConfig):
     seam_trim = max(0.0, float(config.seam_trim_mm))
     use_fermat = config.infill_type == FERMAT
 
-    # A sphere's height is exactly one diameter, whatever Height says.
     if shape == 'Hollow Sphere (Z)':
         height = 2.0 * outer_radius
     else:
@@ -246,13 +265,10 @@ def build_revolve_shell(config: ProcessConfig):
         cross_section = geo.revolve_cross_section(cx, cy, current_outer, current_inner, shape_type)
         target_shapes.append((layer_z, cross_section, i + 1))
         if cross_section.is_empty or cross_section.area < 1e-6:
-            continue  # degenerate slice (e.g. right at a pole/tip)
+            continue
 
         is_outward = (i % 2 != 0)
         try:
-            # track_count=None: fill as many tracks as fit (the annulus thins
-            # near a pole or tip). min_radius=0: a round wall has no corners;
-            # the speed planner still slows for the square tube's corners.
             if use_fermat:
                 raw_path = geo.fermat_spiral_path(
                     cross_section, gap, 0.0, track_count=None, start_from_inside=is_outward
@@ -266,14 +282,47 @@ def build_revolve_shell(config: ProcessConfig):
         if not raw_path:
             continue
 
-        # The lead-in goes on the first layer that actually prints -- a
-        # sphere's bottom pole slice is empty, so that isn't always i == 0.
         if not anchored:
             raw_path = add_lead_in_anchor(raw_path, float(config.anchor_length_mm))
             anchored = True
 
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
-        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min)
+
+        # Spiral Z: ramp Z linearly from this layer's nominal Z to the next.
+        if i < num_layers - 1:
+            z_end = z0 + height * ((i + 1) / (num_layers - 1))
+        else:
+            z_end = layer_z
+        _apply_spiral_z(layer_trajectory, layer_z, z_end)
+
+        if trajectory and layer_trajectory:
+            trim_trajectory_tail(trajectory, seam_trim)
+            first_cut, layer_trajectory = trim_path_head(layer_trajectory, seam_trim)
+            prev_end = trajectory[-1]
+            dx = first_cut['x'] - prev_end['x']
+            dy = first_cut['y'] - prev_end['y']
+            dz = first_cut['z'] - prev_end['z']
+            seg_len = math.sqrt(dx ** 2 + dy ** 2 + dz ** 2)
+            steps = max(1, int(math.ceil(seg_len / 0.75)))
+            for step in range(1, steps + 1):
+                frac = step / steps
+                px = prev_end['x'] + dx * frac
+                py = prev_end['y'] + dy * frac
+                pz = prev_end['z'] + dz * frac
+                prior = trajectory[-1]
+                d = math.sqrt(
+                    (px - prior['x']) ** 2
+                    + (py - prior['y']) ** 2
+                    + (pz - prior['z']) ** 2
+                )
+                trajectory.append({
+                    "x": px, "y": py, "z": pz,
+                    "dist": float(d), "v": kin.v_min,
+                    "e_mult": 1.0, "is_transition": True,
+                    "layer_start": step == steps, "layer": i + 1,
+                })
+
+        trajectory.extend(layer_trajectory)
 
     return trajectory, target_shapes, max_z
 

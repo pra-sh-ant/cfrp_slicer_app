@@ -25,7 +25,7 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, mo
 ShapeName = Literal[
     "Square/Rectangle", "Triangle", "Hexagon", "Circle", "L-Bracket",
     "Serpentine Infill", "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
-    "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)", "Torus (Z)",
+    "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)",
     "Conical Dome (Z)", "3D Overhang (Mushroom)",
 ]
 SHAPES: tuple[str, ...] = ShapeName.__args__
@@ -34,10 +34,10 @@ SHAPES: tuple[str, ...] = ShapeName.__args__
 # layer, alternating outside-in/inside-out, like the flat laminate pipeline.
 REVOLVE_SHAPES = frozenset({
     "Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Hollow Sphere (Z)",
-    "Dome (Z)", "Tapered Cylinder (Z)",
+    "Dome (Z)", "Tapered Cylinder (Z)", "Conical Dome (Z)",
 })
 # Fixed-speed specialty generators: no per-layer stitching, no speed planner.
-FLAT_SPECIALTY_SHAPES = frozenset({"Torus (Z)", "Conical Dome (Z)", "3D Overhang (Mushroom)"})
+FLAT_SPECIALTY_SHAPES = frozenset({"3D Overhang (Mushroom)"})
 SPECIALTY_SHAPES = REVOLVE_SHAPES | FLAT_SPECIALTY_SHAPES
 
 ARCHIMEDEAN = "Archimedean (Concentric Spiral)"
@@ -105,10 +105,10 @@ class GeometryConfig(_Frozen):
     thickness_mm: float = 10.0           # L-bracket leg thickness
     invert_bends: bool = False           # Serpentine Infill: loop outside
     include_boundary: bool = False       # flat shapes: add one perimeter pass
-    base_radius_mm: float = 10.0         # revolve outer radius / torus major radius / mushroom base
+    base_radius_mm: float = 10.0         # revolve outer radius / mushroom base
     disc_radius_mm: float = 15.0         # mushroom top disc
     stem_height_mm: float = 25.0         # revolve height / mushroom stem top (absolute Z)
-    wall_thickness_mm: float = 2.5       # torus tube radius
+    wall_thickness_mm: float = 2.5
     start_x_mm: float = 26.0
     start_y_mm: float = 40.0
 
@@ -217,7 +217,7 @@ class ProcessConfig(_Frozen):
     # The layup as the user typed it, for the G-code header. None = derive.
     layup_text: str | None = None
     infill_type: InfillPattern = ARCHIMEDEAN
-    tracks_per_layer: int = 10
+    tracks_per_layer: int = 7
     track_gap_mm: float = 1.2
     min_radius_mm: Number = 3.0
     layer_height_mm: Number = 0.2

@@ -1,8 +1,0 @@
-{
-  "status": "Warning",
-  "messages": [
-    "Layer 1 path crosses itself (360 internal intersections). Tangent peeling may intersect. Proceed with caution."
-  ],
-  "max_z": 9.2,
-  "constraint_notes": []
-}

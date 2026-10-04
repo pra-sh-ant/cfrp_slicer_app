@@ -1,8 +1,7 @@
-"""Fixed-speed specialty generators (spec §11): the Mushroom overhang test,
-Torus and Conical Dome. No speed planner and no layer ramps.
+"""Fixed-speed specialty generator (spec §11): the Mushroom overhang test.
 
-Phase 10 decides the fate of Torus and Conical Dome (see ARCHITECTURE.md,
-known issues); until then they are kept behaviour-identical.
+No speed planner and no layer ramps -- the mushroom is a single continuous
+path at fixed speeds.
 """
 from __future__ import annotations
 
@@ -94,47 +93,10 @@ def overhang_test(config: ProcessConfig) -> list[dict]:
 
 @lru_cache(maxsize=64)
 def _specialty_shape(config: ProcessConfig) -> list[dict]:
-    g, k = config.geometry, config.kinematics
-    shape = g.shape
-    if shape == '3D Overhang (Mushroom)':
+    g = config.geometry
+    if g.shape == '3D Overhang (Mushroom)':
         return overhang_test(config)
-
-    cx, cy = float(g.start_x_mm), float(g.start_y_mm)
-    z0 = float(config.z_offset_mm)
-    height = float(g.stem_height_mm)
-    wall_t = float(g.wall_thickness_mm)
-    gap = max(float(config.track_gap_mm), 0.5)
-    v_z = float(k.v_z_mm_s)
-    trajectory = []
-
-    if shape == 'Torus (Z)':
-        # Decorative looping curve (the 1.7 factor), not a geometric torus.
-        major_r = max(float(g.base_radius_mm), 8.0)
-        minor_r = max(float(wall_t), 2.0)
-        ring_count = max(10, int(height / max(gap, 1.0)) + 1)
-        for i in range(ring_count):
-            z_level = z0 + (height * (i / ring_count))
-            for a in np.linspace(0.0, 2.0 * math.pi, 40, endpoint=False):
-                x = cx + (major_r + minor_r * math.cos(a)) * math.cos(a * 1.7)
-                y = cy + (major_r + minor_r * math.cos(a)) * math.sin(a * 1.7)
-                _add_pt(trajectory, x, y, z_level, v_z, 1.0)
-    elif shape == 'Conical Dome (Z)':
-        # Stacked circles r = R(1 − t); steps vertically between rings.
-        radius = max(float(g.base_radius_mm), 6.0)
-        heights = max(4, int(height / max(gap, 1.0)) + 1)
-        for i in range(heights):
-            t = i / max(1, heights - 1)
-            z_level = z0 + height * t
-            current_r = radius * (1.0 - t)
-            theta = np.linspace(0.0, 2.0 * math.pi, 40, endpoint=False)
-            for a in theta:
-                x = cx + current_r * math.cos(a)
-                y = cy + current_r * math.sin(a)
-                _add_pt(trajectory, x, y, z_level, v_z, 1.0)
-    else:
-        raise ValueError(f"No specialty generator for shape {shape!r}.")
-
-    return trajectory
+    raise ValueError(f"No specialty generator for shape {g.shape!r}.")
 
 
 def specialty_shape(config: ProcessConfig) -> list[dict]:

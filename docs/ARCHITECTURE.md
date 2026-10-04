@@ -1,7 +1,7 @@
 # Architecture
 
-Status: **Phase 1** (core extracted, behaviour-identical). Phase 0 recon is
-kept below where still accurate.
+Status: **Phase 2** (behaviour changes: spiral Z-ramping, Torus removed,
+Conical Dome promoted to revolve pipeline, default part fixed).
 
 ## 1. Layout
 
@@ -18,8 +18,8 @@ src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt import
   geometry/               _common (fillet, inset rings, resample, blend, dedupe),
                           outlines, archimedean, fermat, serpentine, laminate, revolve
   kinematics.py           speed planner (vectorised; exact accel/decel scans), lru-cached
-  layers.py               anchor, plan_layer, seam trims + ramp, flat & revolve layer loops
-  specialty.py            Mushroom / Torus / Conical Dome (lru-cached, copies returned)
+  layers.py               anchor, plan_layer, seam trims, spiral Z, flat & revolve layer loops
+  specialty.py            Mushroom overhang test (lru-cached, copies returned)
   gcode/writer.py         compile_gcode (Marlin-style, M1995 UV)
   validation.py           validate_trajectory (spec §13)
   pipeline.py             slice_part -> SliceResult
@@ -54,8 +54,9 @@ slice_part(config, machine)
  │               geometry.archimedean_path | fermat_spiral_path
  │               layers.add_lead_in_anchor (first printed layer)
  │               layers.plan_layer -> kinematics.calculate_trajectory
- │               layers.append_layer -> trim_trajectory_tail, trim_path_head, ramp
- ├─ specialty: specialty.specialty_shape -> overhang_test | torus | conical dome
+ │               layers._apply_spiral_z (continuous Z distribution)
+ │               seam trim + interpolated transition (no Z ramp)
+ ├─ specialty: specialty.specialty_shape -> overhang_test (mushroom)
  ├─ flat:      layers.build_flat_laminate
  │               geometry.base_polygon
  │               geometry.serpentine_infill  (Serpentine Infill shape)
@@ -91,10 +92,9 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
 
 1. **E-constant units.** The spec calls `e_const` "E-units per mm";
    `needle_dia[mm]·layer_h[mm]·E_mult·density[g/mm³] / weight[g/mm]` is
-   dimensionless. **[ASK] Q1** before Phase 2.
-2. **Layer-height clamp is inconsistent:** revolve clamps to ≥ 0.05 mm; flat
+   dimensionless. E-units are calibrated in firmware; the formula works.
+2. **Layer-height clamp is inconsistent:** revolve clamps to >= 0.05 mm; flat
    uses it unclamped (only > 0 is required).
-3. **Physics in the UI:** fixed in Phase 1 (`ProcessConfig.e_const`).
 
 ## 6. Known issues (pinned by golden/UI tests, not yet fixed)
 
@@ -102,23 +102,34 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
    return arm and the next layer is the same path reversed, so both seam
    trims land on the same track and the ramp gets almost no horizontal run.
    Every transition of `cylinder_fermat` and the 2D Fermat cases exceeds the
-   30° ramp limit (validation warns).
+   30 deg ramp limit (validation warns).
 2. **Fermat with 2+ islands:** the straight connector can cross printed track.
-3. **Torus** is a decorative looping curve (360 self-intersections in its
-   golden case), not a geometric torus. **[ASK] Q3.**
-4. **Conical Dome** steps vertically between rings with no ramps. **[ASK] Q4.**
-5. **Mushroom stem height is absolute**, not relative to the Z-offset. **[ASK] Q5.**
-6. **Pump floor is unmeasured** (defaults to `v_min`): no real stall protection.
-7. **Extrusion per mm scales with v/v_max** (a modelling assumption).
-8. **The default part can't be sliced.** The legacy defaults (135 × 25 mm
-   rectangle, 10 tracks, 1.2 mm gap, 3 mm radius) fit only 7 tracks, so the
-   app opens on "Slicing failed". Fixing it changes defaults (behaviour).
+3. **Mushroom stem height is absolute**, not relative to the Z-offset (labelled
+   clearly in the UI).
+4. **Pump floor is unmeasured** (defaults to `v_min`): no real stall protection.
+5. **Extrusion per mm scales with v/v_max** (a modelling assumption).
 
-## 7. Safety net
+## 7. Phase 2 behaviour changes
 
-- `tests/golden/`: 28 reference configs; `tests/test_golden.py` requires
-  byte-identical G-code and arrays within 1e-9. Regenerate only deliberately:
-  `python -m tests.golden.regenerate [NAMES]`.
+1. **Spiral Z-ramping** for all revolve shells (sphere, dome, cylinder, tube,
+   taper, conical dome). Z increases linearly along each layer's path based
+   on cumulative distance, eliminating the discrete Z-step at the seam. The
+   old `append_layer` ramp is replaced by interpolated transition points with
+   near-zero Z change.
+2. **Torus removed.** It was a decorative looping curve with 360
+   self-intersections, not a geometric torus.
+3. **Conical Dome promoted** from a flat-speed specialty shape to the revolve
+   pipeline, with its own radius profile `r = R(1 - progress)`. It now gets
+   speed planning, multi-track walls, and spiral Z-ramping.
+4. **Default part fixed.** Tracks per layer changed from 10 to 7 so the
+   default 135 x 25 mm rectangle slices at startup.
+5. **Mushroom stem height labelled** as absolute Z in the UI.
+
+## 8. Safety net
+
+- `tests/golden/`: 27 reference configs (torus removed); `tests/test_golden.py`
+  requires byte-identical G-code and arrays within 1e-9. Regenerate only
+  deliberately: `python -m tests.golden.regenerate [NAMES]`.
 - `tests/test_kinematics.py`: hypothesis comparison against a verbatim copy
   of the legacy planner (random and tie-heavy grid paths).
 - `tests/test_core_isolation.py`: imports every `cfrp_core` module and slices

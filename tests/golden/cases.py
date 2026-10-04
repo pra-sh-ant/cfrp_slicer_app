@@ -116,9 +116,7 @@ CASES += [
     {"name": "mushroom", "config": _specialty(
         "3D Overhang (Mushroom)", base_radius=10.0, disc_radius=15.0, stem_height=25.0,
         v_overhang=5.0, dwell=1.5), "layup": [0.0]},
-    {"name": "torus", "config": _specialty(
-        "Torus (Z)", base_radius=20.0, wall_thickness=2.5, stem_height=10.0), "layup": [0.0]},
-    {"name": "conical_dome", "config": _specialty(
+    {"name": "conical_dome", "config": _revolve(
         "Conical Dome (Z)", base_radius=20.0, stem_height=25.0), "layup": [0.0]},
 ]
 
