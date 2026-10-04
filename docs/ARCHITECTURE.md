@@ -1,8 +1,8 @@
 # Architecture
 
-Status: **Phase 6** (Fermat seam phase-shift fix: all Fermat cases now Pass
-validation; previous phases: spiral Z, Torus removed, Conical Dome promoted,
-PySide6 GUI, parameter save/load, PyInstaller packaging).
+Status: **Phase 7** (recent files, layer-height clamp fix; prior: Fermat seam
+phase-shift, spiral Z, Torus removed, Conical Dome promoted, PySide6 GUI,
+parameter save/load, PyInstaller packaging).
 
 ## 1. Layout
 
@@ -94,9 +94,6 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
 1. **E-constant units.** The spec calls `e_const` "E-units per mm";
    `needle_dia[mm]·layer_h[mm]·E_mult·density[g/mm³] / weight[g/mm]` is
    dimensionless. E-units are calibrated in firmware; the formula works.
-2. **Layer-height clamp is inconsistent:** revolve clamps to >= 0.05 mm; flat
-   uses it unclamped (only > 0 is required).
-
 ## 6. Known issues (pinned by golden/UI tests, not yet fixed)
 
 1. **Fermat with 2+ islands:** the straight connector can cross printed track.

@@ -5,6 +5,13 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added / Fixed (Phase 7 — Recent Files + layer-height clamp)
+- **Recent Files** submenu (File → Open Recent): remembers the last 8 saved/
+  loaded `.json` parameter files via QSettings; includes "Clear Recent Files".
+- **Layer-height clamp consistency**: `build_flat_laminate` now clamps
+  `layer_height` to ≥ 0.05 mm (same as `build_revolve_shell`), preventing
+  degenerate zero-height layers if a very small value slips through.
+
 ### Fixed (Phase 6 — Fermat seam phase-shift)
 - **Fermat layer transitions now Pass validation** (previously Warning for all
   Fermat cases including `cylinder_fermat`).  Root cause: both the end of

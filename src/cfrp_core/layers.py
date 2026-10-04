@@ -354,9 +354,10 @@ def build_flat_laminate(config: ProcessConfig):
     kin = KinematicsParams.from_config(config)
     seam_trim = max(0.0, float(config.seam_trim_mm))
     gap, r_min = config.track_gap_mm, config.min_radius_mm
+    layer_height = max(float(config.layer_height_mm), 0.05)
 
     for i in range(config.layers):
-        layer_z = config.z_offset_mm + (i * config.layer_height_mm)
+        layer_z = config.z_offset_mm + (i * layer_height)
         current_angle = layup_sequence[i % len(layup_sequence)]
         max_z = layer_z
 
