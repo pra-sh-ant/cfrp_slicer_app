@@ -15,27 +15,36 @@ from ._common import (
 _CONNECTOR_STEP_MM = 0.75   # max segment length inside ring-to-ring connectors
 
 
-def _left_most(ring_poly):
-    """Return the (x, y) point with minimum X (then minimum Y) on a ring."""
+def _left_mid(ring_poly):
+    """Return the left-edge midpoint: min X, Y closest to the ring's centroid.
+
+    For a rectangle this is the centre of the left straight edge.  Using the
+    centroid Y (rather than min Y) ensures that consecutive inset rings have
+    their seam at the same Y level, so inter-ring connectors are strictly
+    horizontal (+X direction) instead of drifting diagonally.
+    """
     coords = list(ring_poly.exterior.coords)[:-1]
-    return min(coords, key=lambda p: (p[0], p[1]))
+    min_x = min(p[0] for p in coords)
+    cy = ring_poly.centroid.y
+    left_pts = [p for p in coords if p[0] <= min_x + 0.5]
+    return min(left_pts, key=lambda p: abs(p[1] - cy))
 
 
 def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False,
                      seam_hint=None):
     """Concentric ring infill with left-side seam column.
 
-    Each ring is traversed from its left-most point (min X, then min Y) almost
-    all the way around, ending one sample step before the seam.  A short
-    straight connector then steps inward to the left-most seam of the next
-    ring.  Because every ring's seam is on the left edge, all connectors form a
-    single vertical column on the left side of the part — matching the anchor
-    direction (−X, approaching from the left).
+    Each ring's seam is the left-edge midpoint (min X, Y nearest to centroid).
+    Because all concentric rings share the same centroid Y, consecutive seam
+    points are at the same Y level and connectors between rings are strictly
+    horizontal (+X direction, stepping inward by one track gap).  The lead-in
+    anchor approaches from −X at the same Y, so the entire seam zone is one
+    clean horizontal strip on the left side of the part.
 
     Seam selection:
-      • For outside-in (default): left-most point of the outermost ring.
-      • For inside-out: left-most point of the innermost ring, or `seam_hint`
-        when supplied (aligns with the previous outside-in layer's seam).
+      • For outside-in (default): left-edge midpoint of the outermost ring.
+      • For inside-out: left-edge midpoint of the innermost ring, or
+        `seam_hint` when supplied (aligns with the previous layer's seam).
 
     Returns (path, base_poly).  Raises ValueError if `track_count` rings were
     requested but fewer fit.
@@ -81,7 +90,7 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     if seam_hint is not None:
         initial_seam = seam_hint
     else:
-        initial_seam = _left_most(ordered[0])
+        initial_seam = _left_mid(ordered[0])
 
     path = []
     prev_seam = initial_seam
@@ -92,9 +101,9 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         ring_seam = ring_pts[0]
 
         if path:
-            # Short straight connector from the last traversal point of the previous ring
-            # (one step before its left-most seam) to the left-most seam of this ring.
-            # For convex shapes this step is nearly horizontal (+X, inward).
+            # Straight connector from prev ring's seam (left-edge midpoint at Y_centroid)
+            # to this ring's seam.  Both points have the same Y ≈ centroid_Y so the
+            # connector is strictly horizontal, stepping inward by one track gap in +X.
             seg_len = math.hypot(ring_seam[0] - prev_seam[0], ring_seam[1] - prev_seam[1])
             n_conn = max(2, int(math.ceil(seg_len / _CONNECTOR_STEP_MM)))
             for i in range(1, n_conn + 1):
@@ -105,10 +114,12 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
                 ))
 
         # Traverse the ring.  resample_closed_ring returns `samples` points covering
-        # one full revolution starting at the left-most seam, ending one step before
-        # it.  prev_seam is updated to ring_pts[-1] so the next connector starts from
-        # the natural end of this traversal — no jump back to the seam point.
+        # one full revolution starting at the left-edge midpoint (seam).  prev_seam
+        # is updated to ring_pts[0] (not ring_pts[-1]) so consecutive seams stay
+        # at the same Y level — strictly horizontal connectors, no downward drift.
         path.extend(ring_pts)
-        prev_seam = ring_pts[-1]  # last traversal point, one step before the seam
+        # Use ring_pts[0] (the seam start) as the next anchor so consecutive
+        # seams stay at the same Y level — no drift per ring.
+        prev_seam = ring_pts[0]
 
     return dedupe_path(path), base_poly
