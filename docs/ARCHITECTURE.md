@@ -1,103 +1,126 @@
 # Architecture
 
-Status: **Phase 0** (recon). This describes the code as it stands at the
-start of the re-architecture; later phases update it.
+Status: **Phase 1** (core extracted, behaviour-identical). Phase 0 recon is
+kept below where still accurate.
 
-## 1. What exists
-
-A Streamlit app with physics and UI interleaved, in a flat module layout:
-
-| Module | Role | UI coupling |
-|---|---|---|
-| `app.py` | Entry point; the three pipelines (flat, revolve, specialty) and their shared helpers (`_add_lead_in_anchor`, `_plan_layer`, `_append_layer`, `_finalize`, `_trim_*`) | `st.set_page_config`, `st.session_state`, `st.info` inside `_finalize` |
-| `geometry.py` | Outlines, wall offset + fillet, Archimedean / Fermat / oriented serpentine / serpentine-infill generators, revolve cross-sections | none |
-| `kinematics.py` | Speed planner (corner radius, heading, accel/decel passes, pump floor, pressure advance) | `@st.cache_data` |
-| `specialty.py` | Mushroom, Torus, Conical Dome generators | `@st.cache_data` |
-| `validation.py` | `resolve_process_constraints` (pre-slice) and `ValidationEngine` (post-slice) | none |
-| `gcode.py` | G-code writer (Marlin-style, custom `M1995 P47 S{uv}` UV command) | none |
-| `machine.py` | Hard-coded 180 × 220 × 200 mm bed, `fit_trajectory_to_bed`, `check_bounds` | none |
-| `presets.py` | Default parameters, shape lists | none |
-| `ui/sidebar.py` | Parameter panels; **also computes `e_const`** (physics in UI) | Streamlit |
-| `ui/results.py`, `viewer.py` | Dashboard, Plotly 3D viewer, G-code tab | Streamlit / Plotly |
-
-Data model: a single flat `sys_config: dict` (≈ 45 keys, merged from the
-sidebar panels) flows through every stage. A trajectory is a `list[dict]`
-with keys `x, y, z, dist, v, e_mult, pump_floored, layer_start,
-is_transition, layer, z_layer, cure_dwell` (not every point has every key).
-
-## 2. Call graph
+## 1. Layout
 
 ```
-app.main
- ├─ ui.sidebar.render_* ──────────────► sys_config (dict), e_const computed here
- ├─ validation.resolve_process_constraints(sys_config) ─► resolved dict + constraint_notes
- └─ app._run_slicing_pipeline(cfg, is_3d, layup, machine)
-     ├─ [specialty] specialty.SpecialtyEngine.generate_specialty_shape(cfg)
-     │               └─ generate_overhang_test(cfg)          (mushroom)
-     ├─ [revolve]  app._run_revolve_pipeline(cfg, machine)
-     │     per Z slice:
-     │       app._revolve_radius_profile → GeometryEngine.get_revolve_cross_section
-     │       GeometryEngine.generate_archimedean_path | generate_fermat_spiral_path
-     │       app._add_lead_in_anchor (first printed layer)
-     │       app._plan_layer → KinematicsEngine.calculate_trajectory
-     │       app._append_layer → _trim_trajectory_tail, _trim_path_head (+ ramp)
-     └─ [flat]     per layer:
-             GeometryEngine.get_base_polygon
-             GeometryEngine.generate_serpentine_infill            (Serpentine Infill shape)
-           | GeometryEngine.get_printable_boundary + generate_laminate_layer
-                 └─ generate_archimedean_path | generate_fermat_spiral_path
-                    | generate_oriented_serpentine
-             app._add_lead_in_anchor (layer 1), app._plan_layer, app._append_layer
-     └─ app._finalize
-           ├─ machine.fit_trajectory_to_bed
-           ├─ gcode.GCodeCompiler.compile
-           └─ validation.ValidationEngine.validate_trajectory
-                 └─ machine.check_bounds, GeometryEngine._dedupe_path
- └─ ui.results.render_results → viewer.render_3d_viewer
+src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt imports)
+  __init__.py             public API: ProcessConfig, slice_part, from_legacy_dict, ...
+  config.py               pydantic v2 models: ProcessConfig + GeometryConfig,
+                          MaterialConfig, KinematicsConfig, GcodeConfig;
+                          field/model validators = spec §4 hard errors; e_const
+  constraints.py          resolve_process_constraints: spec §4 automatic adjustments + notes
+  legacy.py               legacy flat sys_config dict -> ProcessConfig
+  machine.py              MachineProfile (+ data/machine_profiles/default.json),
+                          fit_trajectory_to_bed, check_bounds
+  geometry/               _common (fillet, inset rings, resample, blend, dedupe),
+                          outlines, archimedean, fermat, serpentine, laminate, revolve
+  kinematics.py           speed planner (vectorised; exact accel/decel scans), lru-cached
+  layers.py               anchor, plan_layer, seam trims + ramp, flat & revolve layer loops
+  specialty.py            Mushroom / Torus / Conical Dome (lru-cached, copies returned)
+  gcode/writer.py         compile_gcode (Marlin-style, M1995 UV)
+  validation.py           validate_trajectory (spec §13)
+  pipeline.py             slice_part -> SliceResult
+app.py, ui/, viewer.py,   legacy Streamlit front end: collects inputs, calls
+presets.py                cfrp_core, renders. Removed in Phase 10.
+tests/                    pytest + hypothesis; tests/golden = characterization data
 ```
 
-Import graph (no cycles): `gcode → validation → geometry, machine, presets`;
-`app → everything`; `kinematics`, `specialty` → `streamlit`.
+## 2. Data model
 
-## 3. Spec/code mismatches
+- **Config:** `ProcessConfig` (frozen, hashable). Units in field names
+  (`track_gap_mm`, `v_max_mm_s`, `purge_f_mm_min`). Built directly, from a
+  nested dict (`build_config`), or from a legacy flat dict
+  (`from_legacy_dict`). Invalid input raises `ConfigError(ValueError)` whose
+  message is plain language (legacy wording).
+- **Machine:** `MachineProfile` JSON; the bundled default is the former
+  hard-coded 180 × 220 × 200 mm bed with a 1 mm margin.
+- **Trajectory:** still `list[dict]` per point (Phase 1 keeps the shape):
+  `x, y, z, dist, v, e_mult, pump_floored, layer_start, is_transition,
+  layer, z_layer, cure_dwell`.
+- **Result:** `SliceResult(config, trajectory, target_shapes, gcode,
+  validation, max_z, constraint_notes, info)`. The core never prints or
+  calls UI; notes (constraint adjustments, bed auto-positioning) are returned.
 
-`docs/SPEC_current.md` was written from this code, so it agrees with it by
-construction except for these points of imprecision or design concern:
+## 3. Call graph
 
-1. **E-constant units.** The spec calls `e_const` "E-units per mm".
-   Dimensionally `needle_dia[mm] · layer_h[mm] · E_mult[-] · density[g/mm³] /
-   weight[g/mm]` is **dimensionless**; the code multiplies it by travel in mm,
-   so E is "mm of something" whose physical meaning depends on how the pump
-   firmware interprets E. Needs the **[ASK] Q1** answer before Phase 2.
-2. **Layer-height clamp is inconsistent.** The revolve pipeline clamps
-   `layer_height ≥ 0.05` mm; the flat pipeline uses it unclamped (the
-   pre-slice check only requires > 0). The spec mentions only the revolve clamp.
-3. **Physics in the UI.** The spec places the `e_const` formula in the
-   sidebar; it belongs in the core (moved in Phase 1).
+```
+slice_part(config, machine)
+ ├─ constraints.resolve_process_constraints        -> (resolved config, notes)
+ ├─ revolve:   layers.build_revolve_shell
+ │               geometry.revolve_radius_profile / revolve_cross_section
+ │               geometry.archimedean_path | fermat_spiral_path
+ │               layers.add_lead_in_anchor (first printed layer)
+ │               layers.plan_layer -> kinematics.calculate_trajectory
+ │               layers.append_layer -> trim_trajectory_tail, trim_path_head, ramp
+ ├─ specialty: specialty.specialty_shape -> overhang_test | torus | conical dome
+ ├─ flat:      layers.build_flat_laminate
+ │               geometry.base_polygon
+ │               geometry.serpentine_infill  (Serpentine Infill shape)
+ │             | geometry.printable_boundary + laminate_layer
+ │                   -> archimedean_path | fermat_spiral_path | oriented_serpentine
+ │               layers.add_lead_in_anchor (layer 1), plan_layer, append_layer
+ ├─ machine.fit_trajectory_to_bed (+ shift target outlines)
+ ├─ gcode.compile_gcode
+ └─ validation.validate_trajectory -> machine.check_bounds, geometry.dedupe_path
+```
 
-## 4. Known issues (pinned by the golden tests, not yet fixed)
+Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
+`from_legacy_dict` -> `slice_part` -> `ui.results.render_results` ->
+`viewer.render_3d_viewer`.
+
+## 4. Behaviour-preservation notes (Phase 1)
+
+- G-code is byte-identical to the baseline for all 28 golden cases;
+  `x, y, z, dist` arrays are bit-identical; `v` and `e_mult` differ by at
+  most 4e-15 (numpy `hypot`/`dot` in the vectorised corner limits).
+- The accel/decel passes are kept as exact sequential scans: a closed-form
+  (cumulative-minimum) version rounds ~1 ulp differently, which flips the
+  pump-floor comparison at speeds exactly equal to `v_min` and changed a
+  golden validation status. See `kinematics._limit_accel`.
+- The pressure-advance look-ahead uses prefix sums + `searchsorted`, with
+  near-exact ties re-resolved by the legacy loop.
+- A few `ProcessConfig` fields are `int | float` (`min_radius_mm`,
+  `layer_height_mm`, `anchor_length_mm`) because the legacy G-code header
+  prints them raw ("0" vs "0.0"). Phase 5 normalises number formatting.
+- Speed planner: 0.10 s at 100k points (legacy 0.73 s), 0.96 s at 1M.
+
+## 5. Spec/code mismatches
+
+1. **E-constant units.** The spec calls `e_const` "E-units per mm";
+   `needle_dia[mm]·layer_h[mm]·E_mult·density[g/mm³] / weight[g/mm]` is
+   dimensionless. **[ASK] Q1** before Phase 2.
+2. **Layer-height clamp is inconsistent:** revolve clamps to ≥ 0.05 mm; flat
+   uses it unclamped (only > 0 is required).
+3. **Physics in the UI:** fixed in Phase 1 (`ProcessConfig.e_const`).
+
+## 6. Known issues (pinned by golden/UI tests, not yet fixed)
 
 1. **Fermat layer transitions are near-vertical.** A Fermat layer ends on its
-   return arm, and the next layer is the same path reversed, so both seam
-   trims land on the same stretch of track and the ramp gets almost no
-   horizontal run. Every layer transition of `cylinder_fermat` and the 2D
-   Fermat cases exceeds the 30° ramp limit (validation warns). Needs a
-   different seam strategy (e.g. rotate the next layer's start point).
+   return arm and the next layer is the same path reversed, so both seam
+   trims land on the same track and the ramp gets almost no horizontal run.
+   Every transition of `cylinder_fermat` and the 2D Fermat cases exceeds the
+   30° ramp limit (validation warns).
 2. **Fermat with 2+ islands:** the straight connector can cross printed track.
 3. **Torus** is a decorative looping curve (360 self-intersections in its
    golden case), not a geometric torus. **[ASK] Q3.**
 4. **Conical Dome** steps vertically between rings with no ramps. **[ASK] Q4.**
 5. **Mushroom stem height is absolute**, not relative to the Z-offset. **[ASK] Q5.**
 6. **Pump floor is unmeasured** (defaults to `v_min`): no real stall protection.
-7. **Extrusion per mm scales with v/v_max** (a modelling assumption to verify).
+7. **Extrusion per mm scales with v/v_max** (a modelling assumption).
+8. **The default part can't be sliced.** The legacy defaults (135 × 25 mm
+   rectangle, 10 tracks, 1.2 mm gap, 3 mm radius) fit only 7 tracks, so the
+   app opens on "Slicing failed". Fixing it changes defaults (behaviour).
 
-## 5. Safety net
+## 7. Safety net
 
-- `tests/golden/`: 28 reference configs (5 shapes × 3 patterns, layup
-  `0,90,45,-45`, outer boundary on, serpentine-infill shape, 4 revolve
-  shells + Fermat cylinder, 3 specialty shapes). Stored per case: exact
-  G-code, trajectory arrays (`.npz`), validation result, input config.
-  `tests/test_golden.py` requires byte-identical G-code and arrays within 1e-9.
-- Regenerate only deliberately: `python -m tests.golden.regenerate [NAMES]`.
-- `ruff`, `pytest`, `hypothesis`; CI on `windows-latest`, Python 3.12
-  (`.github/workflows/ci.yml`), dependencies pinned in `requirements.lock`.
+- `tests/golden/`: 28 reference configs; `tests/test_golden.py` requires
+  byte-identical G-code and arrays within 1e-9. Regenerate only deliberately:
+  `python -m tests.golden.regenerate [NAMES]`.
+- `tests/test_kinematics.py`: hypothesis comparison against a verbatim copy
+  of the legacy planner (random and tie-heavy grid paths).
+- `tests/test_core_isolation.py`: imports every `cfrp_core` module and slices
+  with streamlit/plotly/Qt/VTK imports blocked.
+- `ruff`, CI on `windows-latest` / Python 3.12, `requirements.lock`.

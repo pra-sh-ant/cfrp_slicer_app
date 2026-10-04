@@ -1,11 +1,11 @@
-"""Unit tests for GeometryEngine's shape-generation building blocks."""
+"""Unit tests for the geometry building blocks."""
 import math
 
-from geometry import GeometryEngine
+from cfrp_core import geometry as geo
 
 
 def test_revolve_cross_section_annulus_area():
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, 10.0, 6.0, "round")
+    poly = geo.revolve_cross_section(0.0, 0.0, 10.0, 6.0, "round")
     expected = math.pi * (10.0 ** 2 - 6.0 ** 2)
     # Shapely approximates a circle as a polygon (default buffer resolution),
     # so a small, consistent area deficit vs. the true circle is expected.
@@ -13,25 +13,25 @@ def test_revolve_cross_section_annulus_area():
 
 
 def test_revolve_cross_section_collapses_to_disk_when_inner_zero():
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, 10.0, 0.0, "round")
+    poly = geo.revolve_cross_section(0.0, 0.0, 10.0, 0.0, "round")
     expected = math.pi * 10.0 ** 2
     assert math.isclose(poly.area, expected, rel_tol=0.01)
 
 
 def test_revolve_cross_section_empty_when_outer_zero():
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, 0.0, 0.0, "round")
+    poly = geo.revolve_cross_section(0.0, 0.0, 0.0, 0.0, "round")
     assert poly.is_empty
 
 
 def test_revolve_cross_section_square_annulus_area():
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, 5.0, 3.0, "square")
+    poly = geo.revolve_cross_section(0.0, 0.0, 5.0, 3.0, "square")
     expected = (10.0 ** 2) - (6.0 ** 2)  # side = 2*radius for the axis-aligned square
     assert math.isclose(poly.area, expected, rel_tol=1e-3)
 
 
 def test_revolve_cross_section_inner_never_bigger_than_outer():
     """The annulus must never invert (inner radius clamped past outer)."""
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, 5.0, 50.0, "round")
+    poly = geo.revolve_cross_section(0.0, 0.0, 5.0, 50.0, "round")
     # inner clamped to just under outer -- a thin ring, not empty/negative.
     assert not poly.is_empty
     assert poly.area < math.pi * 5.0 ** 2
@@ -43,15 +43,15 @@ def test_generate_archimedean_path_thin_annulus_survives_without_fillet():
     a thin wall band ring-by-ring even when the overall band looks wide
     enough -- this produced a fully empty trajectory for Hollow Cylinder.
     Generating with min_radius=0 must not have this problem."""
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, 15.6, 8.4, "round")
-    path, _ = GeometryEngine.generate_archimedean_path(poly, 1.2, 0.0, track_count=None)
+    poly = geo.revolve_cross_section(0.0, 0.0, 15.6, 8.4, "round")
+    path, _ = geo.archimedean_path(poly, 1.2, 0.0, track_count=None)
     assert path
 
 
 def test_generate_archimedean_path_more_gap_yields_fewer_rings():
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, 20.0, 0.0, "round")
-    tight_path, _ = GeometryEngine.generate_archimedean_path(poly, 1.0, 0.0, track_count=None)
-    loose_path, _ = GeometryEngine.generate_archimedean_path(poly, 4.0, 0.0, track_count=None)
+    poly = geo.revolve_cross_section(0.0, 0.0, 20.0, 0.0, "round")
+    tight_path, _ = geo.archimedean_path(poly, 1.0, 0.0, track_count=None)
+    loose_path, _ = geo.archimedean_path(poly, 4.0, 0.0, track_count=None)
 
     def ring_count(path):
         return len({round(math.hypot(x, y), 1) for x, y in path})
@@ -64,8 +64,8 @@ def test_archimedean_fills_the_whole_hollow_wall_to_the_bore():
     from both edges at once -- a 4-track wall stopped at its midline and
     printed only the outer 2 tracks, leaving the inner half empty."""
     outer, gap, tracks = 18.0, 1.2, 4
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, outer, outer - tracks * gap, "round")
-    path, _ = GeometryEngine.generate_archimedean_path(poly, gap, 0.0, track_count=None)
+    poly = geo.revolve_cross_section(0.0, 0.0, outer, outer - tracks * gap, "round")
+    path, _ = geo.archimedean_path(poly, gap, 0.0, track_count=None)
     radii = [math.hypot(x, y) for x, y in path]
     innermost_centerline = outer - tracks * gap + gap / 2.0
     assert min(radii) < innermost_centerline + 0.1
@@ -74,25 +74,25 @@ def test_archimedean_fills_the_whole_hollow_wall_to_the_bore():
 
 def test_fermat_fills_the_whole_hollow_wall_to_the_bore():
     outer, gap, tracks = 18.0, 1.2, 4
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, outer, outer - tracks * gap, "round")
-    path = GeometryEngine.generate_fermat_spiral_path(poly, gap, 0.0, track_count=None)
+    poly = geo.revolve_cross_section(0.0, 0.0, outer, outer - tracks * gap, "round")
+    path = geo.fermat_spiral_path(poly, gap, 0.0, track_count=None)
     radii = [math.hypot(x, y) for x, y in path]
     assert min(radii) < outer - tracks * gap + gap / 2.0 + 0.1
 
 
 def test_archimedean_spiral_never_enters_the_bore():
     outer, inner, gap = 18.0, 13.2, 1.2
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, outer, inner, "round")
-    path, _ = GeometryEngine.generate_archimedean_path(poly, gap, 0.0, track_count=None)
+    poly = geo.revolve_cross_section(0.0, 0.0, outer, inner, "round")
+    path, _ = geo.archimedean_path(poly, gap, 0.0, track_count=None)
     assert min(math.hypot(x, y) for x, y in path) >= inner + gap / 2.0 * 0.85
 
 
 def test_archimedean_traces_outer_ring_fully_in_both_directions():
     """Regression: the outer ring was only touched at one point when
     spiraling inside-out, so alternating layers' outer walls didn't line up."""
-    poly = GeometryEngine.get_revolve_cross_section(0.0, 0.0, 20.0, 0.0, "square")
-    inward, _ = GeometryEngine.generate_archimedean_path(poly, 1.2, 0.0, track_count=4)
-    outward, _ = GeometryEngine.generate_archimedean_path(poly, 1.2, 0.0, track_count=4, start_from_inside=True)
+    poly = geo.revolve_cross_section(0.0, 0.0, 20.0, 0.0, "square")
+    inward, _ = geo.archimedean_path(poly, 1.2, 0.0, track_count=4)
+    outward, _ = geo.archimedean_path(poly, 1.2, 0.0, track_count=4, start_from_inside=True)
     for axis in (0, 1):
         assert math.isclose(min(p[axis] for p in inward), min(p[axis] for p in outward), abs_tol=0.05)
         assert math.isclose(max(p[axis] for p in inward), max(p[axis] for p in outward), abs_tol=0.05)

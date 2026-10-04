@@ -119,3 +119,13 @@ def test_changing_tracks_per_layer_reslices_without_exception():
     tracks_widget = next(w for w in at.number_input if w.label == "Tracks Per Layer (Wall Thickness)")
     tracks_widget.set_value(6).run(timeout=60)
     assert not at.exception
+
+
+def test_default_part_reports_known_track_count_problem():
+    """Pins a known issue (docs/ARCHITECTURE.md): the legacy default part
+    (135 x 25 mm, 10 tracks, 1.2 mm gap, 3 mm radius) does not fit, so the
+    app opens on an error. Update this test when the defaults are changed."""
+    at = AppTest.from_file(APP_PATH)
+    at.run(timeout=60)
+    assert not at.exception
+    assert any("only 7 fit" in e.value for e in at.error)

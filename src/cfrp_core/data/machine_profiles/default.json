@@ -1,0 +1,7 @@
+{
+  "name": "default",
+  "bed_x_mm": 180.0,
+  "bed_y_mm": 220.0,
+  "z_max_mm": 200.0,
+  "margin_mm": 1.0
+}

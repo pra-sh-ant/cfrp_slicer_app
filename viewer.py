@@ -2,7 +2,7 @@
 import plotly.graph_objects as go
 import streamlit as st
 
-import machine as machine_mod
+from cfrp_core.machine import DEFAULT_MACHINE, MachineProfile
 
 # Above this many points, Plotly's Scatter3d line trace gets sluggish to
 # rotate/zoom in the browser -- decimate what's DISPLAYED (never the real
@@ -47,11 +47,11 @@ def _outline_coords(target_shapes):
 
 
 def render_3d_viewer(trajectory, target_shapes, max_z,
-                     machine: machine_mod.MachineConfig = machine_mod.DEFAULT_MACHINE):
+                     machine: MachineProfile = DEFAULT_MACHINE):
     fig = go.Figure()
 
     fig.add_trace(go.Mesh3d(
-        x=[0, machine.bed_x, machine.bed_x, 0], y=[0, 0, machine.bed_y, machine.bed_y], z=[0, 0, 0, 0],
+        x=[0, machine.bed_x_mm, machine.bed_x_mm, 0], y=[0, 0, machine.bed_y_mm, machine.bed_y_mm], z=[0, 0, 0, 0],
         color='#e5e7eb', opacity=0.4, name="Print Bed", hoverinfo="skip"
     ))
 
@@ -99,8 +99,8 @@ def render_3d_viewer(trajectory, target_shapes, max_z,
     fig.update_layout(
         scene_camera=camera,
         scene=dict(
-            xaxis=dict(range=[0, machine.bed_x], title='X Axis (mm)', backgroundcolor="white"),
-            yaxis=dict(range=[0, machine.bed_y], title='Y Axis (mm)', backgroundcolor="white"),
+            xaxis=dict(range=[0, machine.bed_x_mm], title='X Axis (mm)', backgroundcolor="white"),
+            yaxis=dict(range=[0, machine.bed_y_mm], title='Y Axis (mm)', backgroundcolor="white"),
             zaxis=dict(range=[0, max(15, max_z + 5)], title='Z Axis (mm)', backgroundcolor="#f9fafb"),
             aspectmode='manual', aspectratio=dict(x=1.8, y=2.2, z=0.8)
         ),

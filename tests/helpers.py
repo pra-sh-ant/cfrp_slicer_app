@@ -6,6 +6,14 @@ default here -- these mirror what the sidebar sends, trimmed to what
 require, so tests read as "what's different about this case" instead of
 repeating the whole config each time.
 """
+from cfrp_core import DEFAULT_MACHINE, from_legacy_dict, slice_part
+
+
+def run_slice(cfg, layup=(0.0,)):
+    """Slice a legacy-style config dict; returns the legacy pipeline tuple
+    (trajectory, target_shapes, gcode, validation, max_z)."""
+    result = slice_part(from_legacy_dict(cfg, layup=list(layup)), DEFAULT_MACHINE)
+    return result.trajectory, result.target_shapes, result.gcode, result.validation, result.max_z
 
 
 def base_2d_config(**overrides):

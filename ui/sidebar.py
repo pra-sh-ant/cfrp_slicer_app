@@ -236,10 +236,9 @@ def render_materials_section(p):
             value=float(p.get("weight", 0.55 / (math.pi * 39))), min_value=0.00001, format="%.5f",
             help="Must be above zero: the extrusion constant divides by it."
         )
-        calculated_e_const = (cfg_n_dia * cfg_l_height * cfg_emult * cfg_density) / cfg_weight
 
     return {
-        "layer_height": cfg_l_height, "e_const": calculated_e_const,
+        "layer_height": cfg_l_height,
         "needle_dia": cfg_n_dia, "e_mult": cfg_emult, "density": cfg_density, "weight": cfg_weight,
     }
 

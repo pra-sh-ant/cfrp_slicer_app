@@ -4,10 +4,7 @@ pipeline's entry point moves (e.g. into cfrp_core in Phase 1).
 """
 import numpy as np
 
-import machine as machine_mod
-import presets
-from app import _run_slicing_pipeline
-from validation import resolve_process_constraints
+from cfrp_core import DEFAULT_MACHINE, from_legacy_dict, slice_part
 
 FLOAT_FIELDS = ("x", "y", "z", "dist", "v", "e_mult")
 INT_FIELDS = ("layer",)
@@ -16,16 +13,13 @@ BOOL_FIELDS = ("is_transition", "layer_start", "pump_floored", "cure_dwell")
 
 def run_case(case):
     """Returns (gcode_text, arrays: dict[str, np.ndarray], meta: dict)."""
-    cfg = resolve_process_constraints(dict(case["config"]))
-    is_3d = cfg["shape"] in presets.Z_SPECIALTY_SHAPES
-    trajectory, target_shapes, gcode, val, max_z = _run_slicing_pipeline(
-        cfg, is_3d, list(case["layup"]), machine_mod.DEFAULT_MACHINE
-    )
-    return gcode, flatten(trajectory, target_shapes), {
-        "status": val["status"],
-        "messages": list(val["messages"]),
-        "max_z": float(max_z),
-        "constraint_notes": list(cfg["constraint_notes"]),
+    config = from_legacy_dict(case["config"], layup=case["layup"])
+    result = slice_part(config, DEFAULT_MACHINE)
+    return result.gcode, flatten(result.trajectory, result.target_shapes), {
+        "status": result.validation["status"],
+        "messages": list(result.validation["messages"]),
+        "max_z": float(result.max_z),
+        "constraint_notes": list(result.constraint_notes),
     }
 
 

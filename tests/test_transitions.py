@@ -4,15 +4,11 @@ mechanism: seam-trim + slope ramp between layers.
 Each test here pins down a bug that was actually hit and fixed this session
 -- see the docstring on each for what regressed without it.
 """
-import app as app_mod
-import machine as machine_mod
-from tests.helpers import base_2d_config, layer_xy_bounds, max_transition_angle_deg
-from validation import resolve_process_constraints
+from tests.helpers import base_2d_config, layer_xy_bounds, max_transition_angle_deg, run_slice
 
 
 def _run(cfg, layup=(0.0,)):
-    cfg = resolve_process_constraints(cfg)
-    return app_mod._run_slicing_pipeline(cfg, False, list(layup), machine_mod.DEFAULT_MACHINE)
+    return run_slice(cfg, layup)
 
 
 def test_multitrack_layers_stack_without_lateral_drift():

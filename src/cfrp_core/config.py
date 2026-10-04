@@ -1,0 +1,331 @@
+"""Typed process configuration (pydantic v2).
+
+Units: lengths mm, speeds mm/s, accelerations mm/s², angles degrees,
+feedrates in the G-code section mm/min (named `*_mm_min`).
+
+Models are frozen: a config is an immutable value, so it can be hashed
+(caching), compared, and stored on an undo stack. Derive a changed copy with
+`cfg.model_copy(update=...)` or build a new one.
+
+Validation here is the pre-slice rule set from spec §4: field validators for
+the unconditional rules, a model validator for the shape-dependent ones.
+Error messages match the legacy hand-written checks. The *automatic
+adjustments* of §4 (which produce info notes rather than errors) live in
+`cfrp_core.constraints`.
+"""
+from __future__ import annotations
+
+import math
+from typing import Literal
+
+from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, model_validator
+
+# --- Shapes and patterns -----------------------------------------------------
+
+ShapeName = Literal[
+    "Square/Rectangle", "Triangle", "Hexagon", "Circle", "L-Bracket",
+    "Serpentine Infill", "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
+    "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)", "Torus (Z)",
+    "Conical Dome (Z)", "3D Overhang (Mushroom)",
+]
+SHAPES: tuple[str, ...] = ShapeName.__args__
+
+# Z-revolve shells: sliced into layers with a concentric multi-track wall per
+# layer, alternating outside-in/inside-out, like the flat laminate pipeline.
+REVOLVE_SHAPES = frozenset({
+    "Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Hollow Sphere (Z)",
+    "Dome (Z)", "Tapered Cylinder (Z)",
+})
+# Fixed-speed specialty generators: no per-layer stitching, no speed planner.
+FLAT_SPECIALTY_SHAPES = frozenset({"Torus (Z)", "Conical Dome (Z)", "3D Overhang (Mushroom)"})
+SPECIALTY_SHAPES = REVOLVE_SHAPES | FLAT_SPECIALTY_SHAPES
+
+ARCHIMEDEAN = "Archimedean (Concentric Spiral)"
+FERMAT = "Fermat Spiral (Connected Double Spiral)"
+ORIENTED_SERPENTINE = "Oriented Serpentine"
+InfillPattern = Literal[
+    "Archimedean (Concentric Spiral)",
+    "Fermat Spiral (Connected Double Spiral)",
+    "Oriented Serpentine",
+    "N/A",  # specialty shapes: no infill pattern applies
+]
+
+# The legacy G-code header prints a few values with whatever numeric type the
+# user supplied ("0" vs "0.0"). `int | float` keeps that type so G-code stays
+# byte-identical to the legacy app; Phase 5 normalises number formatting.
+Number = int | float
+
+
+class ConfigError(ValueError):
+    """Plain-language configuration error. `messages` lists every problem."""
+
+    def __init__(self, messages: list[str] | tuple[str, ...]):
+        self.messages = tuple(messages)
+        super().__init__("\n".join(self.messages))
+
+    @classmethod
+    def from_validation_error(cls, exc: ValidationError) -> ConfigError:
+        messages = []
+        for err in exc.errors():
+            msg = str(err.get("msg", ""))
+            msg = msg.removeprefix("Value error, ")
+            loc = ".".join(str(p) for p in err.get("loc", ()))
+            # pydantic's own (type) errors carry no context; add the field path.
+            messages.append(msg if err.get("type") == "value_error" else f"{loc}: {msg}")
+        return cls(messages)
+
+
+def _require_finite(value: float, label: str) -> float:
+    if not math.isfinite(float(value)):
+        raise ValueError(f"{label} must be a finite number (got {value}).")
+    return value
+
+
+def _require(value: float, label: str, minimum: float = 0.0, strict: bool = True, unit: str = "") -> float:
+    """Legacy `_require`: value must be > minimum (strict) or >= minimum."""
+    v = float(value)
+    if not math.isfinite(v) or (v <= minimum if strict else v < minimum):
+        relation = "greater than" if strict else "at least"
+        raise ValueError(f"{label} must be {relation} {minimum:g}{unit} (got {v:g}).")
+    return value
+
+
+class _Frozen(BaseModel):
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+
+# --- Sections ----------------------------------------------------------------
+
+class GeometryConfig(_Frozen):
+    """Part shape, size and placement. Which fields apply depends on `shape`."""
+
+    shape: ShapeName = "Square/Rectangle"
+    width_mm: float = 135.0              # flat shapes (also hexagon/circle diameter)
+    height_mm: float = 25.0              # flat shapes (XY height, not Z)
+    thickness_mm: float = 10.0           # L-bracket leg thickness
+    invert_bends: bool = False           # Serpentine Infill: loop outside
+    include_boundary: bool = False       # flat shapes: add one perimeter pass
+    base_radius_mm: float = 10.0         # revolve outer radius / torus major radius / mushroom base
+    disc_radius_mm: float = 15.0         # mushroom top disc
+    stem_height_mm: float = 25.0         # revolve height / mushroom stem top (absolute Z)
+    wall_thickness_mm: float = 2.5       # torus tube radius
+    start_x_mm: float = 26.0
+    start_y_mm: float = 40.0
+
+    @property
+    def is_specialty(self) -> bool:
+        """True for every Z shape (the legacy `is_3d`)."""
+        return self.shape in SPECIALTY_SHAPES
+
+    @property
+    def is_revolve(self) -> bool:
+        return self.shape in REVOLVE_SHAPES
+
+    @property
+    def is_flat_specialty(self) -> bool:
+        return self.shape in FLAT_SPECIALTY_SHAPES
+
+
+class MaterialConfig(_Frozen):
+    """Inputs of the extrusion constant (see `ProcessConfig.e_const`)."""
+
+    needle_dia_mm: float = 0.8
+    e_multiplier: float = 1.6
+    density_g_per_mm3: float = 0.00115
+    fiber_weight_g_per_mm: float = 0.55 / (math.pi * 39)
+    # Legacy configs stored the computed constant directly; when set it wins.
+    e_const_override: float | None = None
+
+    @field_validator("fiber_weight_g_per_mm")
+    @classmethod
+    def _weight_positive(cls, v: float) -> float:
+        return _require(v, "Fiber Weight", unit=" g/mm")
+
+
+class KinematicsConfig(_Frozen):
+    """Speed-planner settings (flat + revolve) and specialty fixed speeds."""
+
+    v_max_mm_s: float = 10.0
+    v_min_mm_s: float = 5.0
+    accel_mm_s2: float = 25.0
+    decel_mm_s2: float = 15.0
+    pressure_advance_mm: float = 3.0
+    # UNMEASURED by default: equals v_min, i.e. no real stall protection.
+    pump_stall_floor_mm_s: float = 5.0
+    # Specialty shapes only:
+    v_z_mm_s: float = 2.0
+    v_overhang_mm_s: float = 5.0
+    dwell_s: float = 1.5
+
+    @field_validator("v_max_mm_s")
+    @classmethod
+    def _v_max_positive(cls, v: float) -> float:
+        if not (math.isfinite(v) and v > 0):
+            raise ValueError("Print Speed (Max) must be greater than 0 mm/s.")
+        return v
+
+    @field_validator(
+        "v_min_mm_s", "accel_mm_s2", "decel_mm_s2", "pressure_advance_mm",
+        "pump_stall_floor_mm_s", "v_z_mm_s", "v_overhang_mm_s", "dwell_s",
+    )
+    @classmethod
+    def _finite(cls, v: float, info) -> float:
+        return _require_finite(v, info.field_name)
+
+    @property
+    def pump_floor_unmeasured(self) -> bool:
+        """True while the pump floor still sits at its placeholder (= v_min)."""
+        return self.pump_stall_floor_mm_s == self.v_min_mm_s
+
+
+class GcodeConfig(_Frozen):
+    """Start-sequence settings. Feedrates are mm/min (G-code units)."""
+
+    uv_pwm: int = 225
+    purge_e: float = 15.0
+    purge_f_mm_min: float = 60.0
+    travel_f_mm_min: float = 600.0
+
+    @field_validator("purge_f_mm_min")
+    @classmethod
+    def _purge_f(cls, v: float) -> float:
+        return _require(v, "Purge Speed")
+
+    @field_validator("travel_f_mm_min")
+    @classmethod
+    def _travel_f(cls, v: float) -> float:
+        return _require(v, "Approach Speed")
+
+    @field_validator("purge_e")
+    @classmethod
+    def _purge_e(cls, v: float) -> float:
+        return _require(v, "Purge Amount", strict=False)
+
+
+# --- Whole process -----------------------------------------------------------
+
+class ProcessConfig(_Frozen):
+    """Everything one slice needs, apart from the machine profile."""
+
+    geometry: GeometryConfig = GeometryConfig()
+    material: MaterialConfig = MaterialConfig()
+    kinematics: KinematicsConfig = KinematicsConfig()
+    gcode: GcodeConfig = GcodeConfig()
+
+    layers: int = 1
+    layup_deg: tuple[float, ...] = (0.0,)
+    # The layup as the user typed it, for the G-code header. None = derive.
+    layup_text: str | None = None
+    infill_type: InfillPattern = ARCHIMEDEAN
+    tracks_per_layer: int = 10
+    track_gap_mm: float = 1.2
+    min_radius_mm: Number = 3.0
+    layer_height_mm: Number = 0.2
+    z_offset_mm: float = 0.2
+    transition_angle_deg: float = 30.0
+    seam_trim_mm: float = 3.0
+    anchor_length_mm: Number = 15.0
+
+    # -- unconditional field rules (legacy messages) --
+    @field_validator("track_gap_mm")
+    @classmethod
+    def _gap(cls, v: float) -> float:
+        if not (math.isfinite(v) and v > 0):
+            raise ValueError("Track Gap must be greater than 0 mm.")
+        return v
+
+    @field_validator("min_radius_mm")
+    @classmethod
+    def _radius(cls, v: Number) -> Number:
+        if not math.isfinite(v) or v < 0:
+            raise ValueError("Min Bend Radius cannot be negative.")
+        return v
+
+    @field_validator("tracks_per_layer")
+    @classmethod
+    def _tracks(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Tracks Per Layer must be at least 1.")
+        return v
+
+    @field_validator("layers")
+    @classmethod
+    def _layers(cls, v: int) -> int:
+        if v < 1:
+            raise ValueError("Total Layers must be at least 1.")
+        return v
+
+    @field_validator("layer_height_mm")
+    @classmethod
+    def _layer_height(cls, v: Number) -> Number:
+        return _require(v, "Layer Height", unit=" mm")
+
+    @field_validator("layup_deg")
+    @classmethod
+    def _layup(cls, v: tuple[float, ...]) -> tuple[float, ...]:
+        if not v:
+            raise ValueError("Layup must contain at least one angle.")
+        for angle in v:
+            _require_finite(angle, "Layup angle")
+        return v
+
+    # -- shape-dependent rules --
+    @model_validator(mode="after")
+    def _shape_rules(self) -> ProcessConfig:
+        _require(self.e_const, "Extrusion constant (check the Materials panel)")
+        g, k = self.geometry, self.kinematics
+        if g.is_flat_specialty:
+            _require(k.v_z_mm_s, "Z Pull Speed", unit=" mm/s")
+            if g.shape == "3D Overhang (Mushroom)":
+                _require(k.v_overhang_mm_s, "Top Disc Overhang Speed", unit=" mm/s")
+                _require(k.dwell_s, "Top Dwell", strict=False, unit=" s")
+        else:
+            # Every shape that runs the cornering-speed planner.
+            _require(k.accel_mm_s2, "Acceleration")
+            _require(k.decel_mm_s2, "Deceleration")
+            _require(k.v_min_mm_s, "Min Bend Speed", strict=False, unit=" mm/s")
+            _require(k.pump_stall_floor_mm_s, "Pump-Stall Floor", strict=False)
+            _require(k.pressure_advance_mm, "Pressure Advance", strict=False)
+            _require(self.anchor_length_mm, "Lead-in Anchor Length", strict=False, unit=" mm")
+            _require(self.seam_trim_mm, "Seam Trim Length", strict=False, unit=" mm")
+
+        if g.shape not in (SPECIALTY_SHAPES | {"Serpentine Infill"}):
+            width, height = float(g.width_mm), float(g.height_mm)
+            if width <= 0 or height <= 0:
+                raise ValueError("2D geometry width and height must be greater than 0 mm.")
+            if self.min_radius_mm * 2.0 + self.track_gap_mm >= min(width, height):
+                raise ValueError(
+                    "This combination is geometrically impossible: Width/Height must "
+                    "leave room for two bend radii plus one track gap. Reduce Min Bend "
+                    "Radius or Track Gap, or enlarge the specimen."
+                )
+        return self
+
+    # -- derived values --
+    @property
+    def e_const(self) -> float:
+        """Extrusion constant: E per mm of travel at full speed.
+
+        e_const = needle_dia · layer_height · E_multiplier · density / fiber_weight
+        (dimensionless as written; see docs/ARCHITECTURE.md, mismatch 1).
+        """
+        m = self.material
+        if m.e_const_override is not None:
+            return m.e_const_override
+        return (m.needle_dia_mm * self.layer_height_mm * m.e_multiplier * m.density_g_per_mm3) / m.fiber_weight_g_per_mm
+
+    @property
+    def layup_label(self) -> str:
+        """Layup for display: the user's text if known, else derived."""
+        if self.layup_text is not None:
+            return self.layup_text
+        return ", ".join(f"{a:g}" for a in self.layup_deg)
+
+
+def build_config(data: dict) -> ProcessConfig:
+    """Validate a nested dict into a ProcessConfig, raising ConfigError
+    (plain-language messages) instead of pydantic's ValidationError."""
+    try:
+        return ProcessConfig.model_validate(data)
+    except ValidationError as exc:
+        raise ConfigError.from_validation_error(exc) from exc

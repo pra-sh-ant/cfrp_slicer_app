@@ -1,25 +1,15 @@
-"""Default process values and shape classifications."""
+"""Legacy Streamlit UI defaults (widget initial values). Shape classes come
+from the core so the UI and the slicer can never disagree."""
 import math
 
-# Z-revolve shells: sliced into layers with a concentric multi-track wall per
-# layer, alternating outside-in/inside-out, same as the flat laminate pipeline.
-Z_REVOLVE_SHAPES = {
-    "Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Hollow Sphere (Z)",
-    "Dome (Z)", "Tapered Cylinder (Z)",
-}
-# Flat-speed specialty generators (SpecialtyEngine): no per-layer stitching
-# and no cornering-speed planning.
-Z_FLAT_SPECIALTY_SHAPES = {"Torus (Z)", "Conical Dome (Z)", "3D Overhang (Mushroom)"}
-# Every shape treated as 3D/specialty (revolve shells plus the flat-speed ones).
-Z_SPECIALTY_SHAPES = Z_REVOLVE_SHAPES | Z_FLAT_SPECIALTY_SHAPES
+from cfrp_core.config import FLAT_SPECIALTY_SHAPES as Z_FLAT_SPECIALTY_SHAPES
+from cfrp_core.config import REVOLVE_SHAPES as Z_REVOLVE_SHAPES
+from cfrp_core.config import SHAPES as _SHAPES
+from cfrp_core.config import SPECIALTY_SHAPES as Z_SPECIALTY_SHAPES
 
-# Display order of the Shape dropdown.
-SHAPES = [
-    "Square/Rectangle", "Triangle", "Hexagon", "Circle", "L-Bracket",
-    "Serpentine Infill", "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
-    "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)", "Torus (Z)",
-    "Conical Dome (Z)", "3D Overhang (Mushroom)",
-]
+SHAPES = list(_SHAPES)
+
+__all__ = ["DEFAULT_PARAMS", "SHAPES", "Z_FLAT_SPECIALTY_SHAPES", "Z_REVOLVE_SHAPES", "Z_SPECIALTY_SHAPES"]
 
 DEFAULT_PARAMS = {
     "shape": "Square/Rectangle", "w": 135.0, "h": 25.0, "gap": 1.2, "rad": 3.0,

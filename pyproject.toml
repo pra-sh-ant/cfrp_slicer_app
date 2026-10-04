@@ -6,6 +6,7 @@ requires-python = ">=3.12"
 dependencies = [
     "numpy==2.5.2",
     "shapely==2.1.2",
+    "pydantic==2.13.5",
 ]
 
 [project.optional-dependencies]
@@ -22,7 +23,7 @@ dev = [
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["."]
+pythonpath = ["src", "."]
 markers = [
     "golden: characterization tests against stored reference outputs",
     "slow: long-running tests",
@@ -39,3 +40,10 @@ ignore = [
     "E501",   # long lines: legacy code has many; enforced by formatter later
     "E741",   # `l` as a variable name in legacy validation code
 ]
+
+[build-system]
+requires = ["hatchling==1.27.0"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/cfrp_core"]

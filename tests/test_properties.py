@@ -4,7 +4,7 @@ import math
 from hypothesis import given, settings
 from hypothesis import strategies as st
 
-from geometry import GeometryEngine
+from cfrp_core.geometry import dedupe_path
 
 coords = st.floats(min_value=-500, max_value=500, allow_nan=False, allow_infinity=False)
 points = st.lists(st.tuples(coords, coords), min_size=0, max_size=200)
@@ -13,7 +13,7 @@ points = st.lists(st.tuples(coords, coords), min_size=0, max_size=200)
 @given(points, st.floats(min_value=0.0, max_value=5.0))
 @settings(max_examples=200, deadline=None)
 def test_dedupe_path_keeps_endpoints_order_and_spacing(path, tol):
-    out = GeometryEngine._dedupe_path(path, tol)
+    out = dedupe_path(path, tol)
     if not path:
         assert out == []
         return

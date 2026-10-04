@@ -8,10 +8,7 @@ import math
 
 import pytest
 
-import app as app_mod
-import machine as machine_mod
-from tests.helpers import base_revolve_config
-from validation import resolve_process_constraints
+from tests.helpers import base_revolve_config, run_slice
 
 REVOLVE_SHAPES = [
     "Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Hollow Sphere (Z)",
@@ -20,8 +17,7 @@ REVOLVE_SHAPES = [
 
 
 def _run(cfg):
-    cfg = resolve_process_constraints(cfg)
-    return app_mod._run_slicing_pipeline(cfg, True, [0.0], machine_mod.DEFAULT_MACHINE)
+    return run_slice(cfg)
 
 
 @pytest.mark.parametrize("shape", REVOLVE_SHAPES)
