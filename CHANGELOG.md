@@ -5,6 +5,13 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 8 — print time, fiber length, fiber mass)
+- `SliceResult.stats`: pre-computed dict of `print_time_s`, `fiber_length_mm`,
+  `fiber_mass_g` (sum over non-transition trajectory points using `dist/v` for
+  time and `fiber_weight_g_per_mm` for mass).
+- Dashboard tab now shows Print time (h/m/s), Fiber length (m + mm), and
+  Fiber mass (mg + g) below a separator after the geometry stats.
+
 ### Added / Fixed (Phase 7 — Recent Files + layer-height clamp)
 - **Recent Files** submenu (File → Open Recent): remembers the last 8 saved/
   loaded `.json` parameter files via QSettings; includes "Clear Recent Files".

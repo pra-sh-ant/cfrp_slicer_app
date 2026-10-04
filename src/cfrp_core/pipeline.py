@@ -15,6 +15,26 @@ from .specialty import specialty_shape
 from .validation import validate_trajectory
 
 
+def _compute_stats(trajectory: list[dict], config: ProcessConfig) -> dict:
+    """Print time (s), fiber length (mm), fiber mass (g) from trajectory."""
+    print_time = 0.0
+    fiber_length = 0.0
+    for pt in trajectory:
+        if pt.get("is_transition"):
+            continue
+        dist = float(pt.get("dist", 0.0))
+        v = float(pt.get("v", 1.0))
+        fiber_length += dist
+        if v > 0:
+            print_time += dist / v
+    fiber_mass = fiber_length * float(config.material.fiber_weight_g_per_mm)
+    return {
+        "print_time_s": print_time,
+        "fiber_length_mm": fiber_length,
+        "fiber_mass_g": fiber_mass,
+    }
+
+
 @dataclass
 class SliceResult:
     config: ProcessConfig                 # the resolved config actually sliced
@@ -25,6 +45,7 @@ class SliceResult:
     max_z: float
     constraint_notes: tuple[str, ...]     # automatic adjustments (spec §4)
     info: tuple[str, ...]                 # other notes (e.g. bed auto-positioning)
+    stats: dict = None                    # print_time_s, fiber_length_mm, fiber_mass_g
 
 
 def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> SliceResult:
@@ -58,4 +79,5 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     return SliceResult(
         config=cfg, trajectory=trajectory, target_shapes=target_shapes, gcode=gcode,
         validation=validation, max_z=max_z, constraint_notes=resolved.notes, info=tuple(info),
+        stats=_compute_stats(trajectory, cfg),
     )

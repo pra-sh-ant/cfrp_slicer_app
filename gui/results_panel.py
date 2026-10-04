@@ -66,7 +66,8 @@ class DashboardTab(QScrollArea):
         self.setWidget(inner)
         self._labels: list[QLabel] = []
 
-    def update_stats(self, trajectory: list[dict], gcode: str, constraint_notes, info_notes):
+    def update_stats(self, trajectory: list[dict], gcode: str,
+                     constraint_notes, info_notes, print_stats: dict | None = None):
         for lbl in self._labels:
             lbl.deleteLater()
         self._labels = []
@@ -83,7 +84,7 @@ class DashboardTab(QScrollArea):
         vs = [p['v'] for p in trajectory]
         layers = max(p.get('layer', 1) for p in trajectory)
 
-        stats = [
+        rows = [
             ("Points", f"{len(trajectory):,}"),
             ("Layers", str(layers)),
             ("X span", f"{min(xs):.1f} – {max(xs):.1f} mm"),
@@ -92,9 +93,33 @@ class DashboardTab(QScrollArea):
             ("Speed range", f"{min(vs):.1f} – {max(vs):.1f} mm/s"),
             ("G-code lines", f"{gcode.count(chr(10)):,}"),
         ]
-        font = QFont()
-        font.setPointSize(10)
-        for key, val in stats:
+        if print_stats:
+            t = print_stats.get("print_time_s", 0.0)
+            fl = print_stats.get("fiber_length_mm", 0.0)
+            fm = print_stats.get("fiber_mass_g", 0.0)
+            mins, secs = divmod(int(t), 60)
+            hours, mins = divmod(mins, 60)
+            if hours:
+                time_str = f"{hours}h {mins:02d}m {secs:02d}s"
+            elif mins:
+                time_str = f"{mins}m {secs:02d}s"
+            else:
+                time_str = f"{secs}s"
+            rows += [
+                ("─" * 20, ""),          # separator
+                ("Print time", time_str),
+                ("Fiber length", f"{fl / 1000:.2f} m  ({fl:.0f} mm)"),
+                ("Fiber mass", f"{fm * 1000:.1f} mg  ({fm:.4f} g)"),
+            ]
+
+        for key, val in rows:
+            if key.startswith("─"):
+                sep = QLabel()
+                sep.setFixedHeight(1)
+                sep.setStyleSheet("background: #2e2e44; margin: 4px 0;")
+                self._layout.addWidget(sep)
+                self._labels.append(sep)
+                continue
             row = QHBoxLayout()
             k = QLabel(f"<b>{key}</b>")
             k.setMinimumWidth(120)
@@ -233,7 +258,8 @@ class ResultsPanel(QWidget):
         self._gcode_tab.set_gcode(result.gcode, result.config.layers)
         self._dash_tab.update_stats(
             result.trajectory, result.gcode,
-            result.constraint_notes, result.info
+            result.constraint_notes, result.info,
+            print_stats=result.stats,
         )
 
     def set_error(self, msg: str):
