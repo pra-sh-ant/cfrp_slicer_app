@@ -12,6 +12,41 @@ from ._common import (
     resample_closed_ring,
 )
 
+_ARC_STEP_MM = 0.75   # sample spacing when tracing along a ring boundary
+
+
+def _arc_along_ring(ring_poly, p_from, p_to):
+    """Points along the SHORTER arc of ring_poly.exterior connecting the
+    projections of p_from and p_to onto that exterior.
+
+    Used to bridge between child sub-regions without crossing the already-
+    printed ring: instead of cutting across the ring in a straight line, the
+    connector retraces the ring boundary (acceptable double-deposition).
+    """
+    ext = ring_poly.exterior
+    length = ext.length
+    if length < 1e-9:
+        return [p_from, p_to]
+
+    t_from = ext.project(Point(p_from))
+    t_to = ext.project(Point(p_to))
+
+    fwd = (t_to - t_from) % length
+    bck = length - fwd
+
+    if fwd <= bck:
+        arc_len, direction = fwd, 1.0
+    else:
+        arc_len, direction = bck, -1.0
+
+    n = max(2, int(arc_len / _ARC_STEP_MM))
+    pts = []
+    for i in range(n + 1):
+        t = (t_from + direction * arc_len * i / n) % length
+        pt = ext.interpolate(t)
+        pts.append((pt.x, pt.y))
+    return pts
+
 
 def _reverse_winding(ring_pts):
     """Reverse a resampled ring's own point traversal while keeping its
@@ -35,9 +70,6 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
     Same pitch, constant half-pitch offset: at any angle each pass reaches
     its own unique radii, so the passes never cross. Splits become child
     regions, visited depth-first, nearest first.
-
-    Known limit: with 2+ simultaneously-open branches, the straight
-    connector between branches can cross printed track.
 
     `track_count` is a soft global cap on tracks across the whole branch
     tree (2 per ring pair); unlike the Archimedean spiral this never raises.
@@ -80,9 +112,15 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
             inset_a += 2.0 * track_gap
             inset_b += 2.0 * track_gap
 
-    def visit_children(children, near_point):
+    def visit_children(children, near_point, innermost_ring=None):
         """DFS the split-off branches nearest-first, each fully in and back
-        out, chained end-to-start so the walk stays one continuous stroke."""
+        out, chained end-to-start so the walk stays one continuous stroke.
+
+        `innermost_ring` is the deepest printed A-ring of the parent region.
+        When set, transitions between children are routed ALONG its exterior
+        rather than in a straight line, preventing the connector from crossing
+        the already-printed ring boundary in non-convex shapes.
+        """
         if not children:
             return []
         remaining_children = list(children)
@@ -91,6 +129,19 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
         while remaining_children:
             remaining_children.sort(key=lambda c: c.exterior.distance(Point(cursor)))
             child = remaining_children.pop(0)
+
+            # Bridge along the innermost printed ring when moving between children
+            # (not on the very first child — cursor is already at the ring interior).
+            if out and innermost_ring is not None:
+                child_near_pt = child.exterior.interpolate(
+                    child.exterior.project(Point(cursor))
+                )
+                arc = _arc_along_ring(innermost_ring, cursor,
+                                      (child_near_pt.x, child_near_pt.y))
+                if len(arc) > 1:
+                    out.extend(arc[1:])   # skip first: duplicate of cursor
+                    cursor = arc[-1]
+
             sub_path = spiral_region(child, cursor)
             if not sub_path:
                 continue
@@ -113,7 +164,10 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
         a_rings, b_rings, children = build_chains(poly)
         if not a_rings and not b_rings:
             start = entry_hint if entry_hint is not None else poly.centroid.coords[0]
-            return visit_children(children, start)
+            # No rings exist yet — children are direct sub-regions of poly.
+            # Use poly itself as a proxy ring so the bridge stays inside it.
+            proxy = poly if children else None
+            return visit_children(children, start, innermost_ring=proxy)
 
         max_length = max(r.exterior.length for r in (a_rings + b_rings))
         samples = max(60, int(max_length / 0.75))
@@ -123,7 +177,8 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
 
         in_path = blend_chain(a_seq, samples)
         turn_point = in_path[-1] if in_path else (a_seq[-1][0] if a_seq else entry_hint)
-        child_path = visit_children(children, turn_point)
+        child_path = visit_children(children, turn_point,
+                                    innermost_ring=a_rings[-1])
         b_seq_reversed = [_reverse_winding(pts) for pts in reversed(b_seq)]
         out_path = blend_chain(b_seq_reversed, samples)
 

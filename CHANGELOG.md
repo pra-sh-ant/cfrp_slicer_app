@@ -5,6 +5,20 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Fixed (Phase 12 — Fermat 2+ islands ring-arc fix)
+- **Fermat connector no longer crosses printed rings** in non-convex shapes with
+  2+ simultaneously-open child branches.  Root cause: the straight connector
+  between child sub-regions exited the innermost printed A-ring boundary in
+  non-convex geometries (e.g. L-bracket).
+  Fix: new `_arc_along_ring(ring_poly, p_from, p_to)` helper routes the
+  inter-child connector along the shorter arc of `a_rings[-1].exterior`
+  instead of using a straight line; `visit_children` receives `innermost_ring`
+  and applies the arc bridge between every pair of children (not before the
+  first). When no rings exist yet (very small shapes), `poly` itself is used
+  as a proxy ring.
+- `fermat_spiral_path` docstring updated: known limit note removed.
+- `docs/ARCHITECTURE.md`: Phase 12 status, known issues cleared.
+
 ### Added (Phase 11 — About dialog + trajectory CSV export)
 - **Help → About**: dialog showing Python version, PySide6 version, and a
   one-line summary of completed phases.

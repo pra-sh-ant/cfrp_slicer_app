@@ -1,8 +1,9 @@
 # Architecture
 
-Status: **Phase 7** (recent files, layer-height clamp fix; prior: Fermat seam
-phase-shift, spiral Z, Torus removed, Conical Dome promoted, PySide6 GUI,
-parameter save/load, PyInstaller packaging).
+Status: **Phase 12** (Fermat 2+ islands ring-arc fix; prior: About dialog +
+CSV export, keyboard shortcuts, cancel + geometry persistence, print stats,
+recent files, layer-height clamp, Fermat seam phase-shift, spiral Z, Torus
+removed, Conical Dome promoted, PySide6 GUI, parameter save/load, packaging).
 
 ## 1. Layout
 
@@ -94,13 +95,14 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
 1. **E-constant units.** The spec calls `e_const` "E-units per mm";
    `needle_dia[mm]·layer_h[mm]·E_mult·density[g/mm³] / weight[g/mm]` is
    dimensionless. E-units are calibrated in firmware; the formula works.
-## 6. Known issues (pinned by golden/UI tests, not yet fixed)
-
-1. **Fermat with 2+ islands:** the straight connector can cross printed track.
 3. **Mushroom stem height is absolute**, not relative to the Z-offset (labelled
    clearly in the UI).
 4. **Pump floor is unmeasured** (defaults to `v_min`): no real stall protection.
 5. **Extrusion per mm scales with v/v_max** (a modelling assumption).
+
+## 6. Known issues
+
+*(No open slicer bugs — all known issues resolved through Phase 12.)*
 
 ## 7. Phase 2 behaviour changes
 
