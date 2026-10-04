@@ -1,0 +1,8 @@
+{
+  "status": "Pass",
+  "messages": [
+    "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
+  ],
+  "max_z": 10.2,
+  "constraint_notes": []
+}

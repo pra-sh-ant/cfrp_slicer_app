@@ -1,9 +1,8 @@
 """Tests for resolve_process_constraints and ValidationEngine."""
 import pytest
 
-from validation import resolve_process_constraints, ValidationEngine
-
 from tests.helpers import base_2d_config
+from validation import ValidationEngine, resolve_process_constraints
 
 
 def test_rejects_zero_track_gap():

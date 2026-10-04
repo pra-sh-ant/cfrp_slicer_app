@@ -1,0 +1,10 @@
+{
+  "status": "Warning",
+  "messages": [
+    "Layer transition ramp exceeded the configured 30.0 deg limit on layer(s) [2]: the part footprint is too small to fit a full ramp at this layer height, so the climb is steeper than requested there. Reduce layer height, enlarge the part, or increase the transition angle allowance."
+  ],
+  "max_z": 0.4,
+  "constraint_notes": [
+    "Radius clearance uses 6.00 mm across the 40.00 mm narrow dimension; about 32.80 mm remains for concentric tracks."
+  ]
+}

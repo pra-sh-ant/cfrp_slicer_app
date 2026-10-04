@@ -3,21 +3,23 @@
 Run with: streamlit run cfrp_slicer/app.py
 """
 import math
+
 import streamlit as st
 from shapely.affinity import translate
 
 import machine as machine_mod
 import presets
+from gcode import GCodeCompiler
 from geometry import GeometryEngine
 from kinematics import KinematicsEngine
 from specialty import SpecialtyEngine
+from ui import results, sidebar
 from validation import ValidationEngine, resolve_process_constraints
-from gcode import GCodeCompiler
-from ui import sidebar, results
 
 st.set_page_config(layout="wide", page_title="CFRP Slicer Pro", page_icon="🔬")
 
-if "last_slice" not in st.session_state: st.session_state.last_slice = None
+if "last_slice" not in st.session_state:
+    st.session_state.last_slice = None
 
 
 def _trim_trajectory_tail(trajectory, trim_length):
@@ -43,7 +45,7 @@ def _trim_trajectory_tail(trajectory, trim_length):
 
     run = trajectory[run_start:]
     total_length = sum(
-        math.hypot(b['x'] - a['x'], b['y'] - a['y']) for a, b in zip(run[:-1], run[1:])
+        math.hypot(b['x'] - a['x'], b['y'] - a['y']) for a, b in zip(run[:-1], run[1:], strict=False)
     )
     trim_length = min(trim_length, total_length * 0.4)
 
@@ -77,7 +79,7 @@ def _trim_path_head(points, trim_length):
         return {'x': first['x'], 'y': first['y'], 'z': first['z']}, points
 
     total_length = sum(
-        math.hypot(b['x'] - a['x'], b['y'] - a['y']) for a, b in zip(points[:-1], points[1:])
+        math.hypot(b['x'] - a['x'], b['y'] - a['y']) for a, b in zip(points[:-1], points[1:], strict=False)
     )
     trim_length = min(trim_length, total_length * 0.4)
 

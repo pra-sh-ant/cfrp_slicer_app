@@ -1,6 +1,6 @@
 """Interactive Plotly 3D toolpath viewer."""
-import streamlit as st
 import plotly.graph_objects as go
+import streamlit as st
 
 import machine as machine_mod
 

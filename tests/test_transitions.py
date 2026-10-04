@@ -4,11 +4,10 @@ mechanism: seam-trim + slope ramp between layers.
 Each test here pins down a bug that was actually hit and fixed this session
 -- see the docstring on each for what regressed without it.
 """
-import machine as machine_mod
 import app as app_mod
+import machine as machine_mod
+from tests.helpers import base_2d_config, layer_xy_bounds, max_transition_angle_deg
 from validation import resolve_process_constraints
-
-from tests.helpers import base_2d_config, max_transition_angle_deg, layer_xy_bounds
 
 
 def _run(cfg, layup=(0.0,)):

@@ -1,9 +1,8 @@
 """Tests for the flat-speed specialty generators (Torus, Conical Dome, Mushroom)."""
 import pytest
 
-from specialty import SpecialtyEngine
 from gcode import GCodeCompiler
-
+from specialty import SpecialtyEngine
 from tests.helpers import base_revolve_config
 
 

@@ -64,6 +64,8 @@ def layer_xy_bounds(trajectory):
     for pt in trajectory:
         layer = pt.get("layer")
         b = bounds.setdefault(layer, [1e9, -1e9, 1e9, -1e9])
-        b[0] = min(b[0], pt["x"]); b[1] = max(b[1], pt["x"])
-        b[2] = min(b[2], pt["y"]); b[3] = max(b[3], pt["y"])
+        b[0] = min(b[0], pt["x"])
+        b[1] = max(b[1], pt["x"])
+        b[2] = min(b[2], pt["y"])
+        b[3] = max(b[3], pt["y"])
     return bounds

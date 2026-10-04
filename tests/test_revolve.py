@@ -8,11 +8,10 @@ import math
 
 import pytest
 
-import machine as machine_mod
 import app as app_mod
-from validation import resolve_process_constraints
-
+import machine as machine_mod
 from tests.helpers import base_revolve_config
+from validation import resolve_process_constraints
 
 REVOLVE_SHAPES = [
     "Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Hollow Sphere (Z)",
@@ -80,7 +79,7 @@ def test_layers_alternate_outside_in_and_inside_out():
         directions.append(start_r > end_r)  # True = outside->inside
 
     assert len(directions) >= 3
-    for a, b in zip(directions, directions[1:]):
+    for a, b in zip(directions, directions[1:], strict=False):
         assert a != b, "consecutive layers must alternate outside-in / inside-out"
 
 

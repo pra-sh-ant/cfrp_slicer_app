@@ -1,5 +1,6 @@
 """Post-slice checks: pump-floor engagement, Z-seam jumps, self-intersection, bed bounds."""
 import math
+
 from shapely.geometry import LineString
 
 import machine as machine_mod
@@ -188,7 +189,8 @@ class ValidationEngine:
         layers_data = {}
         for pt in trajectory:
             l = pt.get('layer', 1)
-            if l not in layers_data: layers_data[l] = []
+            if l not in layers_data:
+                layers_data[l] = []
             layers_data[l].append((pt['x'], pt['y']))
 
         for l_idx, coords in layers_data.items():

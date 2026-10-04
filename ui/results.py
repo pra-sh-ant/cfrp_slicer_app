@@ -31,7 +31,7 @@ def render_research_dashboard(ls):
         ("Z span", f"{min(z_vals):.1f}–{max(z_vals):.1f} mm"),
         ("Layers", max(pt.get("layer", 1) for pt in traj)),
     ]
-    for col, (label, value) in zip(cols, metrics):
+    for col, (label, value) in zip(cols, metrics, strict=False):
         col.metric(label, value)
 
     st.caption("Research summary: use this dashboard to compare shell geometry, layer coverage, build height, and spatial footprint before exporting G-code.")

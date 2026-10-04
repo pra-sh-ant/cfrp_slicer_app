@@ -1,0 +1,10 @@
+{
+  "status": "Pass",
+  "messages": [
+    "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
+  ],
+  "max_z": 0.4,
+  "constraint_notes": [
+    "Radius clearance uses 6.00 mm across the 30.00 mm narrow dimension; about 22.80 mm remains for concentric tracks."
+  ]
+}

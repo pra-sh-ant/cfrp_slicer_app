@@ -1,0 +1,10 @@
+{
+  "status": "Pass",
+  "messages": [
+    "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
+  ],
+  "max_z": 0.4,
+  "constraint_notes": [
+    "Track Gap raised from 1.20 to 6.00 mm: a serpentine U-turn needs at least 2R of vertical room."
+  ]
+}

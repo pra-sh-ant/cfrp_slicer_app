@@ -1,8 +1,9 @@
 """Toolpath geometry generation: shape outlines, wall offsets, and infill patterns."""
 import math
+
 import numpy as np
-from shapely.geometry import Polygon, Point, LineString
-from shapely.affinity import translate, rotate
+from shapely.affinity import rotate, translate
+from shapely.geometry import LineString, Point, Polygon
 
 
 def _check_gap_radius(track_gap, min_radius):
@@ -460,7 +461,7 @@ class GeometryEngine:
         if len(rings) == 1:
             return list(rings[0])
         path = []
-        for ring_a, ring_b in zip(rings[:-1], rings[1:]):
+        for ring_a, ring_b in zip(rings[:-1], rings[1:], strict=False):
             for i in range(samples):
                 u = i / samples
                 ax, ay = ring_a[i]

@@ -1,0 +1,41 @@
+[project]
+name = "cfrp-slicer"
+version = "0.1.0"
+description = "Continuous carbon-fibre (CFRP) toolpath slicer: one unbroken, UV-cured fibre stroke per part."
+requires-python = ">=3.12"
+dependencies = [
+    "numpy==2.5.2",
+    "shapely==2.1.2",
+]
+
+[project.optional-dependencies]
+# Legacy Streamlit front end (removed in Phase 10).
+streamlit-ui = [
+    "streamlit==1.62.0",
+    "plotly==7.0.0",
+]
+dev = [
+    "pytest==9.1.1",
+    "hypothesis==6.140.0",
+    "ruff==0.14.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+markers = [
+    "golden: characterization tests against stored reference outputs",
+    "slow: long-running tests",
+]
+
+[tool.ruff]
+line-length = 120
+target-version = "py312"
+extend-exclude = [".venv*", "graphify-out"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B", "UP"]
+ignore = [
+    "E501",   # long lines: legacy code has many; enforced by formatter later
+    "E741",   # `l` as a variable name in legacy validation code
+]
