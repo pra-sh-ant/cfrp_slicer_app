@@ -1,11 +1,12 @@
 # Architecture
 
-Status: **Phase 18** (full outer-perimeter lap + 45° diagonal entry + 45° Diagonal
-Hatch infill + seam-trim ramp fix; prior: smooth archimedean transitions, 3D viewer
-presets, track-gap coverage, L-Bracket removed, Fermat ring-arc fix, About dialog +
-CSV export, keyboard shortcuts, cancel + geometry persistence, print stats,
-recent files, layer-height clamp, Fermat seam phase-shift, spiral Z, Torus
-removed, Conical Dome promoted, PySide6 GUI, parameter save/load, packaging).
+Status: **Phase 19** (Y-direction anchor + Y-column ring-seam transitions; prior:
+full outer-perimeter lap + 45° diagonal entry + 45° Diagonal Hatch infill +
+seam-trim ramp fix, smooth archimedean transitions, 3D viewer presets, track-gap
+coverage, L-Bracket removed, Fermat ring-arc fix, About dialog + CSV export,
+keyboard shortcuts, cancel + geometry persistence, print stats, recent files,
+layer-height clamp, Fermat seam phase-shift, spiral Z, Torus removed, Conical
+Dome promoted, PySide6 GUI, parameter save/load, packaging).
 
 ## 1. Layout
 
@@ -104,7 +105,7 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
 
 ## 6. Known issues
 
-*(No open slicer bugs — all known issues resolved through Phase 18.)*
+*(No open slicer bugs — all known issues resolved through Phase 19.)*
 
 ## 7. Phase 2 behaviour changes
 

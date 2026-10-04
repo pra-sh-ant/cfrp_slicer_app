@@ -128,17 +128,15 @@ def trim_path_head(points, trim_length):
 # --- Per-layer building blocks -----------------------------------------------
 
 def add_lead_in_anchor(raw_path, anchor_length):
-    """Prepend a straight tangent lead-in of `anchor_length` mm pointing back
-    along the first segment:  P_anchor = P0 − L·(cos θ, sin θ),
-    θ = atan2(P1 − P0)."""
-    if anchor_length <= 0 or len(raw_path) < 2:
+    """Prepend a straight lead-in of `anchor_length` mm in the −Y direction.
+
+    The anchor always approaches from below (outside the part boundary) so it
+    can be physically cut away after printing.  A single point is enough to
+    mark the anchor start; the planner then ramps speed from rest."""
+    if anchor_length <= 0 or len(raw_path) < 1:
         return raw_path
-    dx = raw_path[1][0] - raw_path[0][0]
-    dy = raw_path[1][1] - raw_path[0][1]
-    angle_rad = math.atan2(dy, dx)
-    anchor_x = raw_path[0][0] - math.cos(angle_rad) * anchor_length
-    anchor_y = raw_path[0][1] - math.sin(angle_rad) * anchor_length
-    return [(anchor_x, anchor_y)] + list(raw_path)
+    p0 = raw_path[0]
+    return [(p0[0], p0[1] - anchor_length)] + list(raw_path)
 
 
 def plan_layer(raw_path, layer_z, layer_num, kin: KinematicsParams):

@@ -43,10 +43,27 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
 
     is_outward = (layer_idx % 2 != 0)
 
+    # For archimedean infill, pre-compute the seam hint so the infill starts
+    # near the join point:
+    #   • inside-out: start near the previous layer's end (last_pt).
+    #   • outside-in + boundary: start near where the wall will end (the wall
+    #     is reordered to start at the nearest point to last_pt, so its end is
+    #     that same point — compute it early so the infill seam aligns).
+    _arch_seam = None
+    if infill_type == ARCHIMEDEAN:
+        if is_outward:
+            _arch_seam = last_pt
+        elif include_boundary:
+            if last_pt:
+                _wall_dists = [math.hypot(x - last_pt[0], y - last_pt[1]) for x, y in wall_coords]
+                _arch_seam = wall_coords[_wall_dists.index(min(_wall_dists))]
+            else:
+                _arch_seam = wall_coords[0]
+
     if infill_type == ARCHIMEDEAN:
         infill_path, _ = archimedean_path(
             infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward,
-            seam_hint=last_pt if is_outward else None,
+            seam_hint=_arch_seam,
         )
     elif infill_type == FERMAT:
         # Phase-shift consecutive seams ~180° apart so the Z-ramp between

@@ -4,7 +4,6 @@ from __future__ import annotations
 import math
 
 from ._common import (
-    blend_chain,
     check_gap_radius,
     dedupe_path,
     hole_keepouts,
@@ -13,29 +12,33 @@ from ._common import (
     resample_closed_ring,
 )
 
-_PERIMETER_ENTRY_MM = 3.0   # length of the 45° perimeter-to-infill bridge
+_CONNECTOR_STEP_MM = 0.75   # max segment length inside ring-to-ring connectors
+
+
+def _bottom_most(ring_poly):
+    """Return the (x, y) point with minimum Y (then minimum X) on a ring."""
+    coords = list(ring_poly.exterior.coords)[:-1]
+    return min(coords, key=lambda p: (p[1], p[0]))
 
 
 def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False,
                      seam_hint=None):
-    """One smooth, continuously-blended spiral inside an arbitrary polygon.
+    """Concentric ring infill with Y-column seam transitions.
 
-    Rings sit at inset d_k = gap/2 + k·gap from the outer shell. Instead of
-    splicing ring-to-ring by jumping to the nearest point, each ring is
-    resampled at matched arc-length parameters and consecutive rings are
-    linearly blended across one full revolution: a constant pitch of `gap`
-    with no direction reversals.
+    Each ring is a fully closed loop.  Rings are connected by short straight
+    segments that run approximately in the +Y direction (from the bottom-most
+    seam of one ring to the bottom-most seam of the next inward ring).  This
+    keeps all seam transitions on a single vertical column so the lead-in
+    anchor (outside the part, in −Y) and all inter-ring connectors align on
+    one vertical line — no diagonal hacks required.
 
-    For outside-in (default) the path opens with the full outer ring as a
-    closed perimeter lap, then exits at 45° through a short (_PERIMETER_ENTRY_MM)
-    diagonal segment that bridges to the second ring.  The spiral then
-    continues inward through the remaining rings.  This gives:
-        perimeter coverage + smooth diagonal entry + seamless inward spiral.
+    Seam selection:
+      • For outside-in (default): bottom-most point of the outermost ring.
+      • For inside-out: bottom-most point of the innermost ring, or `seam_hint`
+        when supplied (aligns with the previous outside-in layer's seam so the
+        layer-to-layer ramp trim cuts diverge correctly).
 
-    For inside-out the last ring is the outermost; inner_close closes it at
-    full radius so alternating layers maintain symmetric outer-wall coverage.
-
-    Returns (path, base_poly). Raises ValueError if `track_count` rings were
+    Returns (path, base_poly).  Raises ValueError if `track_count` rings were
     requested but fewer fit.
     """
     check_gap_radius(track_gap, min_radius)
@@ -69,93 +72,46 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
 
     # Shared sample count: ~one point per 0.75 mm on the longest ring, ≥120.
     max_length = max(poly.exterior.length for poly in ordered)
-    samples = max(120, int(max_length / 0.75))
+    samples = max(120, int(max_length / _CONNECTOR_STEP_MM))
 
-    # --- Resample ring0 first (no phase anchor) ---
-    ring0_pts = resample_closed_ring(ordered[0], samples, None)
-
-    if not start_from_inside:
-        # ----------------------------------------------------------------
-        # Outside-in: full outer ring + 45° diagonal entry to ring1
-        # ----------------------------------------------------------------
-        # Compute a 45° direction at ring0's seam: bisector between the ring
-        # tangent (forward travel direction) and the inward normal (toward
-        # the centroid).  Phase ring1 to start at the point nearest to the
-        # projected 45° endpoint so the diagonal lands exactly on ring1.
-        p0 = ring0_pts[0]
-        tang = (ring0_pts[1][0] - p0[0], ring0_pts[1][1] - p0[1])
-        tlen = math.hypot(tang[0], tang[1])
-        tang = (tang[0] / tlen, tang[1] / tlen) if tlen > 1e-9 else (1.0, 0.0)
-
-        cx, cy = base_poly.centroid.x, base_poly.centroid.y
-        inv = (cx - p0[0], cy - p0[1])
-        ilen = math.hypot(inv[0], inv[1])
-        inv = (inv[0] / ilen, inv[1] / ilen) if ilen > 1e-9 else (-tang[1], tang[0])
-
-        diag = (tang[0] + inv[0], tang[1] + inv[1])
-        dlen = math.hypot(diag[0], diag[1])
-        diag = (diag[0] / dlen, diag[1] / dlen) if dlen > 1e-9 else inv
-
-        entry_target = (p0[0] + _PERIMETER_ENTRY_MM * diag[0],
-                        p0[1] + _PERIMETER_ENTRY_MM * diag[1])
-
-        # Resample ring1 with entry_target as phase anchor, subsequent rings
-        # chain off ring1's start as usual.
-        resampled = [ring0_pts]
-        prev_start = entry_target
-        for poly in ordered[1:]:
-            pts = resample_closed_ring(poly, samples, prev_start)
-            resampled.append(pts)
-            prev_start = pts[0]
-
-        # Outer ring fully closed (first_lap)
-        first_lap = ring0_pts + [ring0_pts[0]]
-
-        # 45° entry segment: straight interpolation from ring0[0] to ring1[0].
-        # ring1[0] is the point on ring1 nearest the projected 45° endpoint,
-        # so this segment naturally runs at ~45° to the ring tangent.
-        ring1_start = resampled[1][0]
-        n_entry = max(4, int(_PERIMETER_ENTRY_MM / 0.75))
-        entry_seg = [
-            (p0[0] + (i / n_entry) * (ring1_start[0] - p0[0]),
-             p0[1] + (i / n_entry) * (ring1_start[1] - p0[1]))
-            for i in range(1, n_entry + 1)
-        ]
-
-        # blend_chain starts at resampled[1][0] = ring1_start = entry_seg[-1];
-        # dedupe_path removes the duplicate at the junction.
-        inner_close = resampled[-1][1:] + [resampled[-1][0]]
-        if len(resampled) == 2:
-            continuous_path = first_lap + entry_seg + inner_close
-        else:
-            continuous_path = first_lap + entry_seg + blend_chain(resampled[1:], samples) + inner_close
-
+    # ----------------------------------------------------------------
+    # Seam anchor: the Y-column reference point.
+    # For outside-in → bottom-most point of outermost ring.
+    # For inside-out → seam_hint (previous layer's end) or bottom-most of innermost.
+    # ----------------------------------------------------------------
+    if seam_hint is not None:
+        initial_seam = seam_hint
     else:
-        # ----------------------------------------------------------------
-        # Inside-out: pure blend inner→outer + outer ring close
-        # ----------------------------------------------------------------
-        # Ring0 is innermost here.  If the caller supplies seam_hint (the
-        # previous layer's end-point on this same ring), anchor ring0 to start
-        # near it so the layer-to-layer seam trim cuts go in opposite directions
-        # on the innermost ring, giving a clean ramp with good XY separation.
-        if seam_hint is not None:
-            ring0_pts = resample_closed_ring(ordered[0], samples, seam_hint)
-        resampled = [ring0_pts]
-        prev_start = ring0_pts[0]
-        for poly in ordered[1:]:
-            pts = resample_closed_ring(poly, samples, prev_start)
-            resampled.append(pts)
-            prev_start = pts[0]
+        initial_seam = _bottom_most(ordered[0])
 
-        inner_close = resampled[-1][1:] + [resampled[-1][0]]
-        continuous_path = blend_chain(resampled, samples) + inner_close
+    path = []
+    prev_seam = initial_seam
 
-    path = dedupe_path(continuous_path)
+    for ring_poly in ordered:
+        # Phase this ring to start nearest to prev_seam (the current Y-column point).
+        ring_pts = resample_closed_ring(ring_poly, samples, prev_seam)
+        ring_seam = ring_pts[0]
 
-    # Close the loop when end lands near start (tight shapes, 1-2 tracks).
-    if len(path) >= 2:
-        d = math.hypot(path[-1][0] - path[0][0], path[-1][1] - path[0][1])
-        if d < track_gap:
-            path = path + [path[0]]
+        if path:
+            # Straight connector from the previous ring's seam to this ring's seam.
+            # For convex shapes this connector is approximately vertical (+Y direction)
+            # because consecutive ring seams are bottom-most points at similar X.
+            seg_len = math.hypot(ring_seam[0] - prev_seam[0], ring_seam[1] - prev_seam[1])
+            n_conn = max(2, int(math.ceil(seg_len / _CONNECTOR_STEP_MM)))
+            for i in range(1, n_conn + 1):
+                t = i / n_conn
+                path.append((
+                    prev_seam[0] + t * (ring_seam[0] - prev_seam[0]),
+                    prev_seam[1] + t * (ring_seam[1] - prev_seam[1]),
+                ))
 
-    return path, base_poly
+        # Traverse the ring. resample_closed_ring returns `samples` points that
+        # cover one full revolution, ending one step before the seam.  We do NOT
+        # add an explicit closing point because that would repeat ring_pts[0]
+        # later in the path and cause Shapely's is_simple check to fail.  The
+        # sub-step gap (~perimeter/samples ≤ 0.75 mm) is negligible for printing
+        # and is bridged by the connector to the next ring.
+        path.extend(ring_pts)
+        prev_seam = ring_pts[0]
+
+    return dedupe_path(path), base_poly

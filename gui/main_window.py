@@ -307,10 +307,11 @@ class MainWindow(QMainWindow):
             f"Python {sys.version.split()[0]}",
             f"PySide6 {PySide6.__version__}",
             "",
-            "Phases completed: 0–18",
+            "Phases completed: 0–19",
             "(safety net · cfrp_core extraction · spiral Z · GUI · "
             "save/load · packaging · Fermat seam fix · recent files · "
-            "print stats · cancel · shortcuts · About/CSV · Fermat islands fix)",
+            "print stats · cancel · shortcuts · About/CSV · Fermat islands fix · "
+            "Y-anchor + Y-column seam)",
         ]
         for line in lines:
             lbl = QLabel(line)
