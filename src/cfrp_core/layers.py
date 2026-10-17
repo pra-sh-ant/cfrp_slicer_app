@@ -209,19 +209,66 @@ def _unit_dir(a, b):
     return (dx / n, dy / n) if n > 1e-9 else None
 
 
-def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed):
+def _end_direction(points, span=1.0):
+    """Unit XY direction over the last ~span mm of a planned layer."""
+    ex, ey = points[-1]['x'], points[-1]['y']
+    for pt in reversed(points[:-1]):
+        dx, dy = ex - pt['x'], ey - pt['y']
+        n = math.hypot(dx, dy)
+        if n >= span:
+            return (dx / n, dy / n)
+    return None
+
+
+def _ramp_min_run(layer_height, transition_angle_deg):
+    """Horizontal run a layer ramp needs so no Hermite step climbs steeper
+    than the transition angle (local XY speed dips to ~half the chord)."""
+    angle = min(max(float(transition_angle_deg), 1.0), 89.0)
+    return 2.0 * float(layer_height) / math.tan(math.radians(angle))
+
+
+def _extend_head_for_run(prev_cut, first_cut, layer_trajectory, min_run, max_len):
+    """Move the head cut further along the layer until the ramp's horizontal
+    run from prev_cut is at least min_run (never past max_len of travel).
+    Returns (first_cut, remaining points)."""
+    if min_run <= 0 or math.hypot(first_cut['x'] - prev_cut['x'], first_cut['y'] - prev_cut['y']) >= min_run:
+        return first_cut, layer_trajectory
+    travelled, last = 0.0, first_cut
+    for k, pt in enumerate(layer_trajectory[:-1]):
+        travelled += math.hypot(pt['x'] - last['x'], pt['y'] - last['y'])
+        if travelled > max_len:
+            break
+        if math.hypot(pt['x'] - prev_cut['x'], pt['y'] - prev_cut['y']) >= min_run:
+            cut = {'x': pt['x'], 'y': pt['y'], 'z': pt['z']}
+            remaining = list(layer_trajectory[k + 1:])
+            remaining[0] = dict(remaining[0])
+            remaining[0]['dist'] = math.hypot(remaining[0]['x'] - cut['x'], remaining[0]['y'] - cut['y'])
+            return cut, remaining
+        last = pt
+    return first_cut, layer_trajectory
+
+
+def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed, min_run=0.0):
     """Append one planned layer to `trajectory` (in place), bridged from the
     previous layer by a RAMPED Z-SEAM TRANSITION: trim `seam_trim` mm off the
     previous tail and this head, then fill the gap with a sloped move in
         steps = max(4 if Δz > 0 else 1, ⌈L/0.75⌉, ⌈|Δz|/0.05⌉)
     points at `ramp_speed`, e_mult 1. The last ramp point is `layer_start`.
 
+    `min_run`: if the two cuts end up closer than this in XY (e.g. the layer
+    starts where the last one ended but runs the other way), the head cut
+    moves further into the layer (within 40% of it) so the ramp is not
+    steeper than the configured transition angle.
+
     Fibre can only be laid forward/up: callers must append layers strictly
     bottom to top.
     """
     if trajectory and layer_trajectory:
         prev_cut = trim_trajectory_tail(trajectory, seam_trim)
+        layer_len = sum(float(p.get('dist', 0.0)) for p in layer_trajectory[1:])
         first_cut, layer_trajectory = trim_path_head(layer_trajectory, seam_trim)
+        first_cut, layer_trajectory = _extend_head_for_run(
+            prev_cut, first_cut, layer_trajectory, min_run, 0.4 * layer_len - seam_trim)
 
         dx = first_cut['x'] - prev_cut['x']
         dy = first_cut['y'] - prev_cut['y']
@@ -238,7 +285,11 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed)
         chord_xy = math.hypot(dx, dy)
         t0 = _unit_dir(trajectory[-2], trajectory[-1]) if len(trajectory) >= 2 else None
         t1 = _unit_dir(layer_trajectory[0], layer_trajectory[1]) if len(layer_trajectory) >= 2 else None
-        if t0 is None or t1 is None or chord_xy < 1e-9:
+        # Tangent-continuous only when the seam turns <= 90 deg: for a
+        # reversal (layer runs back the way the last one came) the Hermite
+        # would hairpin within the chord and climb near-vertically there.
+        if (t0 is None or t1 is None or chord_xy < 1e-9
+                or t0[0] * t1[0] + t0[1] * t1[1] < 0.0):
             t0 = t1 = None
         for step in range(1, steps + 1):
             progress = step / steps
@@ -288,12 +339,39 @@ def _skip_behind(prev_path, next_path, cx, cy, max_frac=0.3):
     return list(next_path)
 
 
-def _helical_connector(prev_path, next_start, cx, cy, step=0.75):
+def _polar_profile(points, cx, cy, from_end):
+    """r(theta) of the last (from_end) or first lap of `points` about
+    (cx, cy), as a periodic interpolant. The lap is the run of points
+    covering one full turn, so it lies on a single ring."""
+    pts = np.asarray(points, dtype=np.float64) - (cx, cy)
+    if from_end:
+        pts = pts[::-1]
+    ang = np.unwrap(np.arctan2(pts[:, 1], pts[:, 0]))
+    swept = np.abs(ang - ang[0])
+    n = int(np.searchsorted(swept, 2.0 * math.pi)) + 1
+    lap, a = pts[:max(n, 3)], ang[:max(n, 3)]
+    r = np.hypot(lap[:, 0], lap[:, 1])
+    a = np.mod(a, 2.0 * math.pi)
+    order = np.argsort(a)
+    a, r = a[order], r[order]
+
+    def radius(theta):
+        return np.interp(np.mod(theta, 2.0 * math.pi), a, r, period=2.0 * math.pi)
+    return radius
+
+
+def _helical_connector(prev_path, next_start, cx, cy, step=0.75, next_path=None):
     """Seam between two revolve layers as ONE forward lap around the shell
     centre (vase-mode / spiralize style): keeps the spiral's sense of
     rotation, so the fibre never reverses, and moves radius from the old
     ring end to the new ring start with a smoothstep (zero radial slope at
     both ends). Z is ramped across the whole lap by the caller.
+
+    Round shells lap on a circle. With `next_path` (non-round shells, e.g.
+    the square tube) the lap instead follows the rings' own outline: at
+    each angle the radius blends the previous ring's last lap into the next
+    ring's first lap, so it stays between the rings instead of cutting the
+    corners.
 
     Returns XY points strictly between prev_path[-1] and next_start."""
     ex, ey = prev_path[-1]
@@ -313,8 +391,14 @@ def _helical_connector(prev_path, next_start, cx, cy, step=0.75):
         sweep += 2.0 * math.pi
     n = max(8, int(math.ceil(sweep * r_mid / step)))
     u = np.linspace(0.0, 1.0, n + 1)[1:-1]
-    radius = r0 + (r1 - r0) * (3.0 * u ** 2 - 2.0 * u ** 3)
+    blend = 3.0 * u ** 2 - 2.0 * u ** 3
     theta = a0 + sense * sweep * u
+    if next_path is None:
+        radius = r0 + (r1 - r0) * blend
+    else:
+        r_prev = _polar_profile(prev_path, cx, cy, from_end=True)(theta)
+        r_next = _polar_profile(next_path, cx, cy, from_end=False)(theta)
+        radius = r_prev + (r_next - r_prev) * blend
     return list(zip((cx + radius * np.cos(theta)).tolist(),
                     (cy + radius * np.sin(theta)).tolist(), strict=False))
 
@@ -337,14 +421,14 @@ def _spiral_z(xy, section_starts, z_nodes):
     return z.tolist()
 
 @lru_cache(maxsize=2048)
-def _archimedean_cached(cross_section_wkb, gap, min_rad, start_from_inside):
+def _archimedean_cached(cross_section_wkb, gap, min_rad, start_from_inside, polar_center=None):
     """Per-layer spiral for a revolve cross-section. Pure in its arguments, so
     changing speed / anchor / seam parameters re-slices without redoing the
     (dominant) polygon offsetting. Returns a tuple so the entry is immutable."""
     from shapely import wkb
     path, _ = geo.archimedean_path(
         wkb.loads(cross_section_wkb), gap, min_rad, track_count=None,
-        start_from_inside=start_from_inside)
+        start_from_inside=start_from_inside, polar_center=polar_center)
     return tuple(path)
 
 
@@ -430,7 +514,8 @@ def build_revolve_shell(config: ProcessConfig):
                 )
             else:
                 raw_path = list(_archimedean_cached(
-                    cross_section.wkb, gap, min_rad, is_outward))
+                    cross_section.wkb, gap, min_rad, is_outward,
+                    (cx, cy) if shape_type == 'square' else None))
         except ValueError:
             continue
         if not raw_path:
@@ -448,7 +533,11 @@ def build_revolve_shell(config: ProcessConfig):
             fermat_last_pt = layers_raw[-1][2][-1]
 
     if not layers_raw:
-        return [], target_shapes, max_z
+        raise ValueError(
+            "No layer of this shell could be filled: every cross-section is too small for "
+            "the wall at this Track Gap and Min Bend Radius. Enlarge the part or reduce "
+            "Tracks Per Layer, Track Gap or Min Bend Radius."
+        )
 
     # One continuous stroke for the whole shell (vase-mode style): every ring
     # is followed by a forward helical lap into the next ring, speed is
@@ -474,7 +563,8 @@ def build_revolve_shell(config: ProcessConfig):
             nxt = layers_raw[k + 1]
             trimmed = _skip_behind(path, nxt[2], cx, cy)
             layers_raw[k + 1] = (nxt[0], nxt[1], trimmed)
-            link = _helical_connector(path, trimmed[0], cx, cy)
+            link = _helical_connector(path, trimmed[0], cx, cy,
+                                      next_path=trimmed if shape_type == 'square' else None)
             xy.extend(link)
             owner.extend([layer_num] * len(link))
     xy = enforce_min_radius(xy, min_rad)   # also rounds ring/connector joins
@@ -502,12 +592,13 @@ def build_flat_laminate(config: ProcessConfig):
     trajectory = []
     target_shapes = []
     max_z = config.z_offset_mm
-    last_pt = None
+    last_pt = last_dir = None
     layup_sequence = list(config.layup_deg) or [0.0]
     kin = KinematicsParams.from_config(config)
     seam_trim = max(0.0, float(config.seam_trim_mm))
     gap, r_min = config.track_gap_mm, config.min_radius_mm
     layer_height = max(float(config.layer_height_mm), 0.05)
+    min_run = _ramp_min_run(layer_height, config.transition_angle_deg)
 
     for i in range(config.layers):
         layer_z = config.z_offset_mm + (i * layer_height)
@@ -521,6 +612,7 @@ def build_flat_laminate(config: ProcessConfig):
             raw_path = geo.laminate_layer(
                 base_poly, gap, r_min, config.infill_type, config.tracks_per_layer,
                 g.include_boundary, current_angle, layer_idx=i, last_pt=last_pt,
+                last_dir=last_dir,
             )
             target_shapes.append((layer_z, printable, i + 1))
         except ValueError as exc:
@@ -531,10 +623,11 @@ def build_flat_laminate(config: ProcessConfig):
 
         raw_path = enforce_min_radius(raw_path, r_min)
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
-        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min)
+        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run)
 
         if layer_trajectory:
             last_pt = (layer_trajectory[-1]['x'], layer_trajectory[-1]['y'])
+            last_dir = _end_direction(layer_trajectory)
 
     return trajectory, target_shapes, max_z
 
@@ -635,7 +728,7 @@ def _multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_p
     return geo.dedupe_path(path)
 
 
-def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt):
+def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, last_dir=None):
     """2D path for one sliced layer. A lone island goes through the normal
     flat-laminate generator; an Archimedean or Corner-Step track count that
     does not fit falls back to as many rings as fit instead of dropping the
@@ -648,7 +741,7 @@ def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt):
     def attempt(tracks):
         return geo.laminate_layer(
             poly, gap, r_min, config.infill_type, tracks, config.geometry.include_boundary,
-            angle, layer_idx=layer_idx, last_pt=last_pt,
+            angle, layer_idx=layer_idx, last_pt=last_pt, last_dir=last_dir,
         )
 
     try:
@@ -703,7 +796,7 @@ def build_stl_laminate(config: ProcessConfig):
     trajectory: list[dict] = []
     target_shapes: list[tuple] = []
     max_z = float(config.z_offset_mm)
-    last_pt = None
+    last_pt = last_dir = None
     layup_sequence = list(config.layup_deg) or [0.0]
     kin = KinematicsParams.from_config(config)
     seam_trim = max(0.0, float(config.seam_trim_mm))
@@ -711,6 +804,7 @@ def build_stl_laminate(config: ProcessConfig):
     # An island too small for one track turn cannot hold fibre.
     min_island_area = math.pi * (r_min + gap / 2.0) ** 2 * 0.25
     multi = g.stl_islands == "all"
+    min_run = _ramp_min_run(layer_height, config.transition_angle_deg)
 
     for i, (z_print, region) in enumerate(slices):
         layer_z = z_print
@@ -725,7 +819,7 @@ def build_stl_laminate(config: ProcessConfig):
         target_shapes.append((layer_z, printable, i + 1))
 
         try:
-            raw_path = _stl_layer_path(islands, config, current_angle, i, last_pt)
+            raw_path = _stl_layer_path(islands, config, current_angle, i, last_pt, last_dir)
         except ValueError:
             continue
         if not raw_path:
@@ -741,10 +835,11 @@ def build_stl_laminate(config: ProcessConfig):
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
         if len(islands) > 1:
             _flag_bridges(layer_trajectory, unary_union(islands), gap, skip=anchor_n + 1)
-        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min)
+        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run)
 
         if layer_trajectory:
             last_pt = (layer_trajectory[-1]['x'], layer_trajectory[-1]['y'])
+            last_dir = _end_direction(layer_trajectory)
 
     if not trajectory:
         raise ValueError(

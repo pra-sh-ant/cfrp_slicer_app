@@ -1,10 +1,11 @@
 {
   "status": "Warning",
   "messages": [
-    "Curvature: 1 point(s) are tighter than the 3.0 mm min bend radius on layer(s) [1]; these are speed-limited, not geometrically safe."
+    "Curvature: 181 point(s) are tighter than the 3.0 mm min bend radius on layer(s) [1, 2]; these are speed-limited, not geometrically safe."
   ],
   "max_z": 0.4,
   "constraint_notes": [
-    "Radius clearance uses 6.00 mm across the 50.00 mm narrow dimension; about 42.80 mm remains for concentric tracks."
+    "Radius clearance uses 6.00 mm across the 50.00 mm narrow dimension; about 42.80 mm remains for concentric tracks.",
+    "Oriented Serpentine: U-turns between lines 1.20 mm apart are at most 0.60 mm radius, below the 3.0 mm min bend radius, so they are speed-limited (curvature warning). A spiral pattern, or Track Gap >= 6.0 mm, avoids this."
   ]
 }

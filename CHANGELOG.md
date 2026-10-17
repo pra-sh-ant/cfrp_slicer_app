@@ -5,6 +5,61 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Fixed (Phase 24 — validation sweep: every shape × infill × key setting)
+Found with `tools/validation_sweep.py` (1182 cases from GUI defaults). Before:
+406 Pass / 702 Warning / 42 Fail / 32 config errors, and two checks were blind.
+Goldens regenerated deliberately (see bottom).
+- **Fail: empty trajectory, square tube with 1 track** (every size). The hole kept
+  sharp corners inside ~5 mm outer fillets, thinning the wall to 0.8 mm at the
+  corners so no ring passed the hole clearance. Hole corners are now concentric
+  with the outer ones (`r_outer − wall`).
+- **Fail: empty trajectory, revolve wall wider than the radius allows** (e.g. 7
+  tracks at R 10 mm). The track count is now capped to what fits at min bend
+  radius, with a constraint note; a part too small for one track raises a clear
+  error, as does a shell where no layer fills.
+- **Missing layers mid-shell** (tapered/conical, 1 track). pyclipper occasionally
+  returns a micro self-intersecting offset; `fillet` grew it into a spike that hit
+  the hole and dropped the ring. Invalid clipper output is now repaired.
+- **Square tube connector cut the corners**: the helical connector lapped a circle.
+  For non-round shells it now follows the rings' own outline (polar blend), and
+  their spiral pairs ring points by angle (`resample_polar_ring`), which cannot
+  cross for nested star-shaped rings. Round shells unchanged (byte-identical).
+- **Fermat layers started across the part**: the 180° seam phase-shift left the
+  jump from the previous layer as a straight chord at layer Z under every ring.
+  Layers now enter where the last one ended, choosing the winding (`mirror`) that
+  continues its direction instead of reversing.
+- **Zigzag (serpentine / 45° hatch) entries cut across their own lines**: the
+  layer now starts at the zigzag corner nearest the previous end (or the wall's
+  end), routed along an edge corridor if the straight jump would still cross.
+- **Zigzag U-turns**: were circular caps fitted to the chord (90° kinks at the
+  joins; wrong-way bulges at slanted/curved edges). Now a straight level-off plus a
+  semicircle of radius gap/2 (`_uturn`): tangent-continuous, never crosses its
+  neighbours. Line ends are eroded by `max(r_min, gap)` so turns stay inside.
+- **Steep layer ramps** (Corner-Step, short seams): `append_layer(min_run=...)`
+  moves the head cut until the ramp has the horizontal run the transition angle
+  needs; reversal seams (turn > 90°) use a straight ramp instead of a hairpin.
+- **Validator: self-crossing check was blind and noisy.** It counted repeated points
+  only when `is_simple` failed (false positives on seam overlaps, missed real
+  X-crossings). It now counts segment pairs crossing at ≥ 20° (shallower overlap is
+  reported by the coverage metric).
+- **Validator: curvature audit was blind at corners after long segments.** The
+  three-point circumradius grows with leg length (a 90° corner after a scan line
+  read ~25 mm). Now `local_bend_radii`: ½·min(leg) / sin(θ/2) on the de-slivered
+  path, 1% slack for arcs at exactly r_min.
+- New constraint note for line patterns with gap < 2·r_min (U-turns are at most
+  gap/2 radius — physics, not a defect).
+
+After: 0 Fail; real crossings 999 → 60 (degenerate 135×25 triangle corners, Fermat
+centre); steep ramps 252 → 33; curvature warnings now appear where they are real
+(serpentine/hatch U-turns, Fermat centre, Corner-Step corners, wall joins).
+
+Golden changes: paths changed for all `*_fermat`, `*_serp`, `layup_*_serp`,
+`triangle_arch` (seam/entry/U-turn fixes) and `square_tube_arch` (corner fix:
+9963 → 12739 points, full 3 rings through the corners). Archimedean and revolve
+G-code is otherwise byte-identical; their validation messages changed only through
+the stricter audits (1–6 tight points each; `rectangle_arch_boundary` 38 at the wall
+join; `conical_dome` loses a false "crosses itself").
+
 ### Added / Fixed (Phase 23 — robust STL slicing, multi-island strokes, coverage metric)
 See `docs/SLICER_BENCHMARK.md` item 1. Golden outputs unchanged (no STL cases).
 - **Fix: STL import was broken without scipy/networkx.** Trimesh's `section()` needs

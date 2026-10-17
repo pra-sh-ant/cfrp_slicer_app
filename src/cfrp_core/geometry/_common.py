@@ -5,6 +5,7 @@ import math
 
 import numpy as np
 import pyclipper
+import shapely
 from shapely.geometry import Point, Polygon
 
 _SCALE = 1000
@@ -17,8 +18,17 @@ def _clipper_to_polys(tree):
     polys = []
     for path in tree:
         coords = pyclipper.scale_from_clipper(path, _SCALE)
-        if len(coords) >= 3:
-            polys.append(Polygon(coords))
+        if len(coords) < 3:
+            continue
+        poly = Polygon(coords)
+        if not poly.is_valid:
+            # Clipper occasionally emits a micro self-intersecting loop on a
+            # small offset circle; growing that back (fillet) turns it into
+            # a spike that hits a hole and drops the whole ring.
+            poly = largest_polygon(poly.buffer(0))
+            if poly.is_empty:
+                continue
+        polys.append(poly)
     return polys
 
 
@@ -182,6 +192,32 @@ def resample_closed_ring(poly, samples: int, phase_start=None):
     return list(zip(np.interp(t, cum, coords[:, 0]).tolist(), np.interp(t, cum, coords[:, 1]).tolist(), strict=False))
 
 
+def resample_polar_ring(poly, samples: int, center, phase_start=None):
+    """Resample poly's exterior at `samples` equal ANGLES about `center`
+    (poly must be star-shaped about it), starting at phase_start's angle and
+    turning the same way as the exterior. Blending two nested rings sampled
+    this way, P = (1-u)A + uB, stays radially between them at every angle,
+    so the spiral cannot cross itself even when the rings' corner radii
+    differ (arc-length pairing drifts at such corners)."""
+    cx, cy = center
+    # Densify first: between two far-apart vertices of a straight side,
+    # linear interpolation in (angle, radius) would bulge outwards.
+    ring = shapely.segmentize(poly.exterior, 0.1)
+    coords = np.asarray(ring.coords, dtype=np.float64)[:-1, :2] - (cx, cy)
+    ang = np.arctan2(coords[:, 1], coords[:, 0])
+    rad = np.hypot(coords[:, 0], coords[:, 1])
+    order = np.argsort(ang)
+    ang_s, rad_s = ang[order], rad[order]
+    sense = 1.0 if poly.exterior.is_ccw else -1.0
+    if phase_start is not None:
+        a0 = math.atan2(phase_start[1] - cy, phase_start[0] - cx)
+    else:
+        a0 = float(ang[0])
+    theta = a0 + sense * 2.0 * math.pi * np.arange(samples) / samples
+    r = np.interp(np.mod(theta + math.pi, 2.0 * math.pi) - math.pi, ang_s, rad_s, period=2.0 * math.pi)
+    return list(zip((cx + r * np.cos(theta)).tolist(), (cy + r * np.sin(theta)).tolist(), strict=False))
+
+
 def blend_chain(rings, samples: int):
     """Continuous path threading through consecutive phase-aligned,
     resampled rings by linearly blending across one revolution per ring
@@ -216,6 +252,26 @@ def _circumradii(pts_arr):
     safe = (cross > 1e-12) & (da > 0.01) & (db > 0.01)
     radii = np.full(len(cross), 9999.0)
     radii[safe] = (da[safe] * db[safe] * dc[safe]) / (2.0 * cross[safe])
+    return radii
+
+
+def local_bend_radii(pts_arr):
+    """Bend radius at every interior vertex, robust to uneven spacing:
+    the circle through the vertex and the points half the shorter leg away
+    on each side,
+        R = ½·min(a, b) / sin(θ/2)     (θ = turning angle).
+    Equals the circumradius on an evenly sampled arc. The circumradius of
+    three points instead grows with leg length, so a sharp corner at the
+    end of a long straight (a scan line) used to look safe."""
+    a = pts_arr[1:-1] - pts_arr[:-2]
+    b = pts_arr[2:] - pts_arr[1:-1]
+    la = np.linalg.norm(a, axis=1)
+    lb = np.linalg.norm(b, axis=1)
+    cos = np.einsum('ij,ij->i', a, b) / np.maximum(la * lb, 1e-12)
+    theta = np.arccos(np.clip(cos, -1.0, 1.0))
+    radii = np.full(len(a), 9999.0)
+    m = (la > 0.01) & (lb > 0.01) & (theta > 1e-9)
+    radii[m] = 0.5 * np.minimum(la, lb)[m] / np.sin(theta[m] / 2.0)
     return radii
 
 

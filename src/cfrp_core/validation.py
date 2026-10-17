@@ -4,11 +4,12 @@ from __future__ import annotations
 import math
 
 import numpy as np
+from shapely import STRtree
 from shapely.geometry import LineString
 
 from .config import ProcessConfig
 from .geometry import dedupe_path
-from .geometry._common import _circumradii
+from .geometry._common import local_bend_radii
 from .machine import DEFAULT_MACHINE, MachineProfile, check_bounds
 
 
@@ -25,6 +26,31 @@ def _z_chunks(pts3, z_tol):
         z_hi = z if z_hi is None else max(z_hi, z)
     if chunk:
         yield chunk
+
+
+# Two tows of width w meeting at angle a share w / sin(a) of length: ~3.5 w
+# at 20 deg (a crossing), ~11 w at 5 deg (side-by-side overlap, e.g. a
+# helical connector lapping its own ring at a slightly higher Z).
+_CROSSING_MIN_ANGLE_DEG = 20.0
+
+
+def _count_crossings(coords):
+    """Pairs of non-adjacent segments that properly cross at more than
+    _CROSSING_MIN_ANGLE_DEG. Touching, retracing or near-parallel overlap at
+    a seam (numerically an X at ~0 deg) is not a crossing; tow laid on tow is
+    measured by the coverage metric instead."""
+    pts = np.asarray(coords, dtype=np.float64)
+    d = np.diff(pts, axis=0)
+    d /= np.maximum(np.linalg.norm(d, axis=1), 1e-12)[:, None]
+    cos_min = math.cos(math.radians(_CROSSING_MIN_ANGLE_DEG))
+    segs = [LineString(coords[i:i + 2]) for i in range(len(coords) - 1)]
+    tree = STRtree(segs)
+    count = 0
+    for i, seg in enumerate(segs):
+        for j in tree.query(seg, predicate='crosses'):
+            if j > i + 1 and abs(float(d[i] @ d[j])) < cos_min:
+                count += 1
+    return count
 
 
 def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> dict:
@@ -93,8 +119,8 @@ def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfi
             f"layer height, enlarge the part, or increase the transition angle allowance."
         )
 
-    # 4. Self-intersection: per layer, not simple AND > 3 repeated points
-    #    (a wall loop plus its tangent exit legitimately revisits 1-2 points).
+    # 4. Self-intersection: per layer, segments that properly cross (seam
+    #    touches and retraced points are not crossings; see _count_crossings).
     #    Z-aware: a spiral-ramped layer climbs while it circles, so laps that
     #    overlap in XY at a different Z are not crossings. Each layer is cut
     #    into chunks spanning < half a layer height of Z and only crossings
@@ -106,30 +132,33 @@ def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfi
         layers_data.setdefault(layer, []).append((pt['x'], pt['y'], pt['z']))
 
     for l_idx, pts3 in layers_data.items():
-        dupes = 0
+        crossings = 0
         for chunk in _z_chunks(pts3, z_tol):
-            if len(chunk) <= 5:
-                continue
             clean_coords = dedupe_path(chunk)
             if len(clean_coords) > 5 and not LineString(clean_coords).is_simple:
-                seen = set()
-                for pt in clean_coords:
-                    p = (round(pt[0], 2), round(pt[1], 2))
-                    if p in seen:
-                        dupes += 1
-                    seen.add(p)
-        if dupes > 3:
-            warnings.append(f"Layer {l_idx} path crosses itself ({dupes} internal intersections). Tangent peeling may intersect. Proceed with caution.")
+                crossings += _count_crossings(clean_coords)
+        if crossings:
+            warnings.append(f"Layer {l_idx} path crosses itself ({crossings} internal intersections). Tangent peeling may intersect. Proceed with caution.")
 
     # 5. Curvature: non-transition vertices tighter than the min bend radius
     #    (checked on the final, bed-fitted points the G-code is written from).
     min_rad = float(config.min_radius_mm)
     if min_rad > 0 and len(trajectory) > 2:
-        pts = np.array([(p['x'], p['y']) for p in trajectory], dtype=np.float64)
-        transition = np.array([bool(p.get('is_transition')) for p in trajectory[1:-1]])
-        tight = (_circumradii(pts) < min_rad) & ~transition
+        # Collapse sub-0.05 mm slivers first (as dedupe_path does for paths):
+        # a near-duplicate point turns a tiny kink into a fake tight bend.
+        keep, lx, ly = [0], trajectory[0]['x'], trajectory[0]['y']
+        for k in range(1, len(trajectory)):
+            p = trajectory[k]
+            if math.hypot(p['x'] - lx, p['y'] - ly) > 0.05:
+                keep.append(k)
+                lx, ly = p['x'], p['y']
+        pts = np.array([(trajectory[k]['x'], trajectory[k]['y']) for k in keep], dtype=np.float64)
+        transition = np.array([bool(trajectory[k].get('is_transition')) for k in keep[1:-1]], dtype=bool)
+        # 1% slack: fillets are arcs at exactly min_rad, and sampling them at
+        # ~0.75 mm reads up to ~0.5% under.
+        tight = (local_bend_radii(pts) < min_rad * 0.99) & ~transition if len(pts) > 2 else np.zeros(0, bool)
         if tight.any():
-            tight_layers = sorted({trajectory[i + 1].get('layer', 1) for i in np.nonzero(tight)[0]})
+            tight_layers = sorted({trajectory[keep[i + 1]].get('layer', 1) for i in np.nonzero(tight)[0]})
             shown = tight_layers[:8] + (["..."] if len(tight_layers) > 8 else [])
             warnings.append(
                 f"Curvature: {int(tight.sum())} point(s) are tighter than the {min_rad:.1f} mm min "

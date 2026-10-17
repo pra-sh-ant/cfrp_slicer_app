@@ -11,11 +11,12 @@ from ._common import (
     inset_components,
     largest_polygon,
     resample_closed_ring,
+    resample_polar_ring,
 )
 
 
 def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False,
-                     seam_hint=None):
+                     seam_hint=None, polar_center=None):
     """One smooth, continuously-blended spiral inside an arbitrary polygon.
 
     Rings sit at inset d_k = gap/2 + k·gap from the outer shell. Instead of
@@ -33,6 +34,9 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     For inside-out the last ring is the outermost; inner_close closes it at
     full radius so alternating layers maintain symmetric outer-wall coverage.
 
+    `polar_center`: pair ring points by angle about this point instead of by
+    arc length (rings must be star-shaped about it; see resample_polar_ring).
+
     Returns (path, base_poly). Raises ValueError if `track_count` rings were
     requested but fewer fit.
     """
@@ -40,6 +44,11 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     if base_poly.is_empty:
         return [], base_poly
     base_poly = largest_polygon(base_poly)
+    if polar_center is None:
+        resample = resample_closed_ring
+    else:
+        def resample(poly, n, phase_start):
+            return resample_polar_ring(poly, n, polar_center, phase_start)
     holes = hole_keepouts(base_poly)
 
     ring_polys, current_inset = [], track_gap / 2.0
@@ -67,12 +76,12 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     samples = max(120, int(max_length / 0.75))
 
     if len(ordered) == 1:
-        ring = resample_closed_ring(ordered[0], samples, None)
+        ring = resample(ordered[0], samples, None)
         path = dedupe_path(ring + [ring[0]])
         return path, base_poly
 
     # --- Resample ring0 first (no phase anchor) ---
-    ring0_pts = resample_closed_ring(ordered[0], samples, None)
+    ring0_pts = resample(ordered[0], samples, None)
 
     if not start_from_inside:
         # ----------------------------------------------------------------
@@ -82,7 +91,7 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         resampled = [ring0_pts]
         prev_start = ring0_pts[0]
         for poly in ordered[1:]:
-            pts = resample_closed_ring(poly, samples, prev_start)
+            pts = resample(poly, samples, prev_start)
             resampled.append(pts)
             prev_start = pts[0]
 
@@ -102,11 +111,11 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         # near it so the layer-to-layer seam trim cuts go in opposite directions
         # on the innermost ring, giving a clean ramp with good XY separation.
         if seam_hint is not None:
-            ring0_pts = resample_closed_ring(ordered[0], samples, seam_hint)
+            ring0_pts = resample(ordered[0], samples, seam_hint)
         resampled = [ring0_pts]
         prev_start = ring0_pts[0]
         for poly in ordered[1:]:
-            pts = resample_closed_ring(poly, samples, prev_start)
+            pts = resample(poly, samples, prev_start)
             resampled.append(pts)
             prev_start = pts[0]
 

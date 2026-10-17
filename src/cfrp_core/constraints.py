@@ -6,9 +6,10 @@ note instead of failing.
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
-from .config import ARCHIMEDEAN, FERMAT, SPECIALTY_SHAPES, ProcessConfig
+from .config import ARCHIMEDEAN, DIAGONAL_45, FERMAT, ORIENTED_SERPENTINE, SPECIALTY_SHAPES, ProcessConfig
 
 
 @dataclass(frozen=True)
@@ -49,16 +50,48 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
 
     update: dict = {"track_gap_mm": track_gap}
 
+    # A round revolve layer is sliced only while its outer radius leaves room
+    # for every ring at >= min bend radius: R >= r_min + (tracks + 0.5) * gap
+    # (layers.build_revolve_shell). If even the base radius fails that, every
+    # layer would be skipped, so cap the track count instead.
+    shape_is_round_revolve = config.geometry.is_revolve and shape != "Hollow Square Tube (Z)"
+    if shape_is_round_revolve:
+        base_r = max(float(config.geometry.base_radius_mm), 1.0)
+        fit = math.floor((base_r - min_radius) / track_gap - 0.5 + 1e-9)
+        if fit < 1:
+            raise ValueError(
+                f"Base radius {base_r:.1f} mm is too small for one {track_gap:.2f} mm track at "
+                f"{min_radius:.1f} mm min bend radius (needs at least "
+                f"{min_radius + 1.5 * track_gap:.1f} mm). Enlarge the part or reduce Min Bend Radius."
+            )
+        if int(config.tracks_per_layer) > fit:
+            update["tracks_per_layer"] = fit
+            notes.append(
+                f"Tracks Per Layer reduced from {int(config.tracks_per_layer)} to {fit}: a "
+                f"{base_r:.1f} mm radius shell fits {fit} rings at {track_gap:.2f} mm gap with "
+                f"{min_radius:.1f} mm min bend radius."
+            )
+
     # A Fermat spiral must U-turn between its two arms inside the innermost
     # region; in a revolve shell's narrow wall band that U-turn is tighter than
     # min bend radius (e.g. ~0.2 mm vs 3 mm). Archimedean never reverses.
-    wall_band = int(config.tracks_per_layer) * track_gap
+    wall_band = int(update.get("tracks_per_layer", config.tracks_per_layer)) * track_gap
     if (config.geometry.is_revolve and config.infill_type == FERMAT
             and min_radius > 0 and wall_band < 2.0 * min_radius + track_gap):
         update["infill_type"] = ARCHIMEDEAN
         notes.append(
             f"Fermat spiral needs a U-turn that the {wall_band:.1f} mm wall band cannot fit at "
             f"{min_radius:.1f} mm min bend radius; using Archimedean (no reversals) instead."
+        )
+    # Line patterns turn 180 deg between adjacent lines one gap apart; the
+    # widest such turn is a semicircle of radius gap/2.
+    if (config.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45) and min_radius > 0
+            and track_gap < 2.0 * min_radius):
+        notes.append(
+            f"{config.infill_type}: U-turns between lines {track_gap:.2f} mm apart are at most "
+            f"{track_gap / 2.0:.2f} mm radius, below the {min_radius:.1f} mm min bend radius, so they "
+            f"are speed-limited (curvature warning). A spiral pattern, or Track Gap >= "
+            f"{2.0 * min_radius:.1f} mm, avoids this."
         )
     if kin_update:
         update["kinematics"] = k.model_copy(update=kin_update)

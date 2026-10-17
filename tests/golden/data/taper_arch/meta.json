@@ -1,7 +1,7 @@
 {
-  "status": "Pass",
+  "status": "Warning",
   "messages": [
-    "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
+    "Curvature: 1 point(s) are tighter than the 3.0 mm min bend radius on layer(s) [17]; these are speed-limited, not geometrically safe."
   ],
   "max_z": 10.2,
   "constraint_notes": []

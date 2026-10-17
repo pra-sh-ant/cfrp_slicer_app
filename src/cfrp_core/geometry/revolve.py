@@ -15,8 +15,10 @@ def revolve_cross_section(cx, cy, outer_radius, inner_radius, shape_type='round'
     collapses to ~0. The inner radius is clamped to 0.999 × outer so the
     ring never inverts. A square has side 2·radius; its corners are
     filleted so that even the innermost inset ring (at wall_depth from the
-    boundary) still has min_bend_radius curvature."""
-    def build(radius, is_outer=False):
+    boundary) still has min_bend_radius curvature. The hole's corners are
+    rounded concentric with the outer ones (r_outer - wall), so the wall
+    keeps its full thickness through the corners."""
+    def build(radius, fillet_r=0.0):
         if radius <= 1e-6:
             return Polygon()
         if shape_type == 'square':
@@ -24,20 +26,20 @@ def revolve_cross_section(cx, cy, outer_radius, inner_radius, shape_type='round'
                 (cx - radius, cy - radius), (cx + radius, cy - radius),
                 (cx + radius, cy + radius), (cx - radius, cy + radius),
             ])
-            if min_bend_radius > 0:
-                extra = wall_depth + min_bend_radius * 0.5 if is_outer else 0.0
-                fillet_r = min_bend_radius + extra
-                fillet_r = min(fillet_r, radius * 0.95)
-                filleted = fillet(poly, fillet_r)
+            if fillet_r > 0:
+                filleted = fillet(poly, min(fillet_r, radius * 0.95))
                 if not filleted.is_empty:
                     return largest_polygon(filleted)
             return poly
         return Point(cx, cy).buffer(radius, quad_segs=64)
 
-    outer_poly = build(outer_radius, is_outer=True)
+    outer_fillet = min_bend_radius + wall_depth + min_bend_radius * 0.5 if min_bend_radius > 0 else 0.0
+    outer_poly = build(outer_radius, outer_fillet)
     if outer_poly.is_empty or inner_radius <= 1e-6:
         return outer_poly
-    inner_poly = build(min(inner_radius, outer_radius * 0.999))
+    inner_radius = min(inner_radius, outer_radius * 0.999)
+    inner_fillet = min(outer_fillet, outer_radius * 0.95) - (outer_radius - inner_radius)
+    inner_poly = build(inner_radius, max(inner_fillet, 0.0))
     return outer_poly.difference(inner_poly)
 
 

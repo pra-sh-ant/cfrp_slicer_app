@@ -27,7 +27,7 @@ def _reverse_winding(ring_pts):
 
 
 def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
-                       start_from_inside=False, entry_hint=None):
+                       start_from_inside=False, entry_hint=None, mirror=False):
     """One continuous "connected Fermat spiral" covering base_poly --
     including holes, and shapes that split into islands as they're offset.
 
@@ -45,6 +45,11 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
     `entry_hint` steers where on the outer ring the spiral starts/ends.
     Pass the diametrically-opposite point of the previous layer's end to
     phase-shift the seam ~180°, giving the Z-ramp a long horizontal run.
+
+    `mirror` reverses the winding of every ring, so the spiral turns the
+    other way. A double spiral leaves its outer ring turning opposite to how
+    it entered; mirroring the next layer lets it continue the previous
+    layer's direction instead of reversing at the seam.
     """
     check_gap_radius(track_gap, min_radius)
     if base_poly.is_empty or base_poly.geom_type != 'Polygon':
@@ -172,6 +177,9 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
 
         a_seq = _resample_sequential(a_rings, samples, entry_hint)
         b_seq = _resample_sequential(b_rings, samples, entry_hint)
+        if mirror:
+            a_seq = [_reverse_winding(pts) for pts in a_seq]
+            b_seq = [_reverse_winding(pts) for pts in b_seq]
 
         in_path = blend_chain(a_seq, samples)
         turn_point = in_path[-1] if in_path else (a_seq[-1][0] if a_seq else entry_hint)
