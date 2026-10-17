@@ -111,6 +111,13 @@ class DashboardTab(QScrollArea):
                 ("Fiber length", f"{fl / 1000:.2f} m  ({fl:.0f} mm)"),
                 ("Fiber mass", f"{fm * 1000:.1f} mg  ({fm:.4f} g)"),
             ]
+            if "coverage" in print_stats:
+                rows += [
+                    ("Fiber coverage", f"{print_stats['coverage'] * 100:.1f} %  "
+                                       f"(worst L{print_stats['worst_layer']}: "
+                                       f"{print_stats['worst_coverage'] * 100:.1f} %)"),
+                    ("Tow overlap", f"{print_stats['overlap'] * 100:.1f} %"),
+                ]
 
         for key, val in rows:
             if key.startswith("─"):

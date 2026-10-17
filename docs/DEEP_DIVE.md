@@ -29,7 +29,7 @@ Entry: `pipeline.slice_part`. Core has no UI imports (`tests/test_core_isolation
 
 - Primitives (`geometry/outlines.py`): same outline every layer.
 - Revolve shells: radius profile `r(progress)` -> annulus per Z (`geometry/revolve.py`). No mesh.
-- STL (`geometry/mesh_slicer.py`): trimesh `section()` at mid-layer Z; keeps only the **largest polygon** per slice (no multi-island); non-watertight meshes get `fill_holes()`.
+- STL (`geometry/mesh_slicer.py`): numpy triangle-plane cut at mid-layer Z, segments chained into rings, even-odd combined (holes and all islands kept, world XY), small leaks closed by `stl_closing_radius_mm`. Trimesh only loads the file. `stl_islands="largest"` (default) keeps one island per slice; `"all"` fills every island in one stroke (`layers._multi_island_layer`): perimeter-entry paths per island (Fermat / serpentine), connectors flagged `is_bridge`.
 
 ## 4. From region to one continuous path (`geometry/`)
 
@@ -55,10 +55,10 @@ Per point: corner-radius cap (v_max at R>=3*r_min down to v_min at R=r_min), hea
 
 ## 8. Known limits
 
-Fermat multi-island connectors can cross printed track; pump floor unmeasured (= v_min); `e ~ v/v_max` is an assumption; STL keeps one island; revolve seam angle drifts; a few Fermat curvature violations on Rectangle/Circle.
+Fermat multi-island connectors can cross printed track; pump floor unmeasured (= v_min); `e ~ v/v_max` is an assumption; revolve seam angle drifts; a few Fermat curvature violations on Rectangle/Circle. Holes: spiral rings stop near the first hole (`hole_keepouts`), so area beyond it is unfilled (plate with 2 holes: 83 % coverage Archimedean, 66 % Fermat, 61 % serpentine); a keyhole-slit approach was tried and measured worse with every generator, so holes need a contour-tree generator. Serpentine loses edge coverage (erodes by r_min); Fermat leaves its centre unfilled. `SliceResult.stats["coverage"]` measures all of these.
 
 ## 9. Extending for continuous-fiber thermoset parts
 
 Reuse: continuous-polyline contract, three-layer curvature defence, `blend_chain`, Hermite seam ramps + angle check, kinematics planner (measure `pump_floor`), frozen config + constraints + validation layering, golden tests (`tests/golden`).
 
-Change/add: multi-island STL; unidirectional angle fill that keeps concave-region fiber (serpentine drops all but the longest segment per line); per-layer cure strategy (UV power/dwell) instead of UV-on-for-job; measured flow model; revisit "no travel" if hardware can cut/re-feed. Design assumption: part = stack of continuous 2D spirals (plates, shells, domes). Branches/ribs/bosses need retrace or cut.
+Change/add: hole-aware spiral generator (contour tree); unidirectional angle fill that keeps concave-region fiber (serpentine drops all but the longest segment per line); per-layer cure strategy (UV power/dwell) instead of UV-on-for-job; measured flow model; revisit "no travel" if hardware can cut/re-feed. Design assumption: part = stack of continuous 2D spirals (plates, shells, domes). Branches/ribs/bosses need retrace or cut.

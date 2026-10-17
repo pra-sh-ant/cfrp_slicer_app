@@ -8,6 +8,7 @@ from shapely.affinity import translate
 
 from .config import ProcessConfig
 from .constraints import resolve_process_constraints
+from .coverage import coverage_summary, layer_coverage
 from .gcode import compile_gcode
 from .layers import build_flat_laminate, build_revolve_shell, build_stl_laminate
 from .machine import DEFAULT_MACHINE, MachineProfile, fit_trajectory_to_bed
@@ -15,8 +16,9 @@ from .specialty import specialty_shape
 from .validation import validate_trajectory
 
 
-def _compute_stats(trajectory: list[dict], config: ProcessConfig) -> dict:
-    """Print time (s), fiber length (mm), fiber mass (g) from trajectory."""
+def _compute_stats(trajectory: list[dict], config: ProcessConfig, target_shapes=()) -> dict:
+    """Print time (s), fiber length (mm), fiber mass (g) from trajectory,
+    plus area-weighted fibre coverage / overlap when layer outlines exist."""
     print_time = 0.0
     fiber_length = 0.0
     for pt in trajectory:
@@ -28,11 +30,15 @@ def _compute_stats(trajectory: list[dict], config: ProcessConfig) -> dict:
         if v > 0:
             print_time += dist / v
     fiber_mass = fiber_length * float(config.material.fiber_weight_g_per_mm)
-    return {
+    stats = {
         "print_time_s": print_time,
         "fiber_length_mm": fiber_length,
         "fiber_mass_g": fiber_mass,
     }
+    if target_shapes:
+        # keys: coverage, overlap, worst_layer, worst_coverage (fractions 0..1)
+        stats.update(coverage_summary(layer_coverage(trajectory, target_shapes, config.track_gap_mm)))
+    return stats
 
 
 @dataclass
@@ -81,5 +87,5 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     return SliceResult(
         config=cfg, trajectory=trajectory, target_shapes=target_shapes, gcode=gcode,
         validation=validation, max_z=max_z, constraint_notes=resolved.notes, info=tuple(info),
-        stats=_compute_stats(trajectory, cfg),
+        stats=_compute_stats(trajectory, cfg, target_shapes),
     )

@@ -136,6 +136,40 @@ def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfi
                 f"bend radius on layer(s) {shown}; these are speed-limited, not geometrically safe."
             )
 
+    # 6. Island bridges: fibre laid across empty space between islands of
+    #    one slice (multi-island STL). On the first layer it lies on the bed
+    #    and is trimmed after cure; above that it spans unsupported.
+    bridge_len = {}
+    for pt in trajectory:
+        if pt.get('is_bridge'):
+            layer = pt.get('layer', 1)
+            bridge_len[layer] = bridge_len.get(layer, 0.0) + float(pt.get('dist', 0.0))
+    if bridge_len:
+        first_layer = trajectory[0].get('layer', 1)
+        upper = {k: v for k, v in bridge_len.items() if k != first_layer}
+        msg = (
+            f"Island bridges: {sum(bridge_len.values()):.1f} mm of fibre spans empty space "
+            f"between islands on {len(bridge_len)} layer(s)"
+        )
+        if upper:
+            worst = max(upper, key=upper.get)
+            msg += (f"; {sum(upper.values()):.1f} mm is unsupported above the first layer "
+                    f"(worst: layer {worst}, {upper[worst]:.1f} mm). Trim the ties after cure.")
+        else:
+            msg += " (first layer only, lying on the bed). Trim the ties after cure."
+        warnings.append(msg)
+
+    # 7. Layers that produced no path (e.g. a slice too small for one track
+    #    turn): the part has a gap there.
+    present = sorted({pt.get('layer', 1) for pt in trajectory})
+    missing = sorted(set(range(present[0], present[-1] + 1)) - set(present))
+    if missing:
+        shown = missing[:8] + (["..."] if len(missing) > 8 else [])
+        warnings.append(
+            f"No toolpath on layer(s) {shown}: those slices were too small or failed to fill, "
+            f"so the part has a gap there."
+        )
+
     if errors:
         return {"status": "Fail", "messages": errors}
     elif warnings:

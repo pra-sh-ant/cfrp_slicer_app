@@ -6,6 +6,7 @@ import math
 from shapely.geometry import Point
 
 from ._common import (
+    arc_along_ring,
     blend_chain,
     check_gap_radius,
     dedupe_path,
@@ -13,41 +14,6 @@ from ._common import (
     inset_components,
     resample_closed_ring,
 )
-
-_ARC_STEP_MM = 0.75   # sample spacing when tracing along a ring boundary
-
-
-def _arc_along_ring(ring_poly, p_from, p_to):
-    """Points along the SHORTER arc of ring_poly.exterior connecting the
-    projections of p_from and p_to onto that exterior.
-
-    Used to bridge between child sub-regions without crossing the already-
-    printed ring: instead of cutting across the ring in a straight line, the
-    connector retraces the ring boundary (acceptable double-deposition).
-    """
-    ext = ring_poly.exterior
-    length = ext.length
-    if length < 1e-9:
-        return [p_from, p_to]
-
-    t_from = ext.project(Point(p_from))
-    t_to = ext.project(Point(p_to))
-
-    fwd = (t_to - t_from) % length
-    bck = length - fwd
-
-    if fwd <= bck:
-        arc_len, direction = fwd, 1.0
-    else:
-        arc_len, direction = bck, -1.0
-
-    n = max(2, int(arc_len / _ARC_STEP_MM))
-    pts = []
-    for i in range(n + 1):
-        t = (t_from + direction * arc_len * i / n) % length
-        pt = ext.interpolate(t)
-        pts.append((pt.x, pt.y))
-    return pts
 
 
 def _reverse_winding(ring_pts):
@@ -138,7 +104,7 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
                 child_near_pt = child.exterior.interpolate(
                     child.exterior.project(Point(cursor))
                 )
-                arc = _arc_along_ring(innermost_ring, cursor,
+                arc = arc_along_ring(innermost_ring, cursor,
                                       (child_near_pt.x, child_near_pt.y))
                 if len(arc) > 1:
                     out.extend(arc[1:])   # skip first: duplicate of cursor

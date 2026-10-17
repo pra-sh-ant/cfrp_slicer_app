@@ -14,11 +14,15 @@ from dataclasses import dataclass
 from functools import lru_cache
 
 import numpy as np
+import shapely
+from shapely.geometry import LineString, Point
+from shapely.ops import nearest_points, unary_union
 
 from . import geometry as geo
-from .config import FERMAT, ProcessConfig
+from .config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT, ProcessConfig
 from .geometry._common import enforce_min_radius
-from .geometry.mesh_slicer import load_stl, slice_mesh
+from .geometry.mesh_slicer import islands as mesh_islands
+from .geometry.mesh_slicer import load_stl, slice_mesh_regions
 from .kinematics import calculate_trajectory
 
 
@@ -535,16 +539,163 @@ def build_flat_laminate(config: ProcessConfig):
     return trajectory, target_shapes, max_z
 
 
+_SPIRAL_INFILLS = (ARCHIMEDEAN, FERMAT, CORNER_STEP)
+
+
+def _island_path(island, config: ProcessConfig, angle, layer_idx, cursor):
+    """Path for one island of a multi-island slice that enters AND leaves on
+    the island's perimeter, so the connector to the next island never
+    crosses track already laid. Spiral infills use the Fermat double spiral
+    (in and back out); line infills use the serpentine, run from whichever
+    end is nearer the cursor."""
+    gap, r_min = config.track_gap_mm, config.min_radius_mm
+    if config.infill_type in _SPIRAL_INFILLS:
+        return geo.fermat_spiral_path(
+            island, gap, r_min, track_count=config.tracks_per_layer, entry_hint=cursor,
+        )
+    if config.infill_type == DIAGONAL_45:
+        angle = 45.0 if layer_idx % 2 == 0 else -45.0
+    path = geo.oriented_serpentine(island, angle, gap, r_min)
+    if cursor is not None and len(path) > 1:
+        d0 = math.hypot(path[0][0] - cursor[0], path[0][1] - cursor[1])
+        d1 = math.hypot(path[-1][0] - cursor[0], path[-1][1] - cursor[1])
+        if d1 < d0:
+            path = path[::-1]
+    return path
+
+
+_CONNECTOR_STEP_MM = 0.75
+
+
+def _nearest_island(polys, point):
+    pt = Point(point)
+    return min(polys, key=lambda p: p.exterior.distance(pt))
+
+
+def _boundary_point_toward(island, other):
+    """Point on island's outline nearest the other geometry."""
+    return nearest_points(island.exterior, other)[0].coords[0]
+
+
+def _exit_route(island, end_pt, target, gap):
+    """If the straight connector end_pt -> target would cut across the
+    island's own laid track, retrace the outermost track ring to the point
+    facing the target first (the route Fermat uses between its children)."""
+    core = island.buffer(-gap, join_style=1)
+    if core.is_empty or not LineString([end_pt, target]).intersects(core):
+        return []
+    ring = geo.largest_polygon(island.buffer(-gap / 2.0, join_style=1))
+    if ring.is_empty or ring.geom_type != 'Polygon':
+        return []
+    exit_pt = nearest_points(ring.exterior, Point(target))[0].coords[0]
+    return geo.arc_along_ring(ring, end_pt, exit_pt)[1:]
+
+
+def _straight(p0, p1, step=_CONNECTOR_STEP_MM):
+    """Points after p0 up to and including p1, ~step apart."""
+    n = max(1, int(math.ceil(math.hypot(p1[0] - p0[0], p1[1] - p0[1]) / step)))
+    return [(p0[0] + (p1[0] - p0[0]) * k / n, p0[1] + (p1[1] - p0[1]) * k / n) for k in range(1, n + 1)]
+
+
+def _multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_pt):
+    """One stroke over every island: nearest island first, each filled from
+    a port on its perimeter, joined by straight connectors (fibre bridges)
+    densified to the usual point spacing so bridges can be flagged."""
+    gap = config.track_gap_mm
+    remaining = list(islands)
+    if last_pt is not None:
+        island = _nearest_island(remaining, last_pt)
+        cursor = last_pt
+    else:
+        # First layer: start on the largest island, at the side facing the
+        # island visited next, so the first connector is short.
+        island = max(remaining, key=lambda p: p.area)
+        others = [p for p in remaining if p is not island]
+        nxt = min(others, key=lambda p: p.distance(island))
+        cursor = _boundary_point_toward(island, nxt)
+    path = [last_pt] if last_pt is not None else []
+    while True:
+        remaining.remove(island)
+        sub = _island_path(island, config, angle, layer_idx, cursor)
+        if sub:
+            if path:
+                path.extend(_straight(path[-1], sub[0]))
+            path.extend(sub)
+            cursor = sub[-1]
+        if not remaining:
+            break
+        nxt = _nearest_island(remaining, cursor)
+        if sub:
+            target = nearest_points(nxt.exterior, Point(cursor))[0].coords[0]
+            route = _exit_route(island, cursor, target, gap)
+            path.extend(route)
+            if route:
+                cursor = route[-1]
+        island = nxt
+    return geo.dedupe_path(path)
+
+
+def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt):
+    """2D path for one sliced layer. A lone island goes through the normal
+    flat-laminate generator; an Archimedean or Corner-Step track count that
+    does not fit falls back to as many rings as fit instead of dropping the
+    layer."""
+    if len(islands) > 1:
+        return _multi_island_layer(islands, config, angle, layer_idx, last_pt)
+    poly = islands[0]
+    gap, r_min = config.track_gap_mm, config.min_radius_mm
+
+    def attempt(tracks):
+        return geo.laminate_layer(
+            poly, gap, r_min, config.infill_type, tracks, config.geometry.include_boundary,
+            angle, layer_idx=layer_idx, last_pt=last_pt,
+        )
+
+    try:
+        return attempt(config.tracks_per_layer)
+    except ValueError:
+        if config.infill_type == ARCHIMEDEAN:
+            return attempt(None)
+        if config.infill_type != CORNER_STEP:
+            raise
+    for tracks in range(int(config.tracks_per_layer) - 1, 0, -1):
+        try:
+            return attempt(tracks)
+        except ValueError:
+            continue
+    raise ValueError("no Corner-Step track count fits this slice")
+
+
+def _flag_bridges(layer_trajectory, region, tol, skip=0):
+    """Mark points whose incoming segment's midpoint lies outside the slice
+    (inflated by `tol`): fibre spanning empty space between islands."""
+    if len(layer_trajectory) < 2 or region.is_empty:
+        return
+    zone = region.buffer(tol)
+    xy = np.array([(p['x'], p['y']) for p in layer_trajectory], dtype=np.float64)
+    mid = 0.5 * (xy[1:] + xy[:-1])
+    inside = shapely.contains_xy(zone, mid[:, 0], mid[:, 1])
+    for k in np.nonzero(~inside)[0]:
+        if k + 1 >= skip:
+            layer_trajectory[k + 1]['is_bridge'] = True
+
+
 def build_stl_laminate(config: ProcessConfig):
     """STL-imported mesh: slice at layer_height intervals, generate infill
-    per slice using the existing laminate_layer pipeline.
+    per slice.
+
+    `stl_islands="largest"` keeps one island per slice; `"all"` fills every
+    island in one stroke, connector points flagged `is_bridge`.
 
     Returns (trajectory, target_shapes, max_z)."""
     g = config.geometry
-    triangles = load_stl(g.stl_path)
+    mesh = load_stl(g.stl_path)
 
     layer_height = max(float(config.layer_height_mm), 0.05)
-    slices = slice_mesh(triangles, layer_height, z_offset=float(config.z_offset_mm))
+    slices = slice_mesh_regions(
+        mesh, layer_height, z_offset=float(config.z_offset_mm),
+        closing_radius=float(g.stl_closing_radius_mm),
+    )
 
     if not slices:
         raise ValueError("STL mesh produced no valid slices. Check the file and layer height.")
@@ -557,34 +708,47 @@ def build_stl_laminate(config: ProcessConfig):
     kin = KinematicsParams.from_config(config)
     seam_trim = max(0.0, float(config.seam_trim_mm))
     gap, r_min = config.track_gap_mm, config.min_radius_mm
+    # An island too small for one track turn cannot hold fibre.
+    min_island_area = math.pi * (r_min + gap / 2.0) ** 2 * 0.25
+    multi = g.stl_islands == "all"
 
-    for i, (z_print, poly) in enumerate(slices):
+    for i, (z_print, region) in enumerate(slices):
         layer_z = z_print
         current_angle = layup_sequence[i % len(layup_sequence)]
         max_z = layer_z
 
-        printable = geo.printable_boundary(poly, gap, r_min)
+        found = mesh_islands(region, min_island_area)
+        if not found:
+            continue
+        islands = found if multi else found[:1]
+        printable = unary_union([geo.printable_boundary(p, gap, r_min) for p in islands])
         target_shapes.append((layer_z, printable, i + 1))
 
         try:
-            raw_path = geo.laminate_layer(
-                poly, gap, r_min, config.infill_type, config.tracks_per_layer,
-                g.include_boundary, current_angle, layer_idx=i, last_pt=last_pt,
-            )
+            raw_path = _stl_layer_path(islands, config, current_angle, i, last_pt)
         except ValueError:
             continue
-
         if not raw_path:
             continue
 
-        if i == 0:
+        anchor_n = 0
+        if not trajectory:
+            n_before = len(raw_path)
             raw_path = add_lead_in_anchor(raw_path, float(config.anchor_length_mm))
+            anchor_n = len(raw_path) - n_before
 
         raw_path = enforce_min_radius(raw_path, r_min)
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
+        if len(islands) > 1:
+            _flag_bridges(layer_trajectory, unary_union(islands), gap, skip=anchor_n + 1)
         append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min)
 
         if layer_trajectory:
             last_pt = (layer_trajectory[-1]['x'], layer_trajectory[-1]['y'])
 
+    if not trajectory:
+        raise ValueError(
+            "No STL slice could be filled with these settings. Reduce Track Gap, "
+            "Min Bend Radius or Tracks Per Layer, or check the model's scale (mm)."
+        )
     return trajectory, target_shapes, max_z

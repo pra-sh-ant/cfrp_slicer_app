@@ -114,6 +114,42 @@ def inset_components(poly, inset, min_radius, holes=(), clearance=0.0, area_eps=
     return comps
 
 
+_ARC_STEP_MM = 0.75   # sample spacing when tracing along a ring boundary
+
+
+def arc_along_ring(ring_poly, p_from, p_to):
+    """Points along the SHORTER arc of ring_poly.exterior connecting the
+    projections of p_from and p_to onto that exterior.
+
+    Used to bridge between regions without crossing an already-printed
+    ring: instead of cutting across the ring in a straight line, the
+    connector retraces the ring boundary (acceptable double-deposition).
+    """
+    ext = ring_poly.exterior
+    length = ext.length
+    if length < 1e-9:
+        return [p_from, p_to]
+
+    t_from = ext.project(Point(p_from))
+    t_to = ext.project(Point(p_to))
+
+    fwd = (t_to - t_from) % length
+    bck = length - fwd
+
+    if fwd <= bck:
+        arc_len, direction = fwd, 1.0
+    else:
+        arc_len, direction = bck, -1.0
+
+    n = max(2, int(arc_len / _ARC_STEP_MM))
+    pts = []
+    for i in range(n + 1):
+        t = (t_from + direction * arc_len * i / n) % length
+        pt = ext.interpolate(t)
+        pts.append((pt.x, pt.y))
+    return pts
+
+
 def dedupe_path(points, tol: float = 0.05):
     """Drop consecutive points closer than `tol` apart -- the blend/
     resample generators all produce a few near-duplicate points at

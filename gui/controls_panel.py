@@ -133,6 +133,13 @@ class ControlsPanel(QWidget):
         stl_container.setLayout(stl_row)
         stl_row.setContentsMargins(0, 0, 0, 0)
         self._stl_row = fl.addRow("STL File", stl_container)
+        self.stl_islands_chk = QCheckBox("Print All Islands (fibre-bridged)")
+        self.stl_islands_chk.setToolTip(
+            "Off: only the largest island of each slice is printed.\n"
+            "On: every island is printed in one stroke; the fibre spans the gaps "
+            "between islands (flagged as bridges; trim the ties after cure)."
+        )
+        fl.addRow("", self.stl_islands_chk)
 
         # Revolve / specialty fields
         self.base_r_spin = _spin(1, 200, 1, 20.0, 1)
@@ -328,6 +335,7 @@ class ControlsPanel(QWidget):
 
         # STL file picker
         self.stl_path_edit.parentWidget().setVisible(is_stl)
+        self.stl_islands_chk.setVisible(is_stl)
 
         # Revolve/specialty geometry
         self.base_r_spin.setVisible(is_revolve or is_mushroom)
@@ -417,6 +425,7 @@ class ControlsPanel(QWidget):
             "height": self.h_spin.value(),
             "include_boundary": self.boundary_chk.isChecked(),
             "stl_path": stl_path,
+            "stl_islands": "all" if self.stl_islands_chk.isChecked() else "largest",
             "base_radius": self.base_r_spin.value(),
             "disc_radius": self.disc_r_spin.value(),
             "stem_height": stem_h,
@@ -501,6 +510,8 @@ class ControlsPanel(QWidget):
 
         if "stl_path" in p and p["stl_path"]:
             self.stl_path_edit.setText(str(p["stl_path"]))
+        if "stl_islands" in p:
+            self.stl_islands_chk.setChecked(p["stl_islands"] == "all")
 
         _set(self.x_spin, "start_x")
         _set(self.y_spin, "start_y")

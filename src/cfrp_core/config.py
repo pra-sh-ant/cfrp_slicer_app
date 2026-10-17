@@ -115,6 +115,17 @@ class GeometryConfig(_Frozen):
     start_x_mm: float = 26.0
     start_y_mm: float = 40.0
     stl_path: str | None = None
+    # STL slicing (see docs/SLICER_BENCHMARK.md #1). "largest" keeps one
+    # island per slice (legacy); "all" prints every island in one stroke,
+    # bridging between them.
+    stl_islands: Literal["largest", "all"] = "largest"
+    # Gaps narrower than ~2x this in a slice are closed (Orca default).
+    stl_closing_radius_mm: float = 0.049
+
+    @field_validator("stl_closing_radius_mm")
+    @classmethod
+    def _closing_radius(cls, v: float) -> float:
+        return _require(v, "STL Closing Radius", strict=False, unit=" mm")
 
     @property
     def is_specialty(self) -> bool:

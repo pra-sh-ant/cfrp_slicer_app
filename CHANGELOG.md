@@ -5,6 +5,33 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added / Fixed (Phase 23 — robust STL slicing, multi-island strokes, coverage metric)
+See `docs/SLICER_BENCHMARK.md` item 1. Golden outputs unchanged (no STL cases).
+- **Fix: STL import was broken without scipy/networkx.** Trimesh's `section()` needs
+  scipy and `fill_holes()` needs networkx; neither is a declared dependency, and
+  the exceptions were swallowed, so every slice was dropped ("no valid slices") and
+  non-watertight meshes crashed on load. Slicing is now done in numpy + shapely:
+  triangle-plane segments (edge points always interpolated from the lower vertex,
+  so shared edges join exactly), chained into rings, combined even-odd. Holes and
+  every island are kept, in world XY. Mesh repair is best-effort.
+- **Slice closing radius** (`geometry.stl_closing_radius_mm`, default 0.049 mm, as
+  Orca's `slice_closing_radius`): closes small leaks in bad meshes.
+- **Multi-island STL** (`geometry.stl_islands="all"`, GUI "Print All Islands"):
+  every island of a slice is printed in one stroke. Each island is filled with a
+  path that enters and leaves on its perimeter (Fermat for spiral infills,
+  serpentine for line infills); connectors leave from the side facing the next
+  island, retracing the outer track ring when a straight exit would cross laid
+  fibre. Connector points carry `is_bridge`; validation reports bridged length.
+  Default `"largest"` keeps the previous single-island behaviour.
+- Fix: an STL layer whose Archimedean or Corner-Step track count did not fit was
+  silently skipped (Corner-Step could yield an empty trajectory); it now falls
+  back to as many tracks as fit. If no layer fills, slicing raises a clear error.
+- Fix: an empty slice no longer collapses the Z of every slice above it.
+- **Coverage metric** (`cfrp_core.coverage`): per-layer fibre coverage (void %) and
+  tow overlap; area-weighted totals in `SliceResult.stats` and the GUI stats panel.
+- Validation: new warnings for island bridges and for layers with no toolpath.
+- Internal: `arc_along_ring` moved from `fermat.py` to `geometry/_common.py`.
+
 ### Changed / Fixed (Phase 22 — continuous helical seams for revolve shells)
 - **Revolve shells are one continuous stroke** (vase-mode style): rings are linked
   by a forward helical connector (no trimming, no F300 `STRICT Z-SEAM LIFT` block,
