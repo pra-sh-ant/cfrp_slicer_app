@@ -4,7 +4,6 @@
     "width": 0,
     "height": 0,
     "thickness": 0,
-    "invert_bends": false,
     "base_radius": 15.0,
     "disc_radius": 0.0,
     "stem_height": 10.0,

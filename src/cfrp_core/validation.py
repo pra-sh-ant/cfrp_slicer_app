@@ -3,11 +3,28 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
 from shapely.geometry import LineString
 
 from .config import ProcessConfig
 from .geometry import dedupe_path
+from .geometry._common import _circumradii
 from .machine import DEFAULT_MACHINE, MachineProfile, check_bounds
+
+
+def _z_chunks(pts3, z_tol):
+    """Split consecutive (x, y, z) points into runs whose Z span stays
+    within z_tol; yields lists of (x, y)."""
+    chunk, z_lo, z_hi = [], None, None
+    for x, y, z in pts3:
+        if chunk and max(z_hi, z) - min(z_lo, z) > z_tol:
+            yield chunk
+            chunk, z_lo, z_hi = [], None, None
+        chunk.append((x, y))
+        z_lo = z if z_lo is None else min(z_lo, z)
+        z_hi = z if z_hi is None else max(z_hi, z)
+    if chunk:
+        yield chunk
 
 
 def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> dict:
@@ -78,28 +95,46 @@ def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfi
 
     # 4. Self-intersection: per layer, not simple AND > 3 repeated points
     #    (a wall loop plus its tangent exit legitimately revisits 1-2 points).
+    #    Z-aware: a spiral-ramped layer climbs while it circles, so laps that
+    #    overlap in XY at a different Z are not crossings. Each layer is cut
+    #    into chunks spanning < half a layer height of Z and only crossings
+    #    inside one chunk count.
+    z_tol = 0.5 * float(config.layer_height_mm)
     layers_data = {}
     for pt in trajectory:
         layer = pt.get('layer', 1)
-        layers_data.setdefault(layer, []).append((pt['x'], pt['y']))
+        layers_data.setdefault(layer, []).append((pt['x'], pt['y'], pt['z']))
 
-    for l_idx, coords in layers_data.items():
-        if len(coords) > 5:
-            clean_coords = dedupe_path(coords)
+    for l_idx, pts3 in layers_data.items():
+        dupes = 0
+        for chunk in _z_chunks(pts3, z_tol):
+            if len(chunk) <= 5:
+                continue
+            clean_coords = dedupe_path(chunk)
+            if len(clean_coords) > 5 and not LineString(clean_coords).is_simple:
+                seen = set()
+                for pt in clean_coords:
+                    p = (round(pt[0], 2), round(pt[1], 2))
+                    if p in seen:
+                        dupes += 1
+                    seen.add(p)
+        if dupes > 3:
+            warnings.append(f"Layer {l_idx} path crosses itself ({dupes} internal intersections). Tangent peeling may intersect. Proceed with caution.")
 
-            if len(clean_coords) > 5:
-                ls = LineString(clean_coords)
-                if not ls.is_simple:
-                    seen = set()
-                    dupes = 0
-                    for pt in clean_coords:
-                        p = (round(pt[0], 2), round(pt[1], 2))
-                        if p in seen:
-                            dupes += 1
-                        seen.add(p)
-
-                    if dupes > 3:
-                        warnings.append(f"Layer {l_idx} path crosses itself ({dupes} internal intersections). Tangent peeling may intersect. Proceed with caution.")
+    # 5. Curvature: non-transition vertices tighter than the min bend radius
+    #    (checked on the final, bed-fitted points the G-code is written from).
+    min_rad = float(config.min_radius_mm)
+    if min_rad > 0 and len(trajectory) > 2:
+        pts = np.array([(p['x'], p['y']) for p in trajectory], dtype=np.float64)
+        transition = np.array([bool(p.get('is_transition')) for p in trajectory[1:-1]])
+        tight = (_circumradii(pts) < min_rad) & ~transition
+        if tight.any():
+            tight_layers = sorted({trajectory[i + 1].get('layer', 1) for i in np.nonzero(tight)[0]})
+            shown = tight_layers[:8] + (["..."] if len(tight_layers) > 8 else [])
+            warnings.append(
+                f"Curvature: {int(tight.sum())} point(s) are tighter than the {min_rad:.1f} mm min "
+                f"bend radius on layer(s) {shown}; these are speed-limited, not geometrically safe."
+            )
 
     if errors:
         return {"status": "Fail", "messages": errors}

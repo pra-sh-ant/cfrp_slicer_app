@@ -32,7 +32,7 @@ _APP = "CFRPSlicerPro"
 _DEFAULTS = {
     "shape": "Square/Rectangle",
     "width": 135.0, "height": 25.0,
-    "include_boundary": False, "invert_bends": False,
+    "include_boundary": False,
     "base_radius": 20.0, "disc_radius": 15.0, "stem_height": 25.0,
     "start_x": 26.0, "start_y": 40.0, "track_gap": 1.2, "z_offset": 0.2,
     "layers": 1, "tracks_per_layer": 7,
@@ -54,6 +54,7 @@ class MainWindow(QMainWindow):
         self.resize(1400, 860)
         self._machine = DEFAULT_MACHINE
         self._worker: SlicerWorker | None = None
+        self._retired: list[SlicerWorker] = []
         self._settings = QSettings(_ORG, _APP)
 
         # --- central layout -------------------------------------------------
@@ -169,17 +170,31 @@ class MainWindow(QMainWindow):
 
     # ------------------------------------------------------------------
     def closeEvent(self, event):
+        self._retire_worker()
+        for w in self._retired:
+            w.wait(5000)
         self._settings.setValue("windowGeometry", self.saveGeometry())
         super().closeEvent(event)
 
     def _schedule_slice(self):
         self._timer.start(_DEBOUNCE_MS)
 
+    def _retire_worker(self):
+        """Cancel the running worker and keep a reference until its thread
+        really ends: dropping the last reference to a running QThread makes Qt
+        abort the whole process ("QThread: Destroyed while thread is still
+        running")."""
+        worker = self._worker
+        self._worker = None
+        if worker is not None and worker.isRunning():
+            worker.cancel()
+            worker.finished.disconnect()
+            worker.failed.disconnect()
+            self._retired.append(worker)
+        self._retired = [w for w in self._retired if w.isRunning()]
+
     def _slice(self):
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.finished.disconnect()
-            self._worker.failed.disconnect()
+        self._retire_worker()
 
         params = self._controls.get_params()
         layup = self._controls.get_layup()
@@ -192,11 +207,7 @@ class MainWindow(QMainWindow):
         self._worker.start()
 
     def _cancel_slice(self):
-        if self._worker is not None and self._worker.isRunning():
-            self._worker.cancel()
-            self._worker.finished.disconnect()
-            self._worker.failed.disconnect()
-            self._worker = None
+        self._retire_worker()
         self._cancel_btn.setVisible(False)
         self._status_lbl.setText("Cancelled.")
 
@@ -307,11 +318,11 @@ class MainWindow(QMainWindow):
             f"Python {sys.version.split()[0]}",
             f"PySide6 {PySide6.__version__}",
             "",
-            "Phases completed: 0–19",
+            "Phases completed: 0–21",
             "(safety net · cfrp_core extraction · spiral Z · GUI · "
             "save/load · packaging · Fermat seam fix · recent files · "
             "print stats · cancel · shortcuts · About/CSV · Fermat islands fix · "
-            "Y-anchor + Y-column seam)",
+            "perimeter+diagonal · seam anchoring · stepped concentric · rect spiral)",
         ]
         for line in lines:
             lbl = QLabel(line)

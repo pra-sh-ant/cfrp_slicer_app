@@ -13,10 +13,13 @@ from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGroupBox,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
+    QPushButton,
     QScrollArea,
     QSpinBox,
     QVBoxLayout,
@@ -32,6 +35,7 @@ INFILL_OPTIONS = [
     "Fermat Spiral (Connected Double Spiral)",
     "Oriented Serpentine",
     "45° Diagonal Hatch",
+    "Corner-Step Spiral",
 ]
 REVOLVE_INFILL_OPTIONS = [
     "Archimedean (Concentric Spiral)",
@@ -115,8 +119,20 @@ class ControlsPanel(QWidget):
         self.boundary_chk = QCheckBox("Print Outer Boundary")
         self._boundary_row = fl.addRow("", self.boundary_chk)
 
-        self.invert_chk = QCheckBox("Invert Bends")
-        self._invert_row = fl.addRow("", self.invert_chk)
+        # STL Import fields
+        stl_row = QHBoxLayout()
+        self.stl_path_edit = QLineEdit()
+        self.stl_path_edit.setPlaceholderText("Select an STL file…")
+        self.stl_path_edit.setReadOnly(True)
+        self.stl_browse_btn = QPushButton("Browse…")
+        self.stl_browse_btn.setFixedWidth(70)
+        self.stl_browse_btn.clicked.connect(self._browse_stl)
+        stl_row.addWidget(self.stl_path_edit)
+        stl_row.addWidget(self.stl_browse_btn)
+        stl_container = QWidget()
+        stl_container.setLayout(stl_row)
+        stl_row.setContentsMargins(0, 0, 0, 0)
+        self._stl_row = fl.addRow("STL File", stl_container)
 
         # Revolve / specialty fields
         self.base_r_spin = _spin(1, 200, 1, 20.0, 1)
@@ -138,8 +154,7 @@ class ControlsPanel(QWidget):
         for w in (self.w_spin, self.h_spin, self.base_r_spin,
                   self.stem_h_spin, self.disc_r_spin, self.stem_top_spin):
             w.valueChanged.connect(self._emit)
-        for w in (self.boundary_chk, self.invert_chk):
-            w.toggled.connect(self._emit)
+        self.boundary_chk.toggled.connect(self._emit)
         self.shape_cb.currentTextChanged.connect(self._on_shape_changed)
 
     # ------------------------------------------------------------------
@@ -287,22 +302,32 @@ class ControlsPanel(QWidget):
         self._update_shape_visibility()
         self._emit()
 
+    def _browse_stl(self):
+        path, _ = QFileDialog.getOpenFileName(
+            self, "Select STL File", "", "STL Files (*.stl *.STL);;All Files (*)"
+        )
+        if path:
+            self.stl_path_edit.setText(path)
+            self._emit()
+
     def _update_shape_visibility(self):
         shape = self.shape_cb.currentText()
         is_revolve = shape in REVOLVE_SHAPES
         is_mushroom = shape == "3D Overhang (Mushroom)"
         is_flat_specialty = shape in _FLAT_SPECIALTY
         is_specialty = is_revolve or is_flat_specialty
-        is_flat = not is_specialty
-        is_serpentine = shape == "Serpentine Infill"
+        is_stl = shape == "STL Import"
+        is_flat = not is_specialty and not is_stl
         is_circle_hex = shape in {"Hexagon", "Circle"}
         is_sphere = shape == "Hollow Sphere (Z)"
 
         # Flat shape geometry
         self.w_spin.setVisible(is_flat)
         self.h_spin.setVisible(is_flat and not is_circle_hex)
-        self.boundary_chk.setVisible(is_flat and not is_serpentine)
-        self.invert_chk.setVisible(is_serpentine)
+        self.boundary_chk.setVisible(is_flat or is_stl)
+
+        # STL file picker
+        self.stl_path_edit.parentWidget().setVisible(is_stl)
 
         # Revolve/specialty geometry
         self.base_r_spin.setVisible(is_revolve or is_mushroom)
@@ -323,7 +348,7 @@ class ControlsPanel(QWidget):
             if current in REVOLVE_INFILL_OPTIONS:
                 self.infill_cb.setCurrentText(current)
             self.infill_cb.blockSignals(False)
-        elif is_flat:
+        elif is_flat or is_stl:
             current = self.infill_cb.currentText()
             self.infill_cb.blockSignals(True)
             self.infill_cb.clear()
@@ -332,7 +357,7 @@ class ControlsPanel(QWidget):
                 self.infill_cb.setCurrentText(current)
             self.infill_cb.blockSignals(False)
         self.tracks_spin.setVisible(not is_flat_specialty)
-        self.layup_edit.setVisible(is_flat)
+        self.layup_edit.setVisible(is_flat or is_stl)
 
         # Kinematics: full planner for flat + revolve; specialty only Z speed
         show_planner = not is_flat_specialty
@@ -384,12 +409,14 @@ class ControlsPanel(QWidget):
         infill = (self.infill_cb.currentText()
                   if not is_flat_specialty else "N/A")
 
+        stl_path = self.stl_path_edit.text() or None
+
         return {
             "shape": shape,
             "width": self.w_spin.value(),
             "height": self.h_spin.value(),
-            "invert_bends": self.invert_chk.isChecked(),
             "include_boundary": self.boundary_chk.isChecked(),
+            "stl_path": stl_path,
             "base_radius": self.base_r_spin.value(),
             "disc_radius": self.disc_r_spin.value(),
             "stem_height": stem_h,
@@ -458,7 +485,6 @@ class ControlsPanel(QWidget):
         _set(self.w_spin, "width")
         _set(self.h_spin, "height")
         _set(self.boundary_chk, "include_boundary")
-        _set(self.invert_chk, "invert_bends")
         _set(self.base_r_spin, "base_radius")
         _set(self.disc_r_spin, "disc_radius")
         # stem_height maps to stem_h_spin or stem_top_spin depending on shape
@@ -472,6 +498,9 @@ class ControlsPanel(QWidget):
                 self.stem_h_spin.blockSignals(True)
                 self.stem_h_spin.setValue(float(p["stem_height"]))
                 self.stem_h_spin.blockSignals(False)
+
+        if "stl_path" in p and p["stl_path"]:
+            self.stl_path_edit.setText(str(p["stl_path"]))
 
         _set(self.x_spin, "start_x")
         _set(self.y_spin, "start_y")

@@ -14,7 +14,7 @@ APP_PATH = str(Path(__file__).resolve().parent.parent / "app.py")
 
 ALL_SHAPES = [
     "Square/Rectangle", "Triangle", "Hexagon", "Circle",
-    "Serpentine Infill", "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
+    "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
     "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)",
     "Conical Dome (Z)", "3D Overhang (Mushroom)",
 ]
@@ -69,11 +69,6 @@ def test_sidebar_only_shows_controls_used_by_the_selected_shape():
     at.run(timeout=60)
     assert not at.exception
     assert not any("Research Preset" in widget.label for widget in at.selectbox)
-
-    at.selectbox(key="shape_select").select("Serpentine Infill").run(timeout=60)
-    labels = {widget.label for widget in at.number_input}
-    assert "Tracks Per Layer" not in labels
-    assert "Print Outer Boundary" not in {widget.label for widget in at.checkbox}
 
     at.selectbox(key="shape_select").select("3D Overhang (Mushroom)").run(timeout=60)
     labels = {widget.label for widget in at.number_input}

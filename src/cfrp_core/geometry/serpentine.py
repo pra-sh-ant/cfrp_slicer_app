@@ -1,25 +1,63 @@
-"""Zigzag patterns: oriented serpentine infill (spec §5.6) and the
-"Serpentine Infill" shape's own fixed zigzag (spec §5.7)."""
+"""Zigzag patterns: oriented serpentine infill (spec §5.6)."""
 from __future__ import annotations
 
 import math
 
 import numpy as np
-from shapely.affinity import rotate, translate
-from shapely.geometry import LineString, Point
+from shapely.affinity import rotate
+from shapely.geometry import LineString
 
-from ._common import check_gap_radius, dedupe_path
-from .outlines import serpentine_print_extent
+from ._common import check_gap_radius
+
+
+def _arc_uturn(p0, p3, ext_dir, min_rad, step=0.5):
+    """Circular-arc U-turn from p0 to p3, radius = max(chord/2, min_rad).
+
+    The arc center sits on the ext_dir side of the chord so the fiber
+    never bends tighter than min_rad."""
+    chord = np.linalg.norm(p3 - p0)
+    if chord < 1e-9:
+        return []
+    R = max(chord / 2.0, float(min_rad))
+    mid = (p0 + p3) / 2.0
+    chord_vec = p3 - p0
+    perp = np.array([chord_vec[1], -chord_vec[0]])
+    perp_len = np.linalg.norm(perp)
+    if perp_len < 1e-9:
+        return []
+    perp = perp / perp_len
+    h = math.sqrt(max(0.0, R * R - (chord / 2.0) ** 2))
+    center = mid + ext_dir * h * perp
+
+    a_start = math.atan2(p0[1] - center[1], p0[0] - center[0])
+    a_end = math.atan2(p3[1] - center[1], p3[0] - center[0])
+
+    da = a_end - a_start
+    if ext_dir > 0:
+        if da > 0:
+            da -= 2.0 * math.pi
+    else:
+        if da < 0:
+            da += 2.0 * math.pi
+
+    arc_len = abs(da) * R
+    n_pts = max(8, int(math.ceil(arc_len / step)))
+    pts = []
+    for k in range(1, n_pts + 1):
+        frac = k / n_pts
+        angle = a_start + da * frac
+        pts.append([center[0] + R * math.cos(angle),
+                     center[1] + R * math.sin(angle)])
+    return pts
 
 
 def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
     """Scan-line zigzag at `angle` degrees inside `poly`.
 
-    Rotate by −angle; erode by r_min so turns stay inside (fall back to the
-    un-eroded area if that leaves too little); scan lines at
-    miny + gap/2 + k·gap keeping the longest segment per line; alternate
-    direction; join lines with a cubic Bézier whose control points extend
-    ext = max(1.5·r_min, gap) outward; rotate back by +angle.
+    Rotate by -angle; erode by r_min so turns stay inside; scan lines at
+    miny + gap/2 + k*gap keeping the longest segment per line; alternate
+    direction; join with circular-arc U-turns of radius max(gap/2, min_rad)
+    so minimum bend radius is always respected; rotate back by +angle.
     """
     check_gap_radius(gap, min_rad)
 
@@ -58,16 +96,8 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
             p0 = np.array(path[-1])
             p3 = np.array(coords[0])
             ext_dir = -direction
-            ext_mag = max(min_rad * 1.5, gap)
-
-            p1 = p0 + np.array([ext_dir * ext_mag, 0])
-            p2 = p3 + np.array([ext_dir * ext_mag, 0])
-
-            t = np.linspace(0, 1, 15)
-            t_mat = np.array([t]).T
-            curve = (1 - t_mat)**3 * p0 + 3*(1 - t_mat)**2 * t_mat * p1 + \
-                    3*(1 - t_mat) * t_mat**2 * p2 + t_mat**3 * p3
-            path.extend(curve.tolist())
+            arc_pts = _arc_uturn(p0, p3, ext_dir, min_rad)
+            path.extend(arc_pts)
 
         path.extend(coords)
         direction *= -1
@@ -77,41 +107,3 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
     final_line = LineString(path)
     final_line = rotate(final_line, angle, origin='centroid')
     return list(final_line.coords)
-
-
-def serpentine_infill(width, height, min_radius, track_gap, invert_bends, angle, start_x, start_y):
-    """The "Serpentine Infill" shape: parallel lines joined by semicircular
-    U-turns of radius line_gap/2 (15 points), rotated by `angle` about
-    (w/2, h/2), then translated to (start_x, start_y)."""
-    check_gap_radius(track_gap, min_radius)
-    sx, ex, line_gap, num_lines = serpentine_print_extent(width, height, min_radius, track_gap, invert_bends)
-    path = []
-
-    def u_turn(x, y_start, y_end, side):
-        center_y = (y_start + y_end) / 2.0
-        radius = abs(y_end - y_start) / 2.0
-        angles = np.linspace(-math.pi / 2.0, math.pi / 2.0, 15)
-        if side < 0:
-            angles = math.pi - angles
-        return [(x + side * radius * math.cos(a),
-                 center_y + radius * math.sin(a)) for a in angles[1:]]
-
-    for i in range(num_lines + 1):
-        y = i * line_gap
-        if i % 2 == 0:
-            path.extend([(sx, y), (ex, y)])
-            if i < num_lines:
-                path.extend(u_turn(ex, y, y + line_gap, 1))
-        else:
-            path.extend([(ex, y), (sx, y)])
-            if i < num_lines:
-                path.extend(u_turn(sx, y, y + line_gap, -1))
-
-    filtered_path = dedupe_path(path)
-    if not filtered_path:
-        return []
-
-    linestring = LineString(filtered_path)
-    if angle != 0.0:
-        linestring = rotate(linestring, angle, origin=Point(width / 2, height / 2))
-    return list(translate(linestring, xoff=start_x, yoff=start_y).coords)

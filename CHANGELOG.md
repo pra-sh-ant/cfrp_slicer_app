@@ -5,27 +5,23 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
-### Added / Changed (Phase 19 — Y-direction anchor + Y-column ring-seam transitions)
-- **Outer cuttable anchor always in −Y direction**: `add_lead_in_anchor` now
-  unconditionally prepends a straight segment `anchor_length` mm below the
-  path's first point (in the −Y direction), placing the lead-in outside the
-  part boundary so it can be physically cut away after printing.  The previous
-  approach computed an angle from the first path segment, which sometimes
-  produced diagonal or arbitrary-direction anchors.
-- **Y-column seam for Archimedean infill**: replaced the `blend_chain` +
-  `first_lap` + `entry_seg` spiral of Phase 18 with explicit ring loops
-  connected by short straight segments.  Each ring's seam is fixed at its
-  bottom-most point (minimum Y, then minimum X), so all inter-ring connectors
-  run approximately in the +Y direction along a single vertical column.  This
-  makes every seam transition predictable, geometry-accurate, and consistent
-  with the anchor direction.
-- **No 45° diagonal jugaad**: Phase 18's bisector entry segment is removed.
-  Ring-to-ring transitions are straight vertical connectors; they are short
-  (sub-mm for convex shapes) and stay inside the print area.
-- **Boundary seam alignment**: for outside-in + `include_boundary` layers,
-  the Archimedean infill seam is pre-anchored to the nearest wall-endpoint
-  before calling `archimedean_path`, preventing the infill start from crossing
-  the wall ring.
+### Changed / Fixed (Phase 22 — continuous helical seams for revolve shells)
+- **Revolve shells are one continuous stroke** (vase-mode style): rings are linked
+  by a forward helical connector (no trimming, no F300 `STRICT Z-SEAM LIFT` block,
+  no direction reversal at seams). Z climbs linearly over each ring + connector,
+  radius blends with a smoothstep, speed is planned once over the whole path.
+- Single-track (single-ring) layers are exactly one helical lap each (no retraced
+  lap, no false "path crosses itself" warnings); first/last layers stay whole.
+- Fermat spiral on a revolve wall band narrower than 2×min radius + gap is
+  replaced by Archimedean with an info note (the Fermat U-turn cannot fit).
+- Flat-laminate layer ramps are tangent-continuous (cubic Hermite) instead of a
+  straight chord.
+- Validation: Z-aware self-crossing check; new curvature warning computed on the
+  final bed-fitted trajectory (replaces the pipeline info note).
+- GUI: retired slicer threads are kept alive until finished (fixes a hard crash
+  when parameters change during a running slice).
+- Performance: vectorized ring resampling; per-layer Archimedean path cache
+  (full sphere 4.6 s -> 1.6 s cold, 0.7 s when only non-geometry params change).
 
 ### Added / Fixed (Phase 18 — full outer perimeter + 45° diagonal entry + 45° diagonal hatch)
 - **Full outer-boundary trace**: outside-in archimedean spiral now opens with a

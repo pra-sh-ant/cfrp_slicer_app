@@ -5,23 +5,36 @@ import math
 
 from shapely.geometry import Point, Polygon
 
+from ._common import fillet, largest_polygon
 
-def revolve_cross_section(cx, cy, outer_radius, inner_radius, shape_type='round'):
+
+def revolve_cross_section(cx, cy, outer_radius, inner_radius, shape_type='round',
+                          min_bend_radius: float = 0.0, wall_depth: float = 0.0):
     """One Z-slice's printable cross-section: an annulus (outer minus inner)
     when there's a hole, or a solid disc/square once the inner radius
     collapses to ~0. The inner radius is clamped to 0.999 × outer so the
-    ring never inverts. A square has side 2·radius."""
-    def build(radius):
+    ring never inverts. A square has side 2·radius; its corners are
+    filleted so that even the innermost inset ring (at wall_depth from the
+    boundary) still has min_bend_radius curvature."""
+    def build(radius, is_outer=False):
         if radius <= 1e-6:
             return Polygon()
         if shape_type == 'square':
-            return Polygon([
+            poly = Polygon([
                 (cx - radius, cy - radius), (cx + radius, cy - radius),
                 (cx + radius, cy + radius), (cx - radius, cy + radius),
             ])
-        return Point(cx, cy).buffer(radius)
+            if min_bend_radius > 0:
+                extra = wall_depth + min_bend_radius * 0.5 if is_outer else 0.0
+                fillet_r = min_bend_radius + extra
+                fillet_r = min(fillet_r, radius * 0.95)
+                filleted = fillet(poly, fillet_r)
+                if not filleted.is_empty:
+                    return largest_polygon(filleted)
+            return poly
+        return Point(cx, cy).buffer(radius, quad_segs=64)
 
-    outer_poly = build(outer_radius)
+    outer_poly = build(outer_radius, is_outer=True)
     if outer_poly.is_empty or inner_radius <= 1e-6:
         return outer_poly
     inner_poly = build(min(inner_radius, outer_radius * 0.999))

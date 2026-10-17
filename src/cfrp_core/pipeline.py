@@ -9,7 +9,7 @@ from shapely.affinity import translate
 from .config import ProcessConfig
 from .constraints import resolve_process_constraints
 from .gcode import compile_gcode
-from .layers import build_flat_laminate, build_revolve_shell
+from .layers import build_flat_laminate, build_revolve_shell, build_stl_laminate
 from .machine import DEFAULT_MACHINE, MachineProfile, fit_trajectory_to_bed
 from .specialty import specialty_shape
 from .validation import validate_trajectory
@@ -55,7 +55,9 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     cfg = resolved.config
     g = cfg.geometry
 
-    if g.is_revolve:
+    if g.shape == "STL Import":
+        trajectory, target_shapes, max_z = build_stl_laminate(cfg)
+    elif g.is_revolve:
         trajectory, target_shapes, max_z = build_revolve_shell(cfg)
     elif g.is_specialty:
         trajectory, target_shapes, max_z = specialty_shape(cfg), [], None

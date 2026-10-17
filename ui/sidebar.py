@@ -72,39 +72,31 @@ def render_layer_strategy(p, is_3d, is_revolve=False, shape=None):
                 help="Number of laminate passes to stack vertically."
             )
 
-            if shape == "Serpentine Infill":
-                # This shape prints its own fixed zigzag (generate_serpentine_infill),
-                # which ignores both Infill Pattern and Tracks Per Layer entirely --
-                # showing them here would just be dead controls.
-                st.caption("Infill Pattern and Tracks Per Layer are fixed by this shape's own zigzag generator.")
-                cfg_tracks = int(p.get("tracks_per_layer", 10))
-                cfg_infill = p.get("infill_type", "Archimedean (Concentric Spiral)")
-            else:
-                cfg_tracks = st.number_input(
-                    "Tracks Per Layer",
-                    min_value=1,
-                    value=int(p.get("tracks_per_layer", 10)),
-                    step=1,
-                    help="Exact number of continuous fiber tracks in every layer. Spacing is checked against the bend radius."
+            cfg_tracks = st.number_input(
+                "Tracks Per Layer",
+                min_value=1,
+                value=int(p.get("tracks_per_layer", 10)),
+                step=1,
+                help="Exact number of continuous fiber tracks in every layer. Spacing is checked against the bend radius."
+            )
+            infill_options = [
+                "Archimedean (Concentric Spiral)",
+                "Fermat Spiral (Connected Double Spiral)",
+                "Oriented Serpentine",
+            ]
+            cfg_infill = st.selectbox(
+                "Infill Pattern",
+                infill_options,
+                index=infill_options.index(p.get("infill_type", infill_options[0]))
+                if p.get("infill_type", infill_options[0]) in infill_options else 0,
+                help=(
+                    "The internal fill strategy used between walls. Concentric spiral keeps one "
+                    "forward winding direction and alternates only the starting side per layer. "
+                    "Fermat spiral is the safe choice once the fillable area can split into "
+                    "separate islands (holes, narrow necks) -- it visits every island in one "
+                    "continuous in-then-out stroke instead of dropping the smaller ones."
                 )
-                infill_options = [
-                    "Archimedean (Concentric Spiral)",
-                    "Fermat Spiral (Connected Double Spiral)",
-                    "Oriented Serpentine",
-                ]
-                cfg_infill = st.selectbox(
-                    "Infill Pattern",
-                    infill_options,
-                    index=infill_options.index(p.get("infill_type", infill_options[0]))
-                    if p.get("infill_type", infill_options[0]) in infill_options else 0,
-                    help=(
-                        "The internal fill strategy used between walls. Concentric spiral keeps one "
-                        "forward winding direction and alternates only the starting side per layer. "
-                        "Fermat spiral is the safe choice once the fillable area can split into "
-                        "separate islands (holes, narrow necks) -- it visits every island in one "
-                        "continuous in-then-out stroke instead of dropping the smaller ones."
-                    )
-                )
+            )
 
             st.caption("Layup Sequence (comma separated angles in degrees)")
             cfg_layup_str = st.text_input(
@@ -148,7 +140,7 @@ def render_geometry_section(p):
                 value=float(p["stem_h"]), min_value=0.1, step=1.0,
                 help="Absolute Z coordinate of the stem top, not relative to the Z-offset."
             )
-            cfg_wall_t, cfg_w, cfg_h, cfg_thick, cfg_invert, cfg_boundary = 0.0, 0, 0, 0, False, False
+            cfg_wall_t, cfg_w, cfg_h, cfg_thick, cfg_boundary = 0.0, 0, 0, 0, False
         elif cfg_shape == "Hollow Sphere (Z)":
             # A sphere's height is exactly one diameter -- it isn't a free
             # parameter. Deriving it (instead of taking an independent
@@ -157,16 +149,12 @@ def render_geometry_section(p):
             cfg_base_r = st.number_input("Outer Radius (mm)", value=float(p.get("base_r", 20.0)), min_value=1.0, step=1.0)
             cfg_stem_h = 2.0 * cfg_base_r
             st.caption(f"Height = 2 x Outer Radius = {cfg_stem_h:.1f} mm (fixed by geometry)")
-            cfg_wall_t, cfg_top_r, cfg_w, cfg_h, cfg_thick, cfg_invert, cfg_boundary = 0.0, 0.0, 0, 0, 0, False, False
+            cfg_wall_t, cfg_top_r, cfg_w, cfg_h, cfg_thick, cfg_boundary = 0.0, 0.0, 0, 0, 0, False
         elif cfg_shape in {"Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Dome (Z)", "Tapered Cylinder (Z)", "Conical Dome (Z)"}:
             cfg_base_r = st.number_input("Outer Radius (mm)", value=float(p.get("base_r", 20.0)), min_value=1.0, step=1.0)
             cfg_stem_h = st.number_input("Height (Z mm)", value=float(p.get("stem_h", 25.0)), min_value=1.0, step=1.0)
-            cfg_wall_t, cfg_top_r, cfg_w, cfg_h, cfg_thick, cfg_invert, cfg_boundary = 0.0, 0.0, 0, 0, 0, False, False
+            cfg_wall_t, cfg_top_r, cfg_w, cfg_h, cfg_thick, cfg_boundary = 0.0, 0.0, 0, 0, 0, False
         else:
-            cfg_invert = (
-                st.checkbox("Invert Bends (Loop Outside)", value=p.get("invert", False), help="Flip the bend direction for loop-outside research layouts.")
-                if cfg_shape == "Serpentine Infill" else False
-            )
             if cfg_shape in {"Hexagon", "Circle"}:
                 cfg_w = st.number_input("Diameter / Width (mm)", value=float(p["w"]), min_value=1.0, help="Overall XY size of the selected symmetric profile.")
                 cfg_h = cfg_w
@@ -178,17 +166,12 @@ def render_geometry_section(p):
                 st.number_input("Bracket Thickness (mm)", value=float(p.get("thick", 15.0)), min_value=0.1, help="Thickness of each L-bracket leg.")
                 if cfg_shape == "L-Bracket" else 0.0
             )
-            # Serpentine Infill bypasses generate_laminate_layer entirely (its own
-            # generate_serpentine_infill path), so include_boundary is never read for it.
-            cfg_boundary = (
-                st.checkbox("Print Outer Boundary", value=bool(p.get("include_boundary", False)), help="Add one perimeter pass around the internal layup.")
-                if cfg_shape != "Serpentine Infill" else False
-            )
+            cfg_boundary = st.checkbox("Print Outer Boundary", value=bool(p.get("include_boundary", False)), help="Add one perimeter pass around the internal layup.")
             cfg_base_r, cfg_top_r, cfg_stem_h, cfg_wall_t = 0.0, 0.0, 0.0, 0.0
 
     return {
         "shape": cfg_shape, "width": cfg_w, "height": cfg_h, "thickness": cfg_thick,
-        "invert_bends": cfg_invert, "base_radius": cfg_base_r, "disc_radius": cfg_top_r,
+        "base_radius": cfg_base_r, "disc_radius": cfg_top_r,
         "stem_height": cfg_stem_h, "wall_thickness": cfg_wall_t,
         "include_boundary": cfg_boundary
     }

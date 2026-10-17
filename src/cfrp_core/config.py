@@ -24,9 +24,10 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator, mo
 
 ShapeName = Literal[
     "Square/Rectangle", "Triangle", "Hexagon", "Circle",
-    "Serpentine Infill", "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
+    "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
     "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)",
     "Conical Dome (Z)", "3D Overhang (Mushroom)",
+    "STL Import",
 ]
 SHAPES: tuple[str, ...] = ShapeName.__args__
 
@@ -44,11 +45,13 @@ ARCHIMEDEAN = "Archimedean (Concentric Spiral)"
 FERMAT = "Fermat Spiral (Connected Double Spiral)"
 ORIENTED_SERPENTINE = "Oriented Serpentine"
 DIAGONAL_45 = "45° Diagonal Hatch"
+CORNER_STEP = "Corner-Step Spiral"
 InfillPattern = Literal[
     "Archimedean (Concentric Spiral)",
     "Fermat Spiral (Connected Double Spiral)",
     "Oriented Serpentine",
     "45° Diagonal Hatch",
+    "Corner-Step Spiral",
     "N/A",  # specialty shapes: no infill pattern applies
 ]
 
@@ -104,7 +107,6 @@ class GeometryConfig(_Frozen):
     shape: ShapeName = "Square/Rectangle"
     width_mm: float = 135.0              # flat shapes (also hexagon/circle diameter)
     height_mm: float = 25.0              # flat shapes (XY height, not Z)
-    invert_bends: bool = False           # Serpentine Infill: loop outside
     include_boundary: bool = False       # flat shapes: add one perimeter pass
     base_radius_mm: float = 10.0         # revolve outer radius / mushroom base
     disc_radius_mm: float = 15.0         # mushroom top disc
@@ -112,6 +114,7 @@ class GeometryConfig(_Frozen):
     wall_thickness_mm: float = 2.5
     start_x_mm: float = 26.0
     start_y_mm: float = 40.0
+    stl_path: str | None = None
 
     @property
     def is_specialty(self) -> bool:
@@ -290,7 +293,7 @@ class ProcessConfig(_Frozen):
             _require(self.anchor_length_mm, "Lead-in Anchor Length", strict=False, unit=" mm")
             _require(self.seam_trim_mm, "Seam Trim Length", strict=False, unit=" mm")
 
-        if g.shape not in (SPECIALTY_SHAPES | {"Serpentine Infill"}):
+        if g.shape not in SPECIALTY_SHAPES and g.shape != "STL Import":
             width, height = float(g.width_mm), float(g.height_mm)
             if width <= 0 or height <= 0:
                 raise ValueError("2D geometry width and height must be greater than 0 mm.")
@@ -300,6 +303,8 @@ class ProcessConfig(_Frozen):
                     "leave room for two bend radii plus one track gap. Reduce Min Bend "
                     "Radius or Track Gap, or enlarge the specimen."
                 )
+        if g.shape == "STL Import" and not g.stl_path:
+            raise ValueError("STL Import requires a file path. Select an STL file.")
         return self
 
     # -- derived values --

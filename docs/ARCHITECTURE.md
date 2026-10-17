@@ -1,12 +1,11 @@
 # Architecture
 
-Status: **Phase 19** (Y-direction anchor + Y-column ring-seam transitions; prior:
-full outer-perimeter lap + 45° diagonal entry + 45° Diagonal Hatch infill +
-seam-trim ramp fix, smooth archimedean transitions, 3D viewer presets, track-gap
-coverage, L-Bracket removed, Fermat ring-arc fix, About dialog + CSV export,
-keyboard shortcuts, cancel + geometry persistence, print stats, recent files,
-layer-height clamp, Fermat seam phase-shift, spiral Z, Torus removed, Conical
-Dome promoted, PySide6 GUI, parameter save/load, packaging).
+Status: **Phase 18** (full outer-perimeter lap + 45° diagonal entry + 45° Diagonal
+Hatch infill + seam-trim ramp fix; prior: smooth archimedean transitions, 3D viewer
+presets, track-gap coverage, L-Bracket removed, Fermat ring-arc fix, About dialog +
+CSV export, keyboard shortcuts, cancel + geometry persistence, print stats,
+recent files, layer-height clamp, Fermat seam phase-shift, spiral Z, Torus
+removed, Conical Dome promoted, PySide6 GUI, parameter save/load, packaging).
 
 ## 1. Layout
 
@@ -105,7 +104,14 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
 
 ## 6. Known issues
 
-*(No open slicer bugs — all known issues resolved through Phase 19.)*
+- **Remaining curvature violations** (Rectangle/Circle Fermat, 10-11 points each):
+  structural Fermat reversals; validation reports them as a "Curvature" warning.
+- **Seam angle drifts** between revolve layers (ring phases are not aligned to a
+  fixed angle); the helical connector hides the lift but the seam position moves.
+- G-code writer breaks G2/G3 arcs at every layer start flag, so revolve G-code is
+  larger than necessary.
+- Transition (ramp) points are excluded from the curvature audit; on tiny
+  single-track squares they run at `v_min` with R ~1.4 mm < min radius.
 
 ## 7. Phase 2 behaviour changes
 
@@ -122,6 +128,16 @@ Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
 4. **Default part fixed.** Tracks per layer changed from 10 to 7 so the
    default 135 x 25 mm rectangle slices at startup.
 5. **Mushroom stem height labelled** as absolute Z in the UI.
+
+## 7b. Phase 22 — revolve shells as one helical stroke
+
+`build_revolve_shell` collects each layer's min-radius-enforced ring, joins them
+with `_helical_connector` (forward lap, smoothstep radius; `_skip_behind` trims
+the next ring's head so the connector is short), collapses single-ring layers
+into the connector, runs one speed plan over the whole path and assigns Z with
+`_spiral_z` (linear in path length over ring + connector). Archimedean ring paths
+are cached per cross-section (`_archimedean_cached`). `append_layer` (flat
+laminates) now uses a tangent-continuous Hermite ramp.
 
 ## 8. Safety net
 

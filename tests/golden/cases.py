@@ -26,7 +26,7 @@ def _flat(shape, infill, **overrides):
     cfg = {
         # geometry
         "shape": shape, "width": 60.0, "height": 30.0, "thickness": 0.0,
-        "invert_bends": False, "base_radius": 0.0, "disc_radius": 0.0,
+        "base_radius": 0.0, "disc_radius": 0.0,
         "stem_height": 0.0, "wall_thickness": 0.0, "include_boundary": False,
         # layering
         "layers": 2, "layup_seq": "0, 90", "infill_type": infill, "tracks_per_layer": 4,
@@ -96,12 +96,6 @@ CASES += [
      "layup": [0.0, 90.0, 45.0, -45.0]},
     {"name": "rectangle_arch_boundary",
      "config": _flat("Square/Rectangle", ARCH, include_boundary=True, layers=3),
-     "layup": [0.0]},
-    {"name": "serpentine_infill_shape",
-     "config": _flat("Serpentine Infill", ARCH, width=60.0, height=30.0, layers=2),
-     "layup": [0.0, 90.0]},
-    {"name": "serpentine_infill_inverted",
-     "config": _flat("Serpentine Infill", ARCH, width=60.0, height=30.0, invert_bends=True),
      "layup": [0.0]},
     {"name": "sphere_arch", "config": _revolve("Hollow Sphere (Z)", base_radius=10.0), "layup": [0.0]},
     {"name": "dome_arch", "config": _revolve("Dome (Z)"), "layup": [0.0]},

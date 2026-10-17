@@ -16,7 +16,6 @@ _FIELD_MAP = {
     "shape": ("geometry", "shape"),
     "width": ("geometry", "width_mm"),
     "height": ("geometry", "height_mm"),
-    "invert_bends": ("geometry", "invert_bends"),
     "include_boundary": ("geometry", "include_boundary"),
     "base_radius": ("geometry", "base_radius_mm"),
     "disc_radius": ("geometry", "disc_radius_mm"),
@@ -24,6 +23,7 @@ _FIELD_MAP = {
     "wall_thickness": ("geometry", "wall_thickness_mm"),
     "start_x": ("geometry", "start_x_mm"),
     "start_y": ("geometry", "start_y_mm"),
+    "stl_path": ("geometry", "stl_path"),
     # material
     "needle_dia": ("material", "needle_dia_mm"),
     "e_mult": ("material", "e_multiplier"),

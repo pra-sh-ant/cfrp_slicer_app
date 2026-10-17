@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .config import SPECIALTY_SHAPES, ProcessConfig
+from .config import ARCHIMEDEAN, FERMAT, SPECIALTY_SHAPES, ProcessConfig
 
 
 @dataclass(frozen=True)
@@ -26,16 +26,7 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
     max_speed = float(k.v_max_mm_s)
     shape = config.geometry.shape
 
-    if shape == "Serpentine Infill":
-        required_gap = 2.0 * min_radius
-        if track_gap < required_gap:
-            notes.append(
-                f"Track Gap raised from {track_gap:.2f} to {required_gap:.2f} mm: "
-                "a serpentine U-turn needs at least 2R of vertical room."
-            )
-            track_gap = required_gap
-
-    if shape not in (SPECIALTY_SHAPES | {"Serpentine Infill"}):
+    if shape not in SPECIALTY_SHAPES:
         narrow_dimension = min(float(config.geometry.width_mm), float(config.geometry.height_mm))
         cornering_window = narrow_dimension - (2.0 * min_radius) - track_gap
         if min_radius > track_gap / 2.0:
@@ -57,6 +48,18 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
         notes.append(f"Pump-Stall Floor limited to Print Speed (Max), {max_speed:.2f} mm/s-equiv.")
 
     update: dict = {"track_gap_mm": track_gap}
+
+    # A Fermat spiral must U-turn between its two arms inside the innermost
+    # region; in a revolve shell's narrow wall band that U-turn is tighter than
+    # min bend radius (e.g. ~0.2 mm vs 3 mm). Archimedean never reverses.
+    wall_band = int(config.tracks_per_layer) * track_gap
+    if (config.geometry.is_revolve and config.infill_type == FERMAT
+            and min_radius > 0 and wall_band < 2.0 * min_radius + track_gap):
+        update["infill_type"] = ARCHIMEDEAN
+        notes.append(
+            f"Fermat spiral needs a U-turn that the {wall_band:.1f} mm wall band cannot fit at "
+            f"{min_radius:.1f} mm min bend radius; using Archimedean (no reversals) instead."
+        )
     if kin_update:
         update["kinematics"] = k.model_copy(update=kin_update)
     return ResolvedConfig(config.model_copy(update=update), tuple(notes))

@@ -44,13 +44,6 @@ def test_error_messages_are_plain_language():
     assert str(info.value) == "Track Gap must be greater than 0 mm."
 
 
-def test_serpentine_gap_auto_raised_to_fit_uturn():
-    cfg = base_2d_config(shape="Serpentine Infill", width=100.0, height=25.0, track_gap=1.0, min_radius=3.0)
-    resolved = _resolve(cfg)
-    assert resolved.config.track_gap_mm >= 2.0 * 3.0
-    assert resolved.notes
-
-
 def test_min_bend_speed_clamped_to_print_speed():
     resolved = _resolve(base_2d_config(v_max=5.0, v_min=50.0))
     assert resolved.config.kinematics.v_min_mm_s == 5.0

@@ -19,7 +19,7 @@ def run_slice(cfg, layup=(0.0,)):
 def base_2d_config(**overrides):
     cfg = {
         "shape": "Square/Rectangle", "width": 100.0, "height": 15.0, "thickness": 10.0,
-        "invert_bends": False, "track_gap": 1.2, "min_radius": 2.0,
+        "track_gap": 1.2, "min_radius": 2.0,
         "start_x": 26.0, "start_y": 40.0, "z_offset": 0.2,
         "layer_height": 0.2, "layers": 3, "anchor_length": 5.0,
         "tracks_per_layer": 3, "infill_type": "Archimedean (Concentric Spiral)",

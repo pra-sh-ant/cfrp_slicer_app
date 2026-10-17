@@ -3,9 +3,10 @@ from __future__ import annotations
 
 import math
 
-from ..config import ARCHIMEDEAN, DIAGONAL_45, FERMAT
+from ..config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT
 from ._common import check_gap_radius, dedupe_path, largest_polygon
 from .archimedean import archimedean_path
+from .corner_step import corner_step_path
 from .fermat import fermat_spiral_path
 from .outlines import printable_boundary
 from .serpentine import oriented_serpentine
@@ -25,6 +26,17 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     gap = track_gap
     min_rad = min_radius
 
+    # Corner-Step Spiral: ring 0 IS the boundary — bypass wall/boundary logic.
+    if infill_type == CORNER_STEP:
+        path, _ = corner_step_path(base_poly, gap, min_rad, tracks_per_layer)
+        if not path:
+            return []
+        if layer_idx % 2 != 0:
+            path = list(reversed(path))
+        if last_pt:
+            path = [last_pt] + path
+        return path
+
     wall_poly = printable_boundary(base_poly, gap, min_rad)
     if wall_poly.is_empty or wall_poly.geom_type != 'Polygon':
         return []
@@ -43,27 +55,10 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
 
     is_outward = (layer_idx % 2 != 0)
 
-    # For archimedean infill, pre-compute the seam hint so the infill starts
-    # near the join point:
-    #   • inside-out: start near the previous layer's end (last_pt).
-    #   • outside-in + boundary: start near where the wall will end (the wall
-    #     is reordered to start at the nearest point to last_pt, so its end is
-    #     that same point — compute it early so the infill seam aligns).
-    _arch_seam = None
-    if infill_type == ARCHIMEDEAN:
-        if is_outward:
-            _arch_seam = last_pt
-        elif include_boundary:
-            if last_pt:
-                _wall_dists = [math.hypot(x - last_pt[0], y - last_pt[1]) for x, y in wall_coords]
-                _arch_seam = wall_coords[_wall_dists.index(min(_wall_dists))]
-            else:
-                _arch_seam = wall_coords[0]
-
     if infill_type == ARCHIMEDEAN:
         infill_path, _ = archimedean_path(
             infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward,
-            seam_hint=_arch_seam,
+            seam_hint=last_pt if is_outward else None,
         )
     elif infill_type == FERMAT:
         # Phase-shift consecutive seams ~180° apart so the Z-ramp between

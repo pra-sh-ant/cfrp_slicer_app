@@ -4,5 +4,7 @@
     "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
   ],
   "max_z": 10.2,
-  "constraint_notes": []
+  "constraint_notes": [
+    "Fermat spiral needs a U-turn that the 3.6 mm wall band cannot fit at 3.0 mm min bend radius; using Archimedean (no reversals) instead."
+  ]
 }

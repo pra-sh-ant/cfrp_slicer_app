@@ -1,6 +1,8 @@
 """Fermat "connected double spiral" infill (spec §5.5)."""
 from __future__ import annotations
 
+import math
+
 from shapely.geometry import Point
 
 from ._common import (
@@ -159,13 +161,43 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
             prev_start = resampled[0]
         return out
 
+    def _smooth_reversal(p_end, p_start, r):
+        """Circular arc connecting a spiral's inward end to its outward start,
+        so the reversal respects min_radius instead of a sharp U-turn."""
+        chord = math.hypot(p_start[0] - p_end[0], p_start[1] - p_end[1])
+        if chord < 1e-6:
+            return []
+        R = max(chord / 2.0 + 0.01, r)
+        mid_x = (p_end[0] + p_start[0]) / 2.0
+        mid_y = (p_end[1] + p_start[1]) / 2.0
+        cx_dir = p_start[0] - p_end[0]
+        cy_dir = p_start[1] - p_end[1]
+        perp_x, perp_y = -cy_dir / chord, cx_dir / chord
+        h = math.sqrt(max(0.0, R * R - (chord / 2.0) ** 2))
+        center_x = mid_x + h * perp_x
+        center_y = mid_y + h * perp_y
+        a0 = math.atan2(p_end[1] - center_y, p_end[0] - center_x)
+        a1 = math.atan2(p_start[1] - center_y, p_start[0] - center_x)
+        da = a1 - a0
+        if da > math.pi:
+            da -= 2.0 * math.pi
+        elif da < -math.pi:
+            da += 2.0 * math.pi
+        arc_len = abs(da) * R
+        n = max(6, int(math.ceil(arc_len / 0.5)))
+        pts = []
+        for k in range(1, n):
+            frac = k / n
+            angle = a0 + da * frac
+            pts.append((center_x + R * math.cos(angle),
+                        center_y + R * math.sin(angle)))
+        return pts
+
     def spiral_region(poly, entry_hint):
         """Full DFS traversal of poly and everything nested inside it."""
         a_rings, b_rings, children = build_chains(poly)
         if not a_rings and not b_rings:
             start = entry_hint if entry_hint is not None else poly.centroid.coords[0]
-            # No rings exist yet — children are direct sub-regions of poly.
-            # Use poly itself as a proxy ring so the bridge stays inside it.
             proxy = poly if children else None
             return visit_children(children, start, innermost_ring=proxy)
 
@@ -182,7 +214,13 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
         b_seq_reversed = [_reverse_winding(pts) for pts in reversed(b_seq)]
         out_path = blend_chain(b_seq_reversed, samples)
 
-        return in_path + child_path + out_path
+        reversal_arc = []
+        if in_path and out_path and not child_path:
+            reversal_arc = _smooth_reversal(in_path[-1], out_path[0], min_radius)
+        elif child_path and out_path:
+            reversal_arc = _smooth_reversal(child_path[-1], out_path[0], min_radius)
+
+        return in_path + child_path + reversal_arc + out_path
 
     path = spiral_region(base_poly, entry_hint)
     if not path:

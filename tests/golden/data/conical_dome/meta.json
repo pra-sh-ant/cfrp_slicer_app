@@ -1,7 +1,7 @@
 {
-  "status": "Pass",
+  "status": "Warning",
   "messages": [
-    "✅ Continuous Flow Verified. Layers are strictly pinned and collision-free."
+    "Layer 1 path crosses itself (5 internal intersections). Tangent peeling may intersect. Proceed with caution."
   ],
   "max_z": 25.2,
   "constraint_notes": []

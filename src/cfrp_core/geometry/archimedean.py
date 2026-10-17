@@ -4,6 +4,7 @@ from __future__ import annotations
 import math
 
 from ._common import (
+    blend_chain,
     check_gap_radius,
     dedupe_path,
     hole_keepouts,
@@ -12,41 +13,27 @@ from ._common import (
     resample_closed_ring,
 )
 
-_CONNECTOR_STEP_MM = 0.75   # max segment length inside ring-to-ring connectors
-
-
-def _left_mid(ring_poly):
-    """Return the left-edge midpoint: min X, Y closest to the ring's centroid.
-
-    For a rectangle this is the centre of the left straight edge.  Using the
-    centroid Y (rather than min Y) ensures that consecutive inset rings have
-    their seam at the same Y level, so inter-ring connectors are strictly
-    horizontal (+X direction) instead of drifting diagonally.
-    """
-    coords = list(ring_poly.exterior.coords)[:-1]
-    min_x = min(p[0] for p in coords)
-    cy = ring_poly.centroid.y
-    left_pts = [p for p in coords if p[0] <= min_x + 0.5]
-    return min(left_pts, key=lambda p: abs(p[1] - cy))
-
 
 def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False,
                      seam_hint=None):
-    """Concentric ring infill with left-side seam column.
+    """One smooth, continuously-blended spiral inside an arbitrary polygon.
 
-    Each ring's seam is the left-edge midpoint (min X, Y nearest to centroid).
-    Because all concentric rings share the same centroid Y, consecutive seam
-    points are at the same Y level and connectors between rings are strictly
-    horizontal (+X direction, stepping inward by one track gap).  The lead-in
-    anchor approaches from −X at the same Y, so the entire seam zone is one
-    clean horizontal strip on the left side of the part.
+    Rings sit at inset d_k = gap/2 + k·gap from the outer shell. Instead of
+    splicing ring-to-ring by jumping to the nearest point, each ring is
+    resampled at matched arc-length parameters and consecutive rings are
+    linearly blended across one full revolution: a constant pitch of `gap`
+    with no direction reversals.
 
-    Seam selection:
-      • For outside-in (default): left-edge midpoint of the outermost ring.
-      • For inside-out: left-edge midpoint of the innermost ring, or
-        `seam_hint` when supplied (aligns with the previous layer's seam).
+    For outside-in (default) the path opens with the full outer ring as a
+    closed perimeter lap, then exits at 45° through a short (_PERIMETER_ENTRY_MM)
+    diagonal segment that bridges to the second ring.  The spiral then
+    continues inward through the remaining rings.  This gives:
+        perimeter coverage + smooth diagonal entry + seamless inward spiral.
 
-    Returns (path, base_poly).  Raises ValueError if `track_count` rings were
+    For inside-out the last ring is the outermost; inner_close closes it at
+    full radius so alternating layers maintain symmetric outer-wall coverage.
+
+    Returns (path, base_poly). Raises ValueError if `track_count` rings were
     requested but fewer fit.
     """
     check_gap_radius(track_gap, min_radius)
@@ -75,51 +62,63 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
 
     ordered = list(reversed(ring_polys)) if start_from_inside else ring_polys
 
-    if len(ordered) == 1:
-        return list(ordered[0].exterior.coords), base_poly
-
     # Shared sample count: ~one point per 0.75 mm on the longest ring, ≥120.
     max_length = max(poly.exterior.length for poly in ordered)
-    samples = max(120, int(max_length / _CONNECTOR_STEP_MM))
+    samples = max(120, int(max_length / 0.75))
 
-    # ----------------------------------------------------------------
-    # Seam anchor: the Y-column reference point.
-    # For outside-in → bottom-most point of outermost ring.
-    # For inside-out → seam_hint (previous layer's end) or bottom-most of innermost.
-    # ----------------------------------------------------------------
-    if seam_hint is not None:
-        initial_seam = seam_hint
+    if len(ordered) == 1:
+        ring = resample_closed_ring(ordered[0], samples, None)
+        path = dedupe_path(ring + [ring[0]])
+        return path, base_poly
+
+    # --- Resample ring0 first (no phase anchor) ---
+    ring0_pts = resample_closed_ring(ordered[0], samples, None)
+
+    if not start_from_inside:
+        # ----------------------------------------------------------------
+        # Outside-in: full outer ring + smooth blended spiral inward
+        # ----------------------------------------------------------------
+        # Phase all rings to start near ring0's seam.
+        resampled = [ring0_pts]
+        prev_start = ring0_pts[0]
+        for poly in ordered[1:]:
+            pts = resample_closed_ring(poly, samples, prev_start)
+            resampled.append(pts)
+            prev_start = pts[0]
+
+        # Full outer ring lap for perimeter coverage, then blend_chain
+        # handles ALL ring-to-ring transitions (including ring0→ring1)
+        # with the same smooth, curvature-continuous linear blending.
+        first_lap = ring0_pts + [ring0_pts[0]]
+        inner_close = resampled[-1][1:] + [resampled[-1][0]]
+        continuous_path = first_lap + blend_chain(resampled, samples) + inner_close
+
     else:
-        initial_seam = _left_mid(ordered[0])
+        # ----------------------------------------------------------------
+        # Inside-out: pure blend inner→outer + outer ring close
+        # ----------------------------------------------------------------
+        # Ring0 is innermost here.  If the caller supplies seam_hint (the
+        # previous layer's end-point on this same ring), anchor ring0 to start
+        # near it so the layer-to-layer seam trim cuts go in opposite directions
+        # on the innermost ring, giving a clean ramp with good XY separation.
+        if seam_hint is not None:
+            ring0_pts = resample_closed_ring(ordered[0], samples, seam_hint)
+        resampled = [ring0_pts]
+        prev_start = ring0_pts[0]
+        for poly in ordered[1:]:
+            pts = resample_closed_ring(poly, samples, prev_start)
+            resampled.append(pts)
+            prev_start = pts[0]
 
-    path = []
-    prev_seam = initial_seam
+        inner_close = resampled[-1][1:] + [resampled[-1][0]]
+        continuous_path = blend_chain(resampled, samples) + inner_close
 
-    for ring_poly in ordered:
-        # Phase this ring to start nearest to prev_seam (the current Y-column point).
-        ring_pts = resample_closed_ring(ring_poly, samples, prev_seam)
-        ring_seam = ring_pts[0]
+    path = dedupe_path(continuous_path)
 
-        if path:
-            # Straight connector from prev ring's seam (left-edge midpoint at Y_centroid)
-            # to this ring's seam.  Both points have the same Y ≈ centroid_Y so the
-            # connector is strictly horizontal, stepping inward by one track gap in +X.
-            seg_len = math.hypot(ring_seam[0] - prev_seam[0], ring_seam[1] - prev_seam[1])
-            n_conn = max(2, int(math.ceil(seg_len / _CONNECTOR_STEP_MM)))
-            for i in range(1, n_conn + 1):
-                t = i / n_conn
-                path.append((
-                    prev_seam[0] + t * (ring_seam[0] - prev_seam[0]),
-                    prev_seam[1] + t * (ring_seam[1] - prev_seam[1]),
-                ))
+    # Close the loop when end lands near start (tight shapes, 1-2 tracks).
+    if len(path) >= 2:
+        d = math.hypot(path[-1][0] - path[0][0], path[-1][1] - path[0][1])
+        if d < track_gap:
+            path = path + [path[0]]
 
-        # Traverse the ring.  resample_closed_ring returns `samples` points covering
-        # one full revolution starting at the left-edge midpoint (seam).  prev_seam
-        # is updated to ring_pts[0] (not ring_pts[-1]) so consecutive seams stay
-        # at the same Y level — strictly horizontal connectors, no downward drift.
-        path.extend(ring_pts)
-        # Use ring_pts[0] (the seam start) as the next anchor so consecutive
-        # seams stay at the same Y level — no drift per ring.
-        prev_seam = ring_pts[0]
-
-    return dedupe_path(path), base_poly
+    return path, base_poly
