@@ -63,11 +63,11 @@ that changes default output regenerates goldens deliberately (`python -m tests.g
 | Order | Item | Status |
 |---|---|---|
 | 1 | STL multi-island + holes (#1) | done (Phase 23); holes need a new generator, see 6 |
-| 2 | Calibration + measured PA/pump model + extrusion-rate smoothing (#2-4) | planned |
+| 2 | Calibration + measured PA/pump model + extrusion-rate smoothing (#2-4) | done (Phase 27): 4 coupons + PA table; rate smoothing not needed (see s7) |
 | 3 | Coverage check + overhang-aware speed/cure (#6, s4) | coverage done (Phase 23); overhang planned |
 | 4 | Layup schedule with symmetric/balanced check (#10) | planned |
 | 5 | Shrinkage + tow-width compensation (#12) | planned |
-| 6 | Scarf flow taper + staggered seams (#9) | planned |
+| 6 | Scarf flow taper + staggered seams (#9) | staggered seams done for round shells (Phase 27, opt-in); flow taper planned |
 | 7 | Viewer colour modes + estimates (#18) | planned |
 | 8 | Hole-aware spiral generator (contour tree, rings around holes linked into one stroke) | planned |
 
@@ -93,3 +93,23 @@ that changes default output regenerates goldens deliberately (`python -m tests.g
   blend (`blend_chain`) and Fermat's U-turn arc. Item 8 is the real fix.
 - Other gaps the metric exposes: serpentine erodes the region by r_min (a 30 mm pad
   is ~64 % covered); Fermat leaves its centre unfilled (~70 %).
+
+## 7. Phase 27 (item 2) and seam stagger
+
+All opt-in; defaults leave part output byte-identical (golden tests).
+- Calibration coupons (`cfrp_core/calibration.py`; GUI Tools > Generate Calibration
+  G-code; `tools/make_calibration.py`): pump floor, bend radius, pressure advance,
+  track gap. Each is one continuous stroke within r_min (except the bend-radius
+  coupon, whose turns are the test), with every band labelled in the G-code and
+  reading instructions in the header.
+- Measured pressure advance: `kinematics.pressure_advance_table` (GUI "PA Table",
+  e.g. `5:1.0, 10:3.0`) interpolated at each point's speed. A pump that lags by
+  time t needs a look-ahead of about v·t, so the advance should grow with speed.
+- Extrusion-rate smoothing (Orca) is not added: flow per mm follows v/v_max, so flow
+  rate goes as v² and its rate of change is already bounded by the accel/decel
+  limits; a separate limiter would only alter parts.
+- Staggered seams for round revolve shells (`seam_stagger_deg`, GUI "Seam Stagger"):
+  rotates each layer's ring so seams do not form a vertical line (stack 25 -> 1 at
+  137.5°). Not offered for flat parts: a continuous stroke must start each layer where
+  the last ended, so moving the seam would add a connector across the part.
+

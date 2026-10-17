@@ -50,13 +50,14 @@ def _detect_arcs(trajectory):
 
     while i < n:
         pt = trajectory[i]
-        if pt.get('is_transition') or pt.get('layer_start') or pt['dist'] <= 0:
+        if pt.get('is_transition') or pt.get('layer_start') or pt.get('comment') or pt['dist'] <= 0:
             result.append(('line', i))
             i += 1
             continue
 
         j = i
-        while j < n and not trajectory[j].get('is_transition') and not trajectory[j].get('layer_start') and trajectory[j]['dist'] > 0:
+        while (j < n and not trajectory[j].get('is_transition') and not trajectory[j].get('layer_start')
+               and not trajectory[j].get('comment') and trajectory[j]['dist'] > 0):
             j += 1
 
         run_len = j - i
@@ -119,7 +120,9 @@ def _detect_arcs(trajectory):
 def compile_gcode(trajectory, config: ProcessConfig) -> str:
     """Render a planned trajectory as G-code text ('\\n' line endings).
 
-    E is cumulative:  E += dist · e_const · e_mult_point.
+    E is cumulative:  E += dist · e_const · e_mult_point. A point's optional
+    'comment' is written as a G-code comment before its move (calibration
+    coupons label their test bands this way).
     """
     if not trajectory:
         return "; Trajectory failed to generate."
@@ -182,6 +185,8 @@ def compile_gcode(trajectory, config: ProcessConfig) -> str:
             if pt.get('layer_start', False):
                 layer_count += 1
                 gcode.append(f"\n; --- STARTING LAYER {layer_count} (Z={pt['z']:.3f}) ---")
+            if pt.get('comment'):
+                gcode.append(f"; {pt['comment']}")
 
             if pt['dist'] > 0:
                 current_e += pt['dist'] * e_const * pt['e_mult']

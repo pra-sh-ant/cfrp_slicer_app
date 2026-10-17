@@ -167,6 +167,9 @@ class KinematicsConfig(_Frozen):
     pressure_advance_mm: float = 3.0
     # UNMEASURED by default: equals v_min, i.e. no real stall protection.
     pump_stall_floor_mm_s: float = 5.0
+    # Optional measured pressure advance: ((speed mm/s, advance mm), ...),
+    # interpolated at each point's speed. Empty = the fixed value above.
+    pressure_advance_table: tuple[tuple[float, float], ...] = ()
     # Specialty shapes only:
     v_z_mm_s: float = 2.0
     v_overhang_mm_s: float = 5.0
@@ -186,6 +189,14 @@ class KinematicsConfig(_Frozen):
     @classmethod
     def _finite(cls, v: float, info) -> float:
         return _require_finite(v, info.field_name)
+
+    @field_validator("pressure_advance_table")
+    @classmethod
+    def _pa_table(cls, v):
+        for speed, adv in v:
+            _require(speed, "Pressure advance table speed", strict=False, unit=" mm/s")
+            _require(adv, "Pressure advance table advance", strict=False, unit=" mm")
+        return v
 
     @property
     def pump_floor_unmeasured(self) -> bool:
@@ -240,6 +251,9 @@ class ProcessConfig(_Frozen):
     transition_angle_deg: float = 30.0
     seam_trim_mm: float = 3.0
     anchor_length_mm: Number = 15.0
+    # Round revolve shells: rotate each layer's seam by this much (0 = all
+    # seams on one vertical line, as before). E.g. 137.5 spreads them evenly.
+    seam_stagger_deg: float = 0.0
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")
@@ -274,6 +288,11 @@ class ProcessConfig(_Frozen):
     @classmethod
     def _layer_height(cls, v: Number) -> Number:
         return _require(v, "Layer Height", unit=" mm")
+
+    @field_validator("seam_stagger_deg")
+    @classmethod
+    def _stagger(cls, v: float) -> float:
+        return _require_finite(v, "Seam Stagger")
 
     @field_validator("layup_deg")
     @classmethod

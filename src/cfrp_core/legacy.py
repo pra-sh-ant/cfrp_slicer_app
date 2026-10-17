@@ -39,6 +39,7 @@ _FIELD_MAP = {
     "decel": ("kinematics", "decel_mm_s2"),
     "p_advance": ("kinematics", "pressure_advance_mm"),
     "pump_stall_floor": ("kinematics", "pump_stall_floor_mm_s"),
+    "pa_table": ("kinematics", "pressure_advance_table"),
     "v_z": ("kinematics", "v_z_mm_s"),
     "v_overhang": ("kinematics", "v_overhang_mm_s"),
     "dwell": ("kinematics", "dwell_s"),
@@ -59,6 +60,7 @@ _FIELD_MAP = {
     "transition_angle": (None, "transition_angle_deg"),
     "seam_trim_length": (None, "seam_trim_mm"),
     "anchor_length": (None, "anchor_length_mm"),
+    "seam_stagger": (None, "seam_stagger_deg"),
 }
 
 
@@ -72,6 +74,24 @@ def parse_layup(text: str) -> tuple[float, ...]:
     return angles or (0.0,)
 
 
+def parse_pa_table(text) -> tuple[tuple[float, float], ...]:
+    """'5:1.0, 10:3.0' -> ((5.0, 1.0), (10.0, 3.0)); empty -> ().
+    Raises ValueError naming the bad entry."""
+    if not isinstance(text, str):
+        return tuple((float(v), float(a)) for v, a in (text or ()))
+    pairs = []
+    for item in text.replace(";", ",").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            v, a = (float(x) for x in item.split(":"))
+        except ValueError:
+            raise ValueError(f"PA Table entry {item!r} must be speed:advance, e.g. 10:3.0") from None
+        pairs.append((v, a))
+    return tuple(pairs)
+
+
 def to_nested(d: dict, layup=None) -> dict:
     """Legacy flat dict -> nested dict ready for ProcessConfig validation."""
     nested: dict = {"geometry": {}, "material": {}, "kinematics": {}, "gcode": {}}
@@ -79,6 +99,8 @@ def to_nested(d: dict, layup=None) -> dict:
         if key not in _FIELD_MAP:
             continue
         section, field = _FIELD_MAP[key]
+        if field == "pressure_advance_table":
+            value = parse_pa_table(value)
         (nested[section] if section else nested)[field] = value
     # The legacy G-code header printed layup_seq with a "0" default.
     nested.setdefault("layup_text", "0")

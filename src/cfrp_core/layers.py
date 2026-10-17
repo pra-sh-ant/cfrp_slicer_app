@@ -35,6 +35,7 @@ class KinematicsParams:
     p_advance: float
     pump_floor: float
     min_rad: float
+    advance_table: tuple = ()
 
     @classmethod
     def from_config(cls, config: ProcessConfig) -> KinematicsParams:
@@ -48,6 +49,7 @@ class KinematicsParams:
             p_advance=float(k.pressure_advance_mm),
             pump_floor=float(k.pump_stall_floor_mm_s),
             min_rad=float(config.min_radius_mm),
+            advance_table=tuple(k.pressure_advance_table),
         )
 
 
@@ -201,6 +203,7 @@ def plan_layer(raw_path, layer_z, layer_num, kin: KinematicsParams):
     layer_trajectory = calculate_trajectory(
         tuple(raw_path), kin.v_max, kin.v_min, kin.accel, kin.decel,
         kin.p_advance, z_height=layer_z, min_rad=kin.min_rad, pump_floor=kin.pump_floor,
+        advance_table=kin.advance_table,
     )
     for pt in layer_trajectory:
         pt['layer'] = layer_num
@@ -582,6 +585,16 @@ def build_revolve_shell(config: ProcessConfig):
     # helical lap: drop the ring and let the connector carry radius and Z, so
     # each layer costs one lap instead of ring + retraced lap. The first
     # layer (anchor) and last layer (top) stay whole.
+    # Optional staggered seams (round shells only: a rotated ring is the same
+    # ring, so only the seam moves; the helical connector laps the extra arc).
+    stagger = math.radians(float(config.seam_stagger_deg)) if shape_type == 'round' else 0.0
+    if stagger:
+        for k in range(1, len(layers_raw)):
+            num, lz, path = layers_raw[k]
+            c, s = math.cos(k * stagger), math.sin(k * stagger)
+            layers_raw[k] = (num, lz, [(cx + (x - cx) * c - (y - cy) * s,
+                                        cy + (x - cx) * s + (y - cy) * c) for x, y in path])
+
     if shape_type == 'round':
         for k in range(1, len(layers_raw) - 1):
             num, lz, path = layers_raw[k]

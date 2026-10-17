@@ -276,6 +276,23 @@ class ControlsPanel(QWidget):
         fl.addRow("Pump-Stall Floor (mm/s)", self.pump_floor_spin)
         fl.addRow("Transition Angle (°)", self.trans_angle_spin)
         fl.addRow("Seam Trim (mm)", self.seam_trim_spin)
+        self.seam_stagger_spin = _spin(0, 360, 5, 0.0, 1)
+        self.seam_stagger_spin.setToolTip(
+            "Round shells: rotate each layer's seam by this angle so seams do not "
+            "stack into one vertical line (0 = aligned; 137.5 spreads them evenly)."
+        )
+        self.pa_table_edit = QLineEdit()
+        self.pa_table_edit.setPlaceholderText("empty = fixed advance; e.g. 5:1.0, 10:3.0")
+        self.pa_table_edit.setToolTip(
+            "Measured pressure advance per speed (speed mm/s : advance mm), from the "
+            "Pressure Advance calibration coupon run at several speeds. Interpolated at "
+            "each point's speed. Empty uses the fixed Pressure Advance value."
+        )
+        self.pa_table_edit.editingFinished.connect(self._emit)
+        self._pa_table_label = QLabel("PA Table")
+        fl.addRow(self._pa_table_label, self.pa_table_edit)
+        self._stagger_label = QLabel("Seam Stagger (°)")
+        fl.addRow(self._stagger_label, self.seam_stagger_spin)
         fl.addRow("Anchor Length (mm)", self.anchor_spin)
         fl.addRow("Min Bend Radius (mm)", self.min_r_spin)
 
@@ -297,7 +314,7 @@ class ControlsPanel(QWidget):
         for w in (self.vmax_spin, self.vmin_spin, self.accel_spin, self.decel_spin,
                   self.p_adv_spin, self.pump_floor_spin, self.trans_angle_spin,
                   self.seam_trim_spin, self.anchor_spin, self.min_r_spin,
-                  self.vz_spin, self.v_overhang_spin, self.dwell_spin,
+                  self.seam_stagger_spin, self.vz_spin, self.v_overhang_spin, self.dwell_spin,
                   self.purge_e_spin, self.purge_f_spin, self.travel_f_spin):
             w.valueChanged.connect(self._emit)
         self.uv_spin.valueChanged.connect(self._emit)
@@ -376,6 +393,11 @@ class ControlsPanel(QWidget):
                   self.p_adv_spin, self.pump_floor_spin, self.trans_angle_spin,
                   self.seam_trim_spin, self.anchor_spin):
             w.setVisible(show_planner)
+        self.pa_table_edit.setVisible(show_planner)
+        self._pa_table_label.setVisible(show_planner)
+        show_stagger = is_revolve and shape != "Hollow Square Tube (Z)"
+        self.seam_stagger_spin.setVisible(show_stagger)
+        self._stagger_label.setVisible(show_stagger)
         self.vz_spin.setVisible(show_specialty)
         self._vz_label.setVisible(show_specialty)
         self.v_overhang_spin.setVisible(show_mushroom)
@@ -451,6 +473,8 @@ class ControlsPanel(QWidget):
             "pump_stall_floor": pump_floor,
             "transition_angle": trans_angle,
             "seam_trim_length": seam_trim,
+            "seam_stagger": self.seam_stagger_spin.value(),
+            "pa_table": self.pa_table_edit.text(),
             "anchor_length": anchor,
             "min_radius": self.min_r_spin.value(),
             "v_z": vz,
@@ -536,6 +560,8 @@ class ControlsPanel(QWidget):
         _set(self.pump_floor_spin, "pump_stall_floor")
         _set(self.trans_angle_spin, "transition_angle")
         _set(self.seam_trim_spin, "seam_trim_length")
+        _set(self.seam_stagger_spin, "seam_stagger")
+        _set(self.pa_table_edit, "pa_table")
         _set(self.anchor_spin, "anchor_length")
         _set(self.min_r_spin, "min_radius")
         _set(self.vz_spin, "v_z")

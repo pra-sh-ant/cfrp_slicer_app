@@ -5,6 +5,22 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 27 — calibration coupons, measured pressure advance, seam stagger)
+All opt-in; with defaults every part's output is byte-identical (goldens unchanged).
+- **Calibration coupons** (`cfrp_core.calibration`, GUI *Tools > Generate Calibration
+  G-code…*, `tools/make_calibration.py`): pump floor (lines at descending speed, flow
+  following speed), bend radius (U-turns at descending radius), pressure advance
+  (slow/fast/slow lines, one per advance, planned with the part's own accel and
+  look-ahead), track gap (one exact-offset spiral whose ring spacing grows band by
+  band). One continuous stroke each, labelled bands, reading instructions in the
+  header.
+- **Pressure advance table** (`kinematics.pressure_advance_table`, GUI "PA Table"):
+  measured (speed, advance) pairs interpolated per point; a constant table gives
+  exactly the fixed-advance output.
+- **Seam stagger** for round revolve shells (`seam_stagger_deg`, GUI "Seam Stagger";
+  0 = aligned as before).
+- G-code writer: optional per-point `comment` (used by coupons; absent in parts).
+
 ### Fixed (Phase 26 — multi-layer toolpath planning)
 New `tools/multilayer_audit.py` judges what happens between layers (per seam: ramp
 chord, fibre reversal, steepest step; per part: seam stacking, footprint drift,

@@ -67,7 +67,7 @@ def _limit_accel(target_v: np.ndarray, distances: np.ndarray, accel: float, dece
     return np.array(v, dtype=np.float64)
 
 
-def _advance_indices(distances: np.ndarray, advance_dist: float) -> np.ndarray:
+def _advance_indices(distances: np.ndarray, advance_dist) -> np.ndarray:
     """For each i, the first index j ≥ i whose accumulated travel from i
     reaches `advance_dist` (or n−1). Legacy loop:
         acc = 0; j = i
@@ -75,18 +75,21 @@ def _advance_indices(distances: np.ndarray, advance_dist: float) -> np.ndarray:
     The vectorised search uses prefix sums; near-exact ties (where prefix
     differences and the loop's running sum could round differently) are
     re-resolved with the loop itself so results are identical.
+
+    `advance_dist` is a scalar, or one look-ahead per point.
     """
     n = len(distances)
     s = np.concatenate(([0.0], np.cumsum(distances[:-1])))
-    idx = np.searchsorted(s, s + advance_dist, side="left")
+    adv = np.broadcast_to(np.asarray(advance_dist, dtype=np.float64), (n,))
+    idx = np.searchsorted(s, s + adv, side="left")
     idx = np.clip(np.maximum(idx, np.arange(n)), 0, n - 1)
 
     reach = s[idx] - s
     prev = s[np.maximum(idx - 1, 0)] - s
-    tie = (np.abs(reach - advance_dist) < 1e-9) | (np.abs(prev - advance_dist) < 1e-9)
+    tie = (np.abs(reach - adv) < 1e-9) | (np.abs(prev - adv) < 1e-9)
     for i in np.flatnonzero(tie):
-        acc, j = 0.0, int(i)
-        while j < n - 1 and acc < advance_dist:
+        acc, j, target = 0.0, int(i), float(adv[i])
+        while j < n - 1 and acc < target:
             acc += distances[j]
             j += 1
         idx[i] = j
@@ -94,7 +97,8 @@ def _advance_indices(distances: np.ndarray, advance_dist: float) -> np.ndarray:
 
 
 @lru_cache(maxsize=512)
-def _plan(path_bytes: bytes, n: int, v_max, v_min, accel, decel, advance_dist, min_rad, pump_floor):
+def _plan(path_bytes: bytes, n: int, v_max, v_min, accel, decel, advance_dist, min_rad, pump_floor,
+          advance_table=()):
     path = np.frombuffer(path_bytes, dtype=np.float64).reshape(n, 2)
 
     distances = np.append(np.linalg.norm(np.diff(path, axis=0), axis=1), 0.0)
@@ -132,7 +136,14 @@ def _plan(path_bytes: bytes, n: int, v_max, v_min, accel, decel, advance_dist, m
     pump_floor_fraction = pump_floor / v_max if v_max > 0 else 0.0
     raw_extrusion = final_v / v_max
     extrusion = np.maximum(raw_extrusion, pump_floor_fraction)
-    shifted = extrusion[_advance_indices(distances, advance_dist)]
+    if advance_table:
+        # Measured look-ahead per speed (calibration PA coupon at several
+        # speeds), interpolated at each point's planned speed.
+        table = sorted(advance_table)
+        advance = np.interp(final_v, [t[0] for t in table], [t[1] for t in table])
+    else:
+        advance = advance_dist
+    shifted = extrusion[_advance_indices(distances, advance)]
     floored = extrusion > raw_extrusion
 
     for arr in (distances, final_v, shifted, floored):
@@ -141,10 +152,12 @@ def _plan(path_bytes: bytes, n: int, v_max, v_min, accel, decel, advance_dist, m
 
 
 def calculate_trajectory(path, v_max, v_min, accel, decel, advance_dist,
-                         z_height=0.0, min_rad=3.0, pump_floor=None) -> list[dict]:
+                         z_height=0.0, min_rad=3.0, pump_floor=None, advance_table=()) -> list[dict]:
     """Plan speed (mm/s) and extrusion factor along an already fiber-safe 2D
     path. Corner rounding is the geometry generators' job; this only limits
-    speed through whatever corners remain. Returns one dict per point."""
+    speed through whatever corners remain. `advance_table` ((speed, advance
+    mm), ...) replaces the fixed advance_dist when given. Returns one dict
+    per point."""
     if len(path) < 3:
         return []
     arr = np.ascontiguousarray(np.asarray(path, dtype=np.float64).reshape(-1, 2))
@@ -152,6 +165,7 @@ def calculate_trajectory(path, v_max, v_min, accel, decel, advance_dist,
     distances, final_v, shifted, floored = _plan(
         arr.tobytes(), n, float(v_max), float(v_min), float(accel), float(decel),
         float(advance_dist), float(min_rad), None if pump_floor is None else float(pump_floor),
+        tuple((float(v), float(a)) for v, a in advance_table),
     )
     xs, ys = arr[:, 0].tolist(), arr[:, 1].tolist()
     ds, vs, es, fs = distances.tolist(), final_v.tolist(), shifted.tolist(), floored.tolist()

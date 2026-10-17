@@ -100,6 +100,10 @@ class MainWindow(QMainWindow):
         act_slice.triggered.connect(self._slice)
         act_quit.triggered.connect(self.close)
 
+        tools_menu = mb.addMenu("Tools")
+        act_calib = tools_menu.addAction("Generate Calibration G-code…")
+        act_calib.triggered.connect(self._generate_calibration)
+
         help_menu = mb.addMenu("Help")
         act_about = help_menu.addAction("About CFRP Slicer Pro…")
         act_about.triggered.connect(self._show_about)
@@ -224,6 +228,32 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setVisible(False)
         self._results.set_error(msg)
         self._status_lbl.setText(f"Failed: {msg[:80]}")
+
+    def _generate_calibration(self):
+        """Write the four calibration coupons for the current settings."""
+        from cfrp_core import from_legacy_dict, resolve_process_constraints
+        from cfrp_core.calibration import COUPONS, make_coupon
+
+        folder = QFileDialog.getExistingDirectory(self, "Folder for calibration G-code")
+        if not folder:
+            return
+        try:
+            cfg = from_legacy_dict(self._controls.get_params(), layup=self._controls.get_layup())
+            cfg = resolve_process_constraints(cfg).config
+            written = []
+            for kind in COUPONS:
+                _, gcode = make_coupon(kind, cfg, self._machine)
+                path = pathlib.Path(folder) / f"calibration_{kind}.gcode"
+                path.write_text(gcode, encoding="utf-8")
+                written.append(path.name)
+        except Exception as exc:
+            QMessageBox.critical(self, "Calibration failed", str(exc))
+            return
+        QMessageBox.information(
+            self, "Calibration G-code written",
+            f"Wrote to {folder}:\n  " + "\n  ".join(written)
+            + "\n\nEach file's header says how to read the print.",
+        )
 
     # ------------------------------------------------------------------
     # Parameter save / load / reset
