@@ -821,6 +821,34 @@ def _flag_bridges(layer_trajectory, region, tol, skip=0):
             layer_trajectory[k + 1]['is_bridge'] = True
 
 
+def _mesh_report_notes(report, slices, layer_height):
+    """Plain-language warnings / info from slice_mesh_regions' report."""
+    warnings, info = [], []
+    if report.get('stitched'):
+        warnings.append(
+            f"The mesh has holes: {report['stitched']} gap(s) in slice outlines were bridged "
+            f"(Stitch Gap). Check or repair the model."
+        )
+    if report.get('open'):
+        warnings.append(
+            f"The mesh has holes too large to bridge: {report['open']} open outline(s) were "
+            f"dropped, so parts of some slices are missing. Repair the model."
+        )
+    if slices:
+        top = max(z for z, _ in slices)
+        inside = [z for z in report.get('empty_planes', []) if z < top + layer_height]
+        if inside:
+            warnings.append(
+                f"{len(inside)} slice(s) inside the model came out empty; the part has gaps "
+                f"there (broken mesh, or separate bodies stacked with a gap)."
+            )
+    if report.get('bodies', 1) > 1:
+        info.append(f"The mesh has {report['bodies']} separate bodies; they were merged where they overlap.")
+    if report.get('subtractive'):
+        info.append(f"{report['subtractive']} inward-facing body(ies) were treated as cavities.")
+    return warnings, info
+
+
 def build_stl_laminate(config: ProcessConfig):
     """STL-imported mesh: slice at layer_height intervals, generate infill
     per slice.
@@ -828,18 +856,40 @@ def build_stl_laminate(config: ProcessConfig):
     `stl_islands="largest"` keeps one island per slice; `"all"` fills every
     island in one stroke, connector points flagged `is_bridge`.
 
-    Returns (trajectory, target_shapes, max_z)."""
+    Returns (trajectory, target_shapes, max_z, warnings, info): warnings are
+    problems found in the mesh or the fill (broken mesh, walls thinner than
+    one track), info are neutral notes (several bodies merged)."""
     g = config.geometry
     mesh = load_stl(g.stl_path)
+    tris = np.asarray(mesh.triangles, dtype=np.float64) * float(g.stl_scale)
+    size = tris.reshape(-1, 3).max(axis=0) - tris.reshape(-1, 3).min(axis=0)
+    gap, r_min = config.track_gap_mm, config.min_radius_mm
+    if size[:2].max() < max(5.0, 2.0 * r_min + gap):
+        raise ValueError(
+            f"The model is only {size[0]:.3g} x {size[1]:.3g} x {size[2]:.3g} mm. If it was saved in "
+            f"inches set STL Scale to 25.4, in cm to 10, in metres to 1000."
+        )
 
     layer_height = max(float(config.layer_height_mm), 0.05)
+    report: dict = {}
     slices = slice_mesh_regions(
-        mesh, layer_height, z_offset=float(config.z_offset_mm),
-        closing_radius=float(g.stl_closing_radius_mm),
+        tris, layer_height, z_offset=float(config.z_offset_mm),
+        closing_radius=float(g.stl_closing_radius_mm), stitch_mm=float(g.stl_stitch_mm),
+        report=report,
     )
 
     if not slices:
-        raise ValueError("STL mesh produced no valid slices. Check the file and layer height.")
+        raise ValueError(
+            f"STL mesh produced no valid slices (model {size[2]:.3g} mm tall, layer height "
+            f"{layer_height:g} mm). Check the file, its scale (STL Scale) and the layer height."
+        )
+    warnings, info = _mesh_report_notes(report, slices, layer_height)
+    if not mesh.is_watertight:
+        warnings.insert(0,
+            "The mesh is not watertight (it has open edges or missing faces), so its slices may "
+            "not match the intended part, e.g. a missing wall reads as solid. Repair the model "
+            "if the preview looks wrong."
+        )
 
     trajectory: list[dict] = []
     target_shapes: list[tuple] = []
@@ -853,6 +903,7 @@ def build_stl_laminate(config: ProcessConfig):
     min_island_area = math.pi * (r_min + gap / 2.0) ** 2 * 0.25
     multi = g.stl_islands == "all"
     min_run = _ramp_min_run(layer_height, config.transition_angle_deg)
+    thin_slices = 0
 
     for i, (z_print, region) in enumerate(slices):
         layer_z = z_print
@@ -862,6 +913,9 @@ def build_stl_laminate(config: ProcessConfig):
         found = mesh_islands(region, min_island_area)
         if not found:
             continue
+        # A wall narrower than one track: eroding half a track leaves ~nothing.
+        if any(p.buffer(-0.5 * gap).area < 0.05 * p.area for p in found):
+            thin_slices += 1
         islands = found if multi else found[:1]
         printable = unary_union([geo.printable_boundary(p, gap, r_min) for p in islands])
         target_shapes.append((layer_z, printable, i + 1))
@@ -890,8 +944,21 @@ def build_stl_laminate(config: ProcessConfig):
             last_dir = _end_direction(layer_trajectory)
 
     if not trajectory:
+        if thin_slices:
+            raise ValueError(
+                f"The model's walls are thinner than one {gap:g} mm track on {thin_slices} "
+                f"slice(s), so no fibre fits. Thicken the walls, reduce Track Gap, or check "
+                f"the model's scale (STL Scale)."
+            )
+        hint = (" The Fermat spiral needs room for two tracks (in and back out); Archimedean "
+                "or Corner-Step fill single-track walls." if config.infill_type == FERMAT else "")
         raise ValueError(
             "No STL slice could be filled with these settings. Reduce Track Gap, "
-            "Min Bend Radius or Tracks Per Layer, or check the model's scale (mm)."
+            "Min Bend Radius or Tracks Per Layer, or check the model's scale (mm)." + hint
         )
-    return trajectory, target_shapes, max_z
+    if thin_slices:
+        warnings.append(
+            f"{thin_slices} slice(s) have walls thinner than one {gap:g} mm track: the tow there is "
+            f"wider than the wall (or the wall is skipped). Thicken the walls or reduce Track Gap."
+        )
+    return trajectory, target_shapes, max_z, warnings, info

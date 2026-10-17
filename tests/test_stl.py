@@ -150,7 +150,7 @@ def test_unfillable_stl_raises(tmp_path):
     pytest.importorskip("trimesh")
     path = tmp_path / "tiny.stl"
     write_stl(path, extrude(box(0, 0, 2, 2), 1.0))
-    with pytest.raises(ValueError, match="No STL slice"):
+    with pytest.raises(ValueError, match="No STL slice|STL Scale"):
         slice_part(_stl_cfg(str(path)), DEFAULT_MACHINE)
 
 
@@ -175,3 +175,85 @@ def test_coverage_of_a_full_concentric_fill_is_high():
     assert 0.8 < summary["coverage"] <= 1.0
     assert 0.0 <= summary["overlap"] < 0.2
     assert not math.isnan(summary["worst_coverage"])
+
+
+# --- real-world import problems (Phase 28) ------------------------------------
+
+def _stl(tmp_path, name, mesh):
+    path = tmp_path / f"{name}.stl"
+    mesh.export(path)
+    return str(path)
+
+
+def _slice(path, **overrides):
+    cfg = base_2d_config(shape="STL Import", stl_path=path, layer_height=0.4, min_radius=3.0)
+    cfg.update(overrides)
+    return slice_part(from_legacy_dict(cfg), DEFAULT_MACHINE)
+
+
+def test_mesh_with_a_missing_face_keeps_its_full_height(tmp_path):
+    """A hole in the mesh left every slice through it open; those slices were
+    dropped and a 30 mm cylinder printed 1.4 mm tall with status Pass."""
+    trimesh = pytest.importorskip("trimesh")
+    m = trimesh.creation.cylinder(radius=25, height=30, sections=96)
+    m.update_faces(np.arange(len(m.faces)) != 5)
+    res = _slice(_stl(tmp_path, "holed", m))
+    assert max(p['z'] for p in res.trajectory) > 29.0
+    assert any("not watertight" in w for w in res.validation["messages"])
+    assert any("mesh has holes" in w for w in res.validation["messages"])
+
+
+def test_overlapping_bodies_are_unioned_not_cancelled():
+    a = extrude(box(0, 0, 40, 20), 1.0)
+    b = extrude(box(10, -10, 30, 30), 1.0)
+    (_, region), *_ = slice_mesh_regions(np.vstack([a, b]), 0.5)
+    assert region.area == pytest.approx(box(0, 0, 40, 20).union(box(10, -10, 30, 30)).area, rel=1e-3)
+
+
+def test_inward_body_is_a_cavity():
+    outer = extrude(box(0, 0, 40, 40), 1.0)
+    inner = extrude(box(10, 10, 30, 30), 1.0)[:, ::-1]          # reversed winding
+    (_, region), *_ = slice_mesh_regions(np.vstack([outer, inner]), 0.5)
+    assert region.area == pytest.approx(1600 - 400, rel=1e-3)
+
+
+def test_model_in_inches_gets_a_scale_hint(tmp_path):
+    trimesh = pytest.importorskip("trimesh")
+    path = _stl(tmp_path, "inch", trimesh.creation.box((2.0, 1.0, 0.5)))
+    with pytest.raises(ValueError, match="STL Scale to 25.4"):
+        _slice(path)
+    res = _slice(path, stl_scale=25.4)
+    assert max(p['z'] for p in res.trajectory) > 10.0
+
+
+def test_stl_gets_no_flat_width_note(tmp_path):
+    trimesh = pytest.importorskip("trimesh")
+    res = _slice(_stl(tmp_path, "cube", trimesh.creation.box((40, 40, 4))))
+    assert not any("narrow dimension" in n for n in res.constraint_notes)
+
+
+def test_printable_boundary_keeps_holes():
+    from cfrp_core.geometry import printable_boundary
+    ring = Point(0, 0).buffer(25, 64).difference(Point(0, 0).buffer(20, 64))
+    assert len(printable_boundary(ring, 1.2, 3.0).interiors) == 1
+
+
+@pytest.mark.parametrize("angle", [0.0, 45.0, 90.0])
+def test_serpentine_stays_on_a_part_with_a_hole(angle):
+    """Keeping only the longest segment per scan line put consecutive lines on
+    opposite sides of the hole, and the U-turns crossed it (320 mm of an 880 mm
+    path in mid-air on a tube); rotating back about the path's own centroid
+    also shifted angled layers off the part."""
+    from cfrp_core.geometry.serpentine import oriented_serpentine
+    ring = Point(0, 0).buffer(40, 96).difference(Point(0, 0).buffer(36, 96))
+    path = oriented_serpentine(ring, angle, 1.2, 3.0)
+    assert LineString(path).difference(ring.buffer(0.6)).length < 1.0
+    assert LineString(path).buffer(0.6).intersection(ring).area / ring.area > 0.75
+
+
+def test_walls_thinner_than_a_track_are_reported(tmp_path):
+    trimesh = pytest.importorskip("trimesh")
+    vase = trimesh.creation.revolve(np.array([(20, 0), (20.6, 0), (20.6, 20), (20, 20), (20, 0)], float),
+                                    sections=96)
+    with pytest.raises(ValueError, match="thinner than one"):
+        _slice(_stl(tmp_path, "vase", vase))

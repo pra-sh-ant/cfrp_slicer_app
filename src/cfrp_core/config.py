@@ -121,6 +121,22 @@ class GeometryConfig(_Frozen):
     stl_islands: Literal["largest", "all"] = "largest"
     # Gaps narrower than ~2x this in a slice are closed (Orca default).
     stl_closing_radius_mm: float = 0.049
+    # Holes in a broken mesh leave slice contours open; gaps up to this are
+    # bridged (Cura-style stitching). 0 = drop open contours.
+    stl_stitch_mm: float = 5.0
+    # Multiply the mesh by this on import: 25.4 for a model saved in inches,
+    # 10 for cm, 1000 for metres.
+    stl_scale: float = 1.0
+
+    @field_validator("stl_scale")
+    @classmethod
+    def _scale(cls, v: float) -> float:
+        return _require(v, "STL Scale")
+
+    @field_validator("stl_stitch_mm")
+    @classmethod
+    def _stitch(cls, v: float) -> float:
+        return _require(v, "STL Stitch Gap", strict=False, unit=" mm")
 
     @field_validator("stl_closing_radius_mm")
     @classmethod

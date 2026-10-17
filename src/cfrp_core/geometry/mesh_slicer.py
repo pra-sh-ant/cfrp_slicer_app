@@ -8,13 +8,14 @@ holes and every island, in world XY coordinates (Cura / Orca behaviour).
 """
 from __future__ import annotations
 
+import math
 from functools import reduce
 from pathlib import Path
 from typing import TYPE_CHECKING
 
 import numpy as np
 from shapely.geometry import MultiLineString, Polygon
-from shapely.ops import linemerge
+from shapely.ops import linemerge, unary_union
 
 from ._common import largest_polygon
 
@@ -113,7 +114,7 @@ def _join_open_chains(chains, tol):
     """Greedily join open chains whose ends lie within `tol`; returns
     (closed_rings, still_open)."""
     chains = [list(c) for c in chains]
-    rings = []
+    rings, still_open = [], []
     while chains:
         cur = chains.pop()
         grew = True
@@ -133,13 +134,59 @@ def _join_open_chains(chains, tol):
                     break
         if len(cur) >= 4 and np.hypot(cur[0][0] - cur[-1][0], cur[0][1] - cur[-1][1]) <= tol:
             rings.append(cur[:-1] + [cur[0]])
-    return rings
+        else:
+            still_open.append(cur)
+    return rings, still_open
 
 
-def segments_to_region(segs: np.ndarray, closing_radius: float = DEFAULT_CLOSING_RADIUS_MM):
+def _stitch(chains, max_gap):
+    """Close what a hole in the mesh left open (as Cura's extensive
+    stitching does): repeatedly bridge the closest pair of open ends -- a
+    chain's own two ends, or the end of one chain to an end of another --
+    while that gap is at most max_gap. Returns (rings, still_open, stitches)."""
+    chains = [list(c) for c in chains]
+    rings, stitches = [], 0
+    while chains:
+        best = None
+        for i, a in enumerate(chains):
+            if len(a) >= 3:
+                d = math.dist(a[0], a[-1])
+                if best is None or d < best[0]:
+                    best = (d, i, None, None)
+            for j in range(i + 1, len(chains)):
+                b = chains[j]
+                for flip_a in (False, True):
+                    for flip_b in (False, True):
+                        end = a[0] if flip_a else a[-1]
+                        start = b[-1] if flip_b else b[0]
+                        d = math.dist(end, start)
+                        if best is None or d < best[0]:
+                            best = (d, i, j, (flip_a, flip_b))
+        if best is None or best[0] > max_gap:
+            break
+        _, i, j, flips = best
+        stitches += 1
+        if j is None:
+            ring = chains.pop(i)
+            rings.append(ring + [ring[0]])
+            continue
+        a = chains[i][::-1] if flips[0] else chains[i]
+        b = chains[j][::-1] if flips[1] else chains[j]
+        chains[i] = a + b
+        chains.pop(j)
+    return rings, chains, stitches
+
+
+def segments_to_region(segs: np.ndarray, closing_radius: float = DEFAULT_CLOSING_RADIUS_MM,
+                       stitch_mm: float = 0.0, report: dict | None = None):
     """Chain section segments into rings and combine them with the even-odd
     rule (an island inside a hole inside a part stays an island). Returns a
-    Polygon or MultiPolygon (possibly empty)."""
+    Polygon or MultiPolygon (possibly empty).
+
+    Chains still open after joining ends within ~2 x closing_radius come from
+    holes in the mesh; with `stitch_mm` > 0, gaps up to that size are bridged
+    straight. `report` (dict) counts 'stitched' gaps and 'open' chains that
+    could not be closed (dropped)."""
     if len(segs) == 0:
         return Polygon()
     merged = linemerge(MultiLineString([s.tolist() for s in segs]))
@@ -152,7 +199,15 @@ def segments_to_region(segs: np.ndarray, closing_radius: float = DEFAULT_CLOSING
         else:
             open_chains.append(coords)
     tol = max(float(closing_radius), 1e-6) * 2.0
-    closed.extend(_join_open_chains(open_chains, tol))
+    rings, still_open = _join_open_chains(open_chains, tol)
+    closed.extend(rings)
+    if still_open and stitch_mm > 0:
+        rings, still_open, n = _stitch(still_open, float(stitch_mm))
+        closed.extend(rings)
+        if report is not None:
+            report['stitched'] = report.get('stitched', 0) + n
+    if still_open and report is not None:
+        report['open'] = report.get('open', 0) + len(still_open)
 
     polys = []
     for ring in closed:
@@ -173,27 +228,85 @@ def segments_to_region(segs: np.ndarray, closing_radius: float = DEFAULT_CLOSING
     return region
 
 
+def mesh_bodies(tris: np.ndarray):
+    """Split a triangle soup into connected bodies (triangles sharing a
+    vertex, coordinates matched to 1 micron). Returns [(triangles,
+    signed_volume), ...]; a body whose normals point inwards has negative
+    volume. numpy only (Trimesh's split needs scipy/networkx)."""
+    keys = np.round(tris.reshape(-1, 3) * 1e3).astype(np.int64)
+    _, vid = np.unique(keys, axis=0, return_inverse=True)
+    vid = vid.reshape(-1, 3)
+    parent = list(range(int(vid.max()) + 1))
+
+    def find(x):
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+    for a, b, c in vid.tolist():
+        ra = find(a)
+        parent[find(b)] = ra
+        parent[find(c)] = ra
+    roots = np.array([find(v) for v in vid[:, 0].tolist()])
+    bodies = []
+    for r in np.unique(roots):
+        t = tris[roots == r]
+        vol = float(np.einsum('ij,ij->i', t[:, 0], np.cross(t[:, 1], t[:, 2])).sum() / 6.0)
+        bodies.append((t, vol))
+    return bodies
+
+
 def slice_mesh_regions(
     mesh,
     layer_height: float,
     z_offset: float = 0.0,
     closing_radius: float = DEFAULT_CLOSING_RADIUS_MM,
+    stitch_mm: float = 0.0,
+    report: dict | None = None,
 ) -> list[tuple[float, object]]:
     """Slice a mesh at mid-layer planes, keeping holes and all islands.
 
     Returns [(z_print, Polygon | MultiPolygon), ...] for each non-empty
     slice. z_print = z_offset + k * layer_height, k counted from the first
     non-empty slice, so an empty slice keeps its Z slot (no silent collapse).
+
+    A mesh of several bodies is sliced body by body (even-odd within each)
+    and the bodies are unioned, so overlapping bodies stay solid instead of
+    cancelling; a body whose normals oppose the mesh overall (e.g. a modelled
+    cavity) is subtracted. `report` (dict) receives 'bodies', 'subtractive',
+    'stitched', 'open' and 'empty_planes' (Z of planes inside the mesh that
+    produced nothing).
     """
     tris = _triangles(mesh)
     z_min, z_max = float(tris[:, :, 2].min()), float(tris[:, :, 2].max())
     z_planes = np.arange(z_min + layer_height / 2.0, z_max, layer_height)
+    bodies = mesh_bodies(tris) if len(tris) else []
+    sign = 1.0 if sum(v for _, v in bodies) >= 0 else -1.0
+    adds = [t for t, v in bodies if v * sign >= 0]
+    subs = [t for t, v in bodies if v * sign < 0]
+    if report is not None:
+        report.update(bodies=len(bodies), subtractive=len(subs), empty_planes=[])
+
+    def region_at(z):
+        if len(bodies) <= 1:
+            return segments_to_region(section_segments(tris, z), closing_radius, stitch_mm, report)
+        parts = [segments_to_region(section_segments(t, z), closing_radius, stitch_mm, report)
+                 for t in adds]
+        parts = [p for p in parts if not p.is_empty]
+        region = unary_union(parts) if parts else Polygon()
+        for t in subs:
+            hole = segments_to_region(section_segments(t, z), closing_radius, stitch_mm, report)
+            if not hole.is_empty:
+                region = region.difference(hole)
+        return region
 
     slices = []
     first = None
     for k, z in enumerate(z_planes):
-        region = segments_to_region(section_segments(tris, float(z)), closing_radius)
+        region = region_at(float(z))
         if region.is_empty or region.area <= _MIN_REGION_AREA_MM2:
+            if report is not None:
+                report['empty_planes'].append(float(z))
             continue
         if first is None:
             first = k

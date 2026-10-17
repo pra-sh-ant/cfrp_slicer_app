@@ -46,6 +46,16 @@ def _compute_stats(trajectory: list[dict], config: ProcessConfig, target_shapes=
     return stats
 
 
+def _with_part_warnings(validation: dict, warnings: list[str]) -> dict:
+    """Add input-model warnings (STL) to the validation result: a Pass
+    becomes a Warning; a Fail stays a Fail (its errors listed first)."""
+    if not warnings:
+        return validation
+    if validation["status"] == "Pass":
+        return {"status": "Warning", "messages": list(warnings)}
+    return {"status": validation["status"], "messages": list(validation["messages"]) + list(warnings)}
+
+
 @dataclass
 class SliceResult:
     config: ProcessConfig                 # the resolved config actually sliced
@@ -66,8 +76,9 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     cfg = resolved.config
     g = cfg.geometry
 
+    part_warnings, part_info = [], []
     if g.shape == "STL Import":
-        trajectory, target_shapes, max_z = build_stl_laminate(cfg)
+        trajectory, target_shapes, max_z, part_warnings, part_info = build_stl_laminate(cfg)
     elif g.is_revolve:
         trajectory, target_shapes, max_z = build_revolve_shell(cfg)
     elif g.is_specialty:
@@ -75,7 +86,7 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     else:
         trajectory, target_shapes, max_z = build_flat_laminate(cfg)
 
-    info = []
+    info = list(part_info)
     trajectory, shift_x, shift_y = fit_trajectory_to_bed(trajectory, machine)
     if shift_x or shift_y:
         info.append(f"Path auto-positioned for the homed machine envelope: X {shift_x:+.2f} mm, Y {shift_y:+.2f} mm.")
@@ -89,8 +100,18 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     if max_z is None:  # specialty: the path's own top
         max_z = max((pt['z'] for pt in trajectory), default=float(cfg.z_offset_mm))
 
+    stats = _compute_stats(trajectory, cfg, target_shapes)
+    if g.shape == "STL Import" and stats.get("worst_coverage", 1.0) < 0.5:
+        part_warnings.append(
+            f"Only {stats['worst_coverage'] * 100:.0f}% of layer {stats['worst_layer']} is covered "
+            f"by fibre ({stats['coverage'] * 100:.0f}% overall): Tracks Per Layer "
+            f"({cfg.tracks_per_layer}) limits each slice to that many rings. Raise it to fill "
+            f"the model's solid areas."
+        )
+    validation = _with_part_warnings(validation, part_warnings)
+
     return SliceResult(
         config=cfg, trajectory=trajectory, target_shapes=target_shapes, gcode=gcode,
         validation=validation, max_z=max_z, constraint_notes=resolved.notes, info=tuple(info),
-        stats=_compute_stats(trajectory, cfg, target_shapes),
+        stats=stats,
     )

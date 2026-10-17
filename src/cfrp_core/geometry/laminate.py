@@ -157,7 +157,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         # inward layer ended (no fibre reversal at the seam).
         path, _ = corner_step_path(base_poly, gap, min_rad, tracks_per_layer,
                                    outward=layer_idx % 2 != 0,
-                                   corner_lead=layer_idx % 2 == 0 and last_pt is not None)
+                                   corner_lead=layer_idx % 2 == 0 and last_pt is not None,
+                                   seam_hint=last_pt)
         if not path:
             return []
         if last_pt:
@@ -191,6 +192,14 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward,
             seam_hint=last_pt if is_outward else None, outer_start=wall_start,
         )
+        # Outside-in after another layer: the outer ring starts at its first
+        # vertex, which on a sliced mesh can be anywhere; if that is not where
+        # the last layer ended, start there instead (else the jump is a chord
+        # across the rings).
+        if (last_pt is not None and not is_outward and wall_start is None and infill_path
+                and math.dist(infill_path[0], last_pt) > 2.0 * gap):
+            infill_path, _ = archimedean_path(
+                infill_bounds, gap, min_rad, track_count=tracks_per_layer, outer_start=last_pt)
     elif infill_type == FERMAT:
         # Enter where the previous layer ended. (Entering diametrically
         # opposite, as before, left the jump from the previous end as a

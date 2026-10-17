@@ -5,6 +5,42 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Fixed (Phase 28 — real-world STL import)
+Tested 25 meshes (pen holder, cylinder, cube, cone, pyramid, sphere, tray, tube, torus,
+bracket with holes, table, two parts, inch/metre models, off-origin, missing face,
+flipped normals, overlapping bodies, thin walls, thin plate; binary/ASCII STL, OBJ)
+with every infill and island mode.
+- **Silent truncation of broken meshes**: a single missing triangle left slice
+  contours open; those slices were dropped and a 30 mm cylinder printed 1.4 mm tall
+  with status Pass. Open contours are now stitched (gaps up to `stl_stitch_mm`,
+  default 5 mm, as Cura's stitching) and every mesh problem becomes a validation
+  warning: not watertight, holes bridged, holes too large (outline dropped), empty
+  slices inside the model.
+- **Overlapping bodies cancelled** (even-odd across the whole mesh turned the overlap
+  into a hole): bodies are now sliced separately and unioned; a body with inward
+  normals is a cavity. numpy-only body split (`mesh_bodies`).
+- **Serpentine / 45° hatch on parts with holes or concavities**: kept only the longest
+  segment per scan line, so U-turns crossed holes (320 mm of an 880 mm tube layer in
+  mid-air). Now a boustrophedon decomposition: every segment kept, runs where the
+  convex hull of consecutive segments lies on the part, joined by connectors that stay
+  on the part and avoid laid and future fibre. Convex parts keep the single zigzag.
+- **Angled zigzag layers were shifted**: rotated back about the path's own centroid
+  instead of the outline's (0.5 mm on a triangle, off the part around holes).
+- Thin walls: zigzag erosion falls back to one gap (U-turns stay inside) before the
+  bare outline.
+- `printable_boundary` dropped holes (fillet works on the exterior): coverage and the
+  boundary wall now respect bores.
+- Layers on sliced meshes start where the last ended (outer-ring phase / Corner-Step
+  seam follow the previous end) instead of a chord across the rings.
+- `stl_scale` (GUI "STL Scale") and a unit hint for models under 5 mm; specific errors
+  for walls thinner than one track and for Fermat on single-track walls; the
+  width/height constraint note no longer appears for STL; low-coverage warning names
+  the Tracks Per Layer cap.
+- GUI: "Print All Islands" now triggers a re-slice.
+
+Golden changes: `*_serp` and `layup_*_serp` move back by <= 0.29 mm (rotation pivot
+fix); everything else byte-identical. Built-in sweep crossings 19 -> 1.
+
 ### Added (Phase 27 — calibration coupons, measured pressure advance, seam stagger)
 All opt-in; with defaults every part's output is byte-identical (goldens unchanged).
 - **Calibration coupons** (`cfrp_core.calibration`, GUI *Tools > Generate Calibration

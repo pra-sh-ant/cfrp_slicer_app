@@ -206,7 +206,7 @@ def _resample_cw(coords, n_pts):
     return resample_closed_ring(poly, n_pts)
 
 
-def _poly_path(base_poly, gap, r, N, outward=False):
+def _poly_path(base_poly, gap, r, N, outward=False, seam_hint=None):
     rings: list[list[tuple[float, float]]] = []
     for k in range(N):
         offset = gap / 2.0 + k * gap
@@ -234,7 +234,11 @@ def _poly_path(base_poly, gap, r, N, outward=False):
     # L = 1.5·√(6·gap·r) keeps the step above min radius; landing at the
     # same seam each time means the steps do not drift round onto corners.
     lane_len = 1.5 * math.sqrt(6.0 * gap * r) if r > 0 else gap
-    seam_pt = rings[0][_seam_index(rings[0])]
+    # Seam where the previous layer ended, if known (on a sliced mesh every
+    # side of a polygonised circle is "longest", so that choice would jump
+    # between layers); else the middle of the longest straight.
+    seam_pt = rings[0][_nearest_index(rings[0], seam_hint) if seam_hint is not None
+                       else _seam_index(rings[0])]
     # Outward (alternate layers): innermost ring first, lane changes outward,
     # same winding, so a layer starts where the inward one ended without
     # reversing the fibre.
@@ -291,7 +295,7 @@ def _seam_index(ring):
 # ---------------------------------------------------------------------------
 
 def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=False,
-                     corner_lead=False):
+                     corner_lead=False, seam_hint=None):
     """Concentric CW rings with corner-step transitions.
 
     Rectangles use an analytical path; other shapes use polygon offsets with
@@ -312,7 +316,7 @@ def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=Fals
         raw = (_rect_path_outward(base_poly, gap, r, N) if outward
                else _rect_path(base_poly, gap, r, N, corner_lead=corner_lead))
     else:
-        raw = _poly_path(base_poly, gap, r, N, outward=outward)
+        raw = _poly_path(base_poly, gap, r, N, outward=outward, seam_hint=seam_hint)
 
     if not raw:
         return [], base_poly

@@ -39,4 +39,11 @@ def printable_boundary(base_poly, track_gap, min_radius):
         return boundary
 
     rounded = fillet(boundary, min_rad)
-    return rounded if not rounded.is_empty else boundary
+    if rounded.is_empty:
+        return boundary
+    # fillet works on the outer boundary only; put the holes back (a slice of
+    # a tube or pen holder kept its outer disc but lost its bore).
+    holes = [Polygon(ring) for g in getattr(boundary, 'geoms', [boundary]) for ring in g.interiors]
+    for hole in holes:
+        rounded = rounded.difference(hole)
+    return rounded

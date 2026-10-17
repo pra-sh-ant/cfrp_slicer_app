@@ -29,7 +29,7 @@ Entry: `pipeline.slice_part`. Core has no UI imports (`tests/test_core_isolation
 
 - Primitives (`geometry/outlines.py`): same outline every layer.
 - Revolve shells: radius profile `r(progress)` -> annulus per Z (`geometry/revolve.py`). No mesh.
-- STL (`geometry/mesh_slicer.py`): numpy triangle-plane cut at mid-layer Z, segments chained into rings, even-odd combined (holes and all islands kept, world XY), small leaks closed by `stl_closing_radius_mm`. Trimesh only loads the file. `stl_islands="largest"` (default) keeps one island per slice; `"all"` fills every island in one stroke (`layers._multi_island_layer`): perimeter-entry paths per island (Fermat / serpentine), connectors flagged `is_bridge`.
+- STL (`geometry/mesh_slicer.py`): numpy triangle-plane cut at mid-layer Z, per body (numpy split; bodies unioned, inward bodies subtracted), segments chained into rings, even-odd within a body, small leaks closed by `stl_closing_radius_mm`, open contours stitched up to `stl_stitch_mm`; mesh problems become validation warnings. `stl_scale` for inch/cm/m models. Trimesh only loads the file. `stl_islands="largest"` (default) keeps one island per slice; `"all"` fills every island in one stroke (`layers._multi_island_layer`): perimeter-entry paths per island (Fermat / serpentine), connectors flagged `is_bridge`.
 
 ## 4. From region to one continuous path (`geometry/`)
 

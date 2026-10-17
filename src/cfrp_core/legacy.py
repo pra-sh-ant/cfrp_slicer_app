@@ -26,6 +26,8 @@ _FIELD_MAP = {
     "stl_path": ("geometry", "stl_path"),
     "stl_islands": ("geometry", "stl_islands"),
     "stl_closing_radius": ("geometry", "stl_closing_radius_mm"),
+    "stl_scale": ("geometry", "stl_scale"),
+    "stl_stitch": ("geometry", "stl_stitch_mm"),
     # material
     "needle_dia": ("material", "needle_dia_mm"),
     "e_mult": ("material", "e_multiplier"),

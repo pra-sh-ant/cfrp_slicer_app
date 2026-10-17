@@ -140,6 +140,14 @@ class ControlsPanel(QWidget):
             "between islands (flagged as bridges; trim the ties after cure)."
         )
         fl.addRow("", self.stl_islands_chk)
+        self.stl_scale_spin = _spin(0.001, 1000, 1, 1.0, 3)
+        self.stl_scale_spin.setToolTip(
+            "Multiply the model on import: 25.4 if it was saved in inches, 10 for cm, "
+            "1000 for metres (1 = millimetres)."
+        )
+        self.stl_scale_spin.valueChanged.connect(self._emit)
+        self._stl_scale_label = QLabel("STL Scale (x)")
+        fl.addRow(self._stl_scale_label, self.stl_scale_spin)
 
         # Revolve / specialty fields
         self.base_r_spin = _spin(1, 200, 1, 20.0, 1)
@@ -162,6 +170,7 @@ class ControlsPanel(QWidget):
                   self.stem_h_spin, self.disc_r_spin, self.stem_top_spin):
             w.valueChanged.connect(self._emit)
         self.boundary_chk.toggled.connect(self._emit)
+        self.stl_islands_chk.toggled.connect(self._emit)
         self.shape_cb.currentTextChanged.connect(self._on_shape_changed)
 
     # ------------------------------------------------------------------
@@ -353,6 +362,8 @@ class ControlsPanel(QWidget):
         # STL file picker
         self.stl_path_edit.parentWidget().setVisible(is_stl)
         self.stl_islands_chk.setVisible(is_stl)
+        self.stl_scale_spin.setVisible(is_stl)
+        self._stl_scale_label.setVisible(is_stl)
 
         # Revolve/specialty geometry
         self.base_r_spin.setVisible(is_revolve or is_mushroom)
@@ -448,6 +459,7 @@ class ControlsPanel(QWidget):
             "include_boundary": self.boundary_chk.isChecked(),
             "stl_path": stl_path,
             "stl_islands": "all" if self.stl_islands_chk.isChecked() else "largest",
+            "stl_scale": self.stl_scale_spin.value(),
             "base_radius": self.base_r_spin.value(),
             "disc_radius": self.disc_r_spin.value(),
             "stem_height": stem_h,
@@ -534,6 +546,7 @@ class ControlsPanel(QWidget):
 
         if "stl_path" in p and p["stl_path"]:
             self.stl_path_edit.setText(str(p["stl_path"]))
+        _set(self.stl_scale_spin, "stl_scale")
         if "stl_islands" in p:
             self.stl_islands_chk.setChecked(p["stl_islands"] == "all")
 

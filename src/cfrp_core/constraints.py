@@ -37,7 +37,7 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
     max_speed = float(k.v_max_mm_s)
     shape = config.geometry.shape
 
-    if shape not in SPECIALTY_SHAPES:
+    if shape not in SPECIALTY_SHAPES and shape != "STL Import":
         narrow_dimension = min(float(config.geometry.width_mm), float(config.geometry.height_mm))
         cornering_window = narrow_dimension - (2.0 * min_radius) - track_gap
         if min_radius > track_gap / 2.0:
