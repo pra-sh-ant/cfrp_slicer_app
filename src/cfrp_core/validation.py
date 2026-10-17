@@ -154,9 +154,9 @@ def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfi
                 lx, ly = p['x'], p['y']
         pts = np.array([(trajectory[k]['x'], trajectory[k]['y']) for k in keep], dtype=np.float64)
         transition = np.array([bool(trajectory[k].get('is_transition')) for k in keep[1:-1]], dtype=bool)
-        # 1% slack: fillets are arcs at exactly min_rad, and sampling them at
-        # ~0.75 mm reads up to ~0.5% under.
-        tight = (local_bend_radii(pts) < min_rad * 0.99) & ~transition if len(pts) > 2 else np.zeros(0, bool)
+        # 2% slack: fillets are arcs at exactly min_rad; sampling them, and
+        # seam cut points inserted mid-arc, read up to ~1.7% under.
+        tight = (local_bend_radii(pts) < min_rad * 0.98) & ~transition if len(pts) > 2 else np.zeros(0, bool)
         if tight.any():
             tight_layers = sorted({trajectory[keep[i + 1]].get('layer', 1) for i in np.nonzero(tight)[0]})
             shown = tight_layers[:8] + (["..."] if len(tight_layers) > 8 else [])

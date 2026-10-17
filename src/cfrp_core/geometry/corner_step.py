@@ -37,7 +37,11 @@ def _is_rectangle(poly):
 # Analytical rectangular path
 # ---------------------------------------------------------------------------
 
-def _rect_path(base_poly, gap, r, N):
+def _rect_path(base_poly, gap, r, N, corner_lead=False):
+    """Inward analytic rectangle path. `corner_lead` prefixes ring 0's
+    bottom-left corner arc, starting where _rect_path_outward ends, so an
+    inward layer after an outward one continues through that corner instead
+    of cutting it diagonally."""
     x0, y0, x1, y1 = base_poly.bounds
     W = x1 - x0
     H = y1 - y0
@@ -77,7 +81,11 @@ def _rect_path(base_poly, gap, r, N):
             a = a0 + (a1 - a0) * i / _ARC_PTS
             path.append((cx + r * math.cos(a), cy + r * math.sin(a)))
 
-    path.append((xl(0), yb(0) + r))
+    if corner_lead:
+        path.append((xl(0) + r, yb(0)))
+        arc_cw(xl(0) + r, yb(0) + r, -math.pi / 2, -math.pi)
+    else:
+        path.append((xl(0), yb(0) + r))
 
     for k in range(N):
         path.append((xl(k), yt(k) - r))
@@ -93,6 +101,57 @@ def _rect_path(base_poly, gap, r, N):
         else:
             path.append((xl(k) + r, yb(k)))
 
+    return path
+
+
+def _rect_path_outward(base_poly, gap, r, N):
+    """_rect_path's partner for alternate layers: innermost ring first,
+    stepping OUT, still clockwise, so a layer continues exactly where the
+    inward one ended (bottom edge of the innermost ring, heading -x)
+    instead of reversing the fibre there.
+
+    Ring k runs its bottom edge one gap past its own (unused) bottom-left
+    corner, to x = xl(k-1) + r, then a CW quarter arc of radius r lands on
+    ring k-1's left side at yb(k) + r (above that ring's corner). That arc
+    and the previous step's arc are the same arc offset by (gap, gap); their
+    circles meet only outside the quadrants drawn, so steps never cross."""
+    x0, y0, x1, y1 = base_poly.bounds
+    _rect_path(base_poly, gap, r, N)          # same size checks / messages
+
+    def xl(k):
+        return x0 + gap / 2 + k * gap
+
+    def xr(k):
+        return x1 - gap / 2 - k * gap
+
+    def yb(k):
+        return y0 + gap / 2 + k * gap
+
+    def yt(k):
+        return y1 - gap / 2 - k * gap
+
+    path: list[tuple[float, float]] = []
+
+    def arc_cw(cx, cy, a0, a1):
+        for i in range(_ARC_PTS + 1):
+            a = a0 + (a1 - a0) * i / _ARC_PTS
+            path.append((cx + r * math.cos(a), cy + r * math.sin(a)))
+
+    k = N - 1
+    path.append((xl(k) + r, yb(k)))           # where the inward layer ended
+    arc_cw(xl(k) + r, yb(k) + r, -math.pi / 2, -math.pi)
+    for k in range(N - 1, -1, -1):
+        path.append((xl(k), yt(k) - r))
+        arc_cw(xl(k) + r, yt(k) - r, math.pi, math.pi / 2)
+        path.append((xr(k) - r, yt(k)))
+        arc_cw(xr(k) - r, yt(k) - r, math.pi / 2, 0)
+        path.append((xr(k), yb(k) + r))
+        arc_cw(xr(k) - r, yb(k) + r, 0, -math.pi / 2)
+        if k > 0:
+            path.append((xl(k - 1) + r, yb(k)))
+            arc_cw(xl(k - 1) + r, yb(k) + r, -math.pi / 2, -math.pi)
+        else:
+            path.append((xl(0) + r, yb(0)))
     return path
 
 
@@ -159,7 +218,10 @@ def _poly_path(base_poly, gap, r, N, outward=False):
         if filleted.is_empty:
             break
         filleted = largest_polygon(filleted)
-        coords = _resample_cw(list(filleted.exterior.coords), _RING_PTS)
+        # At most 0.5 mm apart: a fixed count left big rings too coarse to
+        # follow their r_min corner arcs (1.6 mm chords on a 135 mm hexagon).
+        n_pts = max(_RING_PTS, int(math.ceil(filleted.exterior.length / 0.5)))
+        coords = _resample_cw(list(filleted.exterior.coords), n_pts)
         rings.append(coords)
 
     if not rings:
@@ -228,13 +290,15 @@ def _seam_index(ring):
 # Public API
 # ---------------------------------------------------------------------------
 
-def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=False):
+def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=False,
+                     corner_lead=False):
     """Concentric CW rings with corner-step transitions.
 
     Rectangles use an analytical path; other shapes use polygon offsets with
     lane-change steps on one seam. `outward` (alternate layers) runs from
-    the innermost ring out: same winding for polygons, the reversed path
-    for rectangles. Returns (path, base_poly).
+    the innermost ring out with the same winding, starting where the inward
+    path ends; `corner_lead` makes an inward rectangle path start where the
+    outward one ends. Returns (path, base_poly).
     """
     check_gap_radius(track_gap, min_radius)
     if base_poly.is_empty:
@@ -245,9 +309,8 @@ def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=Fals
     r = min_radius
 
     if _is_rectangle(base_poly):
-        raw = _rect_path(base_poly, gap, r, N)
-        if outward:
-            raw = list(reversed(raw))
+        raw = (_rect_path_outward(base_poly, gap, r, N) if outward
+               else _rect_path(base_poly, gap, r, N, corner_lead=corner_lead))
     else:
         raw = _poly_path(base_poly, gap, r, N, outward=outward)
 

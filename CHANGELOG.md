@@ -5,6 +5,41 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Fixed (Phase 26 — multi-layer toolpath planning)
+New `tools/multilayer_audit.py` judges what happens between layers (per seam: ramp
+chord, fibre reversal, steepest step; per part: seam stacking, footprint drift,
+coverage, Z monotonic) over 252 multi-layer cases. Sweep: Pass 451 → 518, steep ramps
+6 → 0, config errors 32 → 0. Goldens regenerated deliberately (see bottom).
+- **Seam tail trim dropped a whole segment**: `trim_trajectory_tail` deleted the
+  vertex past the cut without adding the cut, so on long straight segments the
+  layer ended early (113 mm on a Corner-Step rectangle edge, 128 mm on a wall side)
+  and that stretch was driven as ramp (ramp speed, e_mult 1). The vertex is now
+  moved onto the cut, keeping its planned speed/flow.
+- **Corner-Step rectangles, multi-layer**: odd layers use a new analytic outward
+  path (`_rect_path_outward`, same clockwise winding, starts where the inward path
+  ends; its steps provably do not cross) instead of the reversed path, and inward
+  layers after one start with ring 0's corner arc instead of cutting it. No fibre
+  reversal at any seam; rectangles pass.
+- Corner-Step polygon rings are sampled ≤ 0.5 mm (fixed 256 points left 1.6 mm
+  chords on big rings, cutting their r_min corners).
+- **Ramps**: a short Hermite whose end tangents disagree with the chord falls back
+  to a straight ramp when any step would exceed the angle (was up to 67° on narrow
+  triangle seams); head extension cuts inside long segments.
+- **Zigzag layer start** penalises folding back on the arrival direction.
+- **Flat track counts** (Archimedean, Corner-Step rectangle) are capped to what fits
+  with a note, like revolve shells, instead of failing every layer.
+- Curvature audit slack 2% (seam cut points inserted mid-arc read ~1.7% under).
+
+Audit after: every spiral (Archimedean, Fermat, Corner-Step) on every shape has no
+fibre reversal at seams (except the 135×25 triangle, whose innermost ring is a
+sliver), ramp chords ~6 mm, steepest ≤ 2.3°, footprint drift ~0. Remaining by
+design/physics: line patterns (serpentine/hatch) fold back at some seams because a
+scan line ends heading into the edge; seams alternate between two spots on flat parts
+and align on revolve shells (one vertical seam line).
+
+Golden changes: every flat multi-layer case gains the seam cut point (≈1 point per
+seam) and moves slightly; statuses unchanged.
+
 ### Fixed (Phase 25 — curvature: real kinks removed, audit made exact)
 Sweep (`tools/validation_sweep.py`, 1182 cases): Pass 95 → 451, crossings 60 → 16,
 steep ramps 33 → 6, no crashes. Goldens regenerated deliberately (see bottom).

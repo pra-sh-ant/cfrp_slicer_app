@@ -148,3 +148,59 @@ def test_revolve_fermat_uses_archimedean_when_uturn_cannot_fit():
         infill_type="Fermat Spiral (Connected Double Spiral)"))
     resolved = resolve_process_constraints(cfg)
     assert resolved.config.infill_type == "Archimedean (Concentric Spiral)"
+
+
+# --- multi-layer planning (Phase 26) -----------------------------------------
+
+def _seam_cosines(traj):
+    """cos of the angle between each layer's end and the next layer's start."""
+    by = {}
+    for p in traj:
+        if not p.get('is_transition'):
+            by.setdefault(p['layer'], []).append((p['x'], p['y']))
+    out = []
+    nums = sorted(by)
+    for a, b in zip(nums[:-1], nums[1:], strict=False):
+        A, B = np.asarray(by[a]), np.asarray(by[b])
+        ia = next(i for i in range(len(A) - 2, -1, -1) if np.hypot(*(A[-1] - A[i])) >= 1.0)
+        ib = next(i for i in range(1, len(B)) if np.hypot(*(B[i] - B[0])) >= 1.0)
+        da, db = A[-1] - A[ia], B[ib] - B[0]
+        out.append(float(da @ db / np.linalg.norm(da) / np.linalg.norm(db)))
+    return out
+
+
+@pytest.mark.parametrize("w,h", [(135.0, 25.0), (60.0, 60.0)])
+def test_corner_step_rectangle_layers_continue_without_reversal(w, h):
+    cfg = base_2d_config(width=w, height=h, layers=4, tracks_per_layer=3, min_radius=3.0,
+                         infill_type="Corner-Step Spiral")
+    traj, _, _, val, _ = run_slice(cfg)
+    assert val["status"] == "Pass"
+    assert min(_seam_cosines(traj)) > -0.1
+
+
+def test_tail_trim_ends_exactly_at_the_cut():
+    """The vertex past the cut used to be dropped, ending the tail a whole
+    segment early (113 mm on a Corner-Step edge)."""
+    from cfrp_core.layers import trim_trajectory_tail
+    traj = [{'x': 0.0, 'y': 0.0, 'z': 0.2, 'layer': 1, 'v': 9.0},
+            {'x': 100.0, 'y': 0.0, 'z': 0.2, 'layer': 1, 'v': 9.0}]
+    cut = trim_trajectory_tail(traj, 3.0)
+    assert (traj[-1]['x'], traj[-1]['y']) == pytest.approx((cut['x'], cut['y']))
+    assert traj[-1]['x'] == pytest.approx(97.0)
+    assert traj[-1]['v'] == 9.0
+
+
+def test_flat_track_count_is_capped_with_a_note():
+    cfg = from_legacy_dict(base_2d_config(width=135.0, height=25.0, tracks_per_layer=15,
+                                          min_radius=3.0))
+    resolved = resolve_process_constraints(cfg)
+    assert resolved.config.tracks_per_layer == 8
+    assert any("reduced from 15 to 8" in n for n in resolved.notes)
+
+
+@pytest.mark.parametrize("layup", [(0.0,), (0.0, 45.0, 90.0, -45.0)])
+def test_layer_ramps_stay_within_the_transition_angle(layup):
+    cfg = base_2d_config(shape="Triangle", width=135.0, height=25.0, layers=6, min_radius=3.0,
+                         infill_type="Oriented Serpentine")
+    msgs = run_slice(cfg, layup=layup)[3]["messages"]
+    assert not any("ramp exceeded" in m for m in msgs)

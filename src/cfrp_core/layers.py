@@ -57,7 +57,11 @@ def trim_trajectory_tail(trajectory, trim_length):
     """Remove up to `trim_length` mm of travel from the end of `trajectory`
     (mutates it in place), never crossing into an earlier layer or a prior
     ramp, and never more than 40% of the last layer's run. Returns the exact
-    point at the new end (interpolated if the cut falls mid-segment)."""
+    point at the new end (interpolated if the cut falls mid-segment), which
+    is also the trajectory's last point: the vertex past the cut is moved
+    onto it, keeping its planned speed and flow. (Dropping that vertex left
+    the tail ending a whole segment early, e.g. 113 mm on a long edge, and
+    that stretch was then driven as part of the ramp.)"""
     if trim_length <= 1e-9 or len(trajectory) < 2:
         last = trajectory[-1]
         return {'x': last['x'], 'y': last['y'], 'z': last['z']}
@@ -91,7 +95,9 @@ def trim_trajectory_tail(trajectory, trim_length):
                 'y': b['y'] - (b['y'] - a['y']) * frac,
                 'z': b['z'],
             }
-            del trajectory[idx:]
+            del trajectory[idx + 1:]
+            trajectory[idx] = dict(b, x=cut['x'], y=cut['y'],
+                                   dist=math.hypot(cut['x'] - a['x'], cut['y'] - a['y']))
             return cut
         traveled += seg
 
@@ -304,29 +310,34 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed,
         reversal = t0 is not None and t1 is not None and t0[0] * t1[0] + t0[1] * t1[1] < 0.0
         if t0 is None or t1 is None or chord_xy < 1e-9 or reversal:
             t0 = t1 = None
-        if reversal:
-            # The tail cut point is not in the trajectory; a reversed ramp
-            # heads back towards the last kept vertex, so its first step would
-            # be measured (and climb) over almost no XY. Start it at the cut.
-            prior = trajectory[-1]
-            trajectory.append({
-                "x": prev_cut['x'], "y": prev_cut['y'], "z": prev_cut['z'],
-                "dist": math.hypot(prev_cut['x'] - prior['x'], prev_cut['y'] - prior['y']),
-                "v": prior.get('v', ramp_speed), "e_mult": prior.get('e_mult', 1.0),
-                "layer": prior.get('layer'), "z_layer": prior.get('z_layer'),
-            })
-        for step in range(1, steps + 1):
-            progress = step / steps
-            if t0 is None:
-                px, py = prev_cut['x'] + dx * progress, prev_cut['y'] + dy * progress
-            else:
-                s = progress
+        def ramp_xy(hermite):
+            pts = []
+            for step in range(1, steps + 1):
+                s = step / steps
+                if not hermite:
+                    pts.append((prev_cut['x'] + dx * s, prev_cut['y'] + dy * s))
+                    continue
                 h00, h10 = 2 * s ** 3 - 3 * s ** 2 + 1, s ** 3 - 2 * s ** 2 + s
                 h01, h11 = -2 * s ** 3 + 3 * s ** 2, s ** 3 - s ** 2
                 m = chord_xy
-                px = h00 * prev_cut['x'] + h10 * m * t0[0] + h01 * first_cut['x'] + h11 * m * t1[0]
-                py = h00 * prev_cut['y'] + h10 * m * t0[1] + h01 * first_cut['y'] + h11 * m * t1[1]
-            point = {'x': px, 'y': py, 'z': prev_cut['z'] + dzs * progress}
+                pts.append((h00 * prev_cut['x'] + h10 * m * t0[0] + h01 * first_cut['x'] + h11 * m * t1[0],
+                            h00 * prev_cut['y'] + h10 * m * t0[1] + h01 * first_cut['y'] + h11 * m * t1[1]))
+            return pts
+
+        xy = ramp_xy(t0 is not None)
+        if t0 is not None and min_run > 0:
+            # A short Hermite between tangents that disagree with the chord
+            # can slow to a crawl in XY and climb steeply there; a straight
+            # ramp's slope is uniform and min_run keeps it within the angle.
+            tan_limit = 2.0 * abs(dzs) / min_run
+            lo = (prev_cut['x'], prev_cut['y'])
+            for hx, hy in xy:
+                if abs(dzs) / steps > tan_limit * math.hypot(hx - lo[0], hy - lo[1]):
+                    xy = ramp_xy(False)
+                    break
+                lo = (hx, hy)
+        for step, (px, py) in enumerate(xy, start=1):
+            point = {'x': px, 'y': py, 'z': prev_cut['z'] + dzs * step / steps}
             prior = trajectory[-1]
             transition_dist = math.sqrt(
                 (point['x'] - prior['x']) ** 2

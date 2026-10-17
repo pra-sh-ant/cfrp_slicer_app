@@ -6,9 +6,16 @@ import math
 from shapely.geometry import LineString, Point
 
 from ..config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT
-from ._common import arc_along_ring, check_gap_radius, dedupe_path, largest_polygon
+from ._common import (
+    arc_along_ring,
+    check_gap_radius,
+    dedupe_path,
+    hole_keepouts,
+    inset_components,
+    largest_polygon,
+)
 from .archimedean import archimedean_path
-from .corner_step import corner_step_path
+from .corner_step import _is_rectangle, corner_step_path
 from .fermat import fermat_spiral_path
 from .outlines import printable_boundary
 from .serpentine import oriented_serpentine
@@ -103,6 +110,31 @@ def _start_alignment(path, direction):
     return (dx * direction[0] + dy * direction[1]) / n if n > 1e-9 else 0.0
 
 
+def max_track_count(base_poly, track_gap, min_radius, infill_type, include_boundary):
+    """How many tracks fit for the patterns whose track count is exact
+    (Archimedean rings, analytic Corner-Step rectangle); None when the
+    pattern has no hard limit (it fills what fits)."""
+    gap = float(track_gap)
+    if infill_type == ARCHIMEDEAN:
+        bounds = base_poly
+        if include_boundary:
+            wall = printable_boundary(base_poly, gap, min_radius)
+            bounds = largest_polygon(wall.buffer(-gap / 2.0, join_style=1))
+        if bounds.is_empty:
+            return 0
+        bounds = largest_polygon(bounds)
+        holes = hole_keepouts(bounds)
+        count, inset = 0, gap / 2.0
+        while count < 1000 and inset_components(bounds, inset, min_radius, holes, gap / 2.0):
+            count += 1
+            inset += gap
+        return count
+    if infill_type == CORNER_STEP and _is_rectangle(base_poly):
+        x0, y0, x1, y1 = base_poly.bounds
+        return max(0, int((min(x1 - x0, y1 - y0) - 2.0 * min_radius + gap) / (2.0 * gap) + 1e-9))
+    return None
+
+
 def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_layer,
                    include_boundary, angle, layer_idx=0, last_pt=None, last_dir=None):
     """2D path for one layer of a flat part.
@@ -121,11 +153,11 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
 
     # Corner-Step Spiral: ring 0 IS the boundary — bypass wall/boundary logic.
     if infill_type == CORNER_STEP:
-        # Odd layers run outward. Rectangles (analytic path) are reversed,
-        # which reverses the fibre at the layer seam; other shapes keep the
-        # winding (see _poly_path).
+        # Odd layers run outward with the same winding, from where the
+        # inward layer ended (no fibre reversal at the seam).
         path, _ = corner_step_path(base_poly, gap, min_rad, tracks_per_layer,
-                                   outward=layer_idx % 2 != 0)
+                                   outward=layer_idx % 2 != 0,
+                                   corner_lead=layer_idx % 2 == 0 and last_pt is not None)
         if not path:
             return []
         if last_pt:
@@ -196,7 +228,15 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             # Start at the zigzag corner nearest the entry point...
             other = oriented_serpentine(infill_bounds, angle, gap, min_rad, start_from_end=not is_outward)
             candidates = [infill_path, infill_path[::-1], other, other[::-1]]
-            infill_path = min(candidates, key=lambda p: math.hypot(p[0][0] - entry_from[0], p[0][1] - entry_from[1]))
+            # Distance, plus a penalty for folding the fibre back on the
+            # direction it arrived with (a slightly farther corner that
+            # continues the direction is better than a 180° reversal).
+            arrive = last_dir if not wall_first else None
+
+            def cost(p):
+                d = math.hypot(p[0][0] - entry_from[0], p[0][1] - entry_from[1])
+                return d + 5.0 * max(min_rad, gap) * max(0.0, -_start_alignment(p, arrive))
+            infill_path = min(candidates, key=cost)
             # ...and if the straight jump to it would still cut across the
             # lines, run along a ring between the outline and the line ends
             # (the lines are eroded by min_rad, so the corridor is clear).

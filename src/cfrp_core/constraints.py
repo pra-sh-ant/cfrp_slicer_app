@@ -9,7 +9,17 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from .config import ARCHIMEDEAN, DIAGONAL_45, FERMAT, ORIENTED_SERPENTINE, SPECIALTY_SHAPES, ProcessConfig
+from .config import (
+    ARCHIMEDEAN,
+    CORNER_STEP,
+    DIAGONAL_45,
+    FERMAT,
+    ORIENTED_SERPENTINE,
+    SPECIALTY_SHAPES,
+    ProcessConfig,
+)
+from .geometry import base_polygon
+from .geometry.laminate import max_track_count
 
 
 @dataclass(frozen=True)
@@ -49,6 +59,26 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
         notes.append(f"Pump-Stall Floor limited to Print Speed (Max), {max_speed:.2f} mm/s-equiv.")
 
     update: dict = {"track_gap_mm": track_gap}
+
+    # Flat parts: Archimedean rings / the Corner-Step rectangle need an exact
+    # track count; cap it to what fits instead of failing every layer.
+    if (shape not in SPECIALTY_SHAPES and shape != "STL Import"
+            and config.infill_type in (ARCHIMEDEAN, CORNER_STEP)):
+        base = base_polygon(config.geometry, track_gap, min_radius)
+        fit = max_track_count(base, track_gap, min_radius, config.infill_type,
+                              config.geometry.include_boundary)
+        if fit is not None and int(config.tracks_per_layer) > fit:
+            if fit < 1:
+                raise ValueError(
+                    f"No {config.infill_type} track fits this outline at {track_gap:.2f} mm gap and "
+                    f"{min_radius:.1f} mm min bend radius. Enlarge the part or reduce Min Bend Radius."
+                )
+            update["tracks_per_layer"] = fit
+            notes.append(
+                f"Tracks Per Layer reduced from {int(config.tracks_per_layer)} to {fit}: that is "
+                f"how many {config.infill_type} tracks fit at {track_gap:.2f} mm gap with "
+                f"{min_radius:.1f} mm min bend radius."
+            )
 
     # A round revolve layer is sliced only while its outer radius leaves room
     # for every ring at >= min bend radius: R >= r_min + (tracks + 0.5) * gap
