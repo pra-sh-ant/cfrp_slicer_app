@@ -72,17 +72,25 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
                 f"{min_radius:.1f} mm min bend radius."
             )
 
-    # A Fermat spiral must U-turn between its two arms inside the innermost
-    # region; in a revolve shell's narrow wall band that U-turn is tighter than
-    # min bend radius (e.g. ~0.2 mm vs 3 mm). Archimedean never reverses.
+    # A Fermat spiral reverses once per region, between its two arms, which
+    # are adjacent tracks one gap apart: that U-turn is at most gap/2 radius
+    # however wide the region. A revolve shell does it on every layer;
+    # Archimedean never reverses, so use it there whenever gap < 2·r_min.
     wall_band = int(update.get("tracks_per_layer", config.tracks_per_layer)) * track_gap
-    if (config.geometry.is_revolve and config.infill_type == FERMAT
-            and min_radius > 0 and wall_band < 2.0 * min_radius + track_gap):
-        update["infill_type"] = ARCHIMEDEAN
-        notes.append(
-            f"Fermat spiral needs a U-turn that the {wall_band:.1f} mm wall band cannot fit at "
-            f"{min_radius:.1f} mm min bend radius; using Archimedean (no reversals) instead."
-        )
+    if config.infill_type == FERMAT and min_radius > 0 and track_gap < 2.0 * min_radius:
+        if config.geometry.is_revolve:
+            update["infill_type"] = ARCHIMEDEAN
+            notes.append(
+                f"Fermat spiral reverses between adjacent tracks ({track_gap / 2.0:.2f} mm radius, "
+                f"below the {min_radius:.1f} mm min bend radius) on every layer of a "
+                f"{wall_band:.1f} mm shell wall; using Archimedean (no reversals) instead."
+            )
+        else:
+            notes.append(
+                f"Fermat spiral: its centre U-turn joins adjacent tracks, at most "
+                f"{track_gap / 2.0:.2f} mm radius (below the {min_radius:.1f} mm min bend radius), so "
+                f"those points are speed-limited (curvature warning). Archimedean never reverses."
+            )
     # Line patterns turn 180 deg between adjacent lines one gap apart; the
     # widest such turn is a semicircle of radius gap/2.
     if (config.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45) and min_radius > 0

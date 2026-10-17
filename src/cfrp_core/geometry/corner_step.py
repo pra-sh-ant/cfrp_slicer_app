@@ -5,8 +5,8 @@ For rectangles the rings are computed analytically with rounded corners
 inside the bottom-left corner.
 
 For all other shapes (triangle, hexagon, circle, …) the rings are concentric
-polygon offsets (Shapely buffer) resampled CW, connected by a smooth arc
-transition that respects min_radius.
+polygon offsets (Shapely buffer) resampled CW, joined by lane changes on one
+seam (middle of the longest straight) that respect min_radius.
 
 Path starts heading +Y so the tangent-following anchor extends in −Y.
 """
@@ -147,7 +147,7 @@ def _resample_cw(coords, n_pts):
     return resample_closed_ring(poly, n_pts)
 
 
-def _poly_path(base_poly, gap, r, N):
+def _poly_path(base_poly, gap, r, N, outward=False):
     rings: list[list[tuple[float, float]]] = []
     for k in range(N):
         offset = gap / 2.0 + k * gap
@@ -165,66 +165,76 @@ def _poly_path(base_poly, gap, r, N):
     if not rings:
         return []
 
+    # Lane-change seam: every step sits on ONE seam line, at the middle of
+    # the outer ring's longest straight run. Ring k stops L short of its
+    # start and S-curves over that L into ring k+1 at the seam. A sideways
+    # shift of one gap over length L bends at about L²/(6·gap), so
+    # L = 1.5·√(6·gap·r) keeps the step above min radius; landing at the
+    # same seam each time means the steps do not drift round onto corners.
+    lane_len = 1.5 * math.sqrt(6.0 * gap * r) if r > 0 else gap
+    seam_pt = rings[0][_seam_index(rings[0])]
+    # Outward (alternate layers): innermost ring first, lane changes outward,
+    # same winding, so a layer starts where the inward one ended without
+    # reversing the fibre.
+    order = rings[::-1] if outward else rings
     path: list[tuple[float, float]] = []
-
-    for k, ring in enumerate(rings):
-        if k == 0:
-            best_i = 0
-            best_y = ring[0][1]
-            for i, (x, y) in enumerate(ring):
-                if y < best_y or (y == best_y and x < ring[best_i][0]):
-                    best_y = y
-                    best_i = i
-            reordered = ring[best_i:] + ring[:best_i]
-            path.extend(reordered)
-        else:
-            prev_pt = path[-1]
-            start_idx = _nearest_index(ring, prev_pt)
-            reordered = ring[start_idx:] + ring[:start_idx]
-
-            target = reordered[0]
-
-            if len(path) >= 2:
-                dx_in = prev_pt[0] - path[-2][0]
-                dy_in = prev_pt[1] - path[-2][1]
-                d_in = math.hypot(dx_in, dy_in)
-                if d_in > 1e-9:
-                    tan_in = (dx_in / d_in, dy_in / d_in)
-                else:
-                    tan_in = (target[0] - prev_pt[0], target[1] - prev_pt[1])
-                    d_t = math.hypot(tan_in[0], tan_in[1])
-                    tan_in = (tan_in[0] / d_t, tan_in[1] / d_t) if d_t > 1e-9 else (1.0, 0.0)
-            else:
-                tan_in = (target[0] - prev_pt[0], target[1] - prev_pt[1])
-                d_t = math.hypot(tan_in[0], tan_in[1])
-                tan_in = (tan_in[0] / d_t, tan_in[1] / d_t) if d_t > 1e-9 else (1.0, 0.0)
-
-            if len(reordered) >= 2:
-                dx_out = reordered[1][0] - reordered[0][0]
-                dy_out = reordered[1][1] - reordered[0][1]
-                d_out = math.hypot(dx_out, dy_out)
-                tan_out = (dx_out / d_out, dy_out / d_out) if d_out > 1e-9 else (1.0, 0.0)
-            else:
-                tan_out = tan_in
-
-            arc_pts = _tangent_bezier(prev_pt, tan_in, target, tan_out)
-            if arc_pts:
-                path.extend(arc_pts)
-
-            path.extend(reordered)
-
+    for k, ring in enumerate(order):
+        start = _nearest_index(ring, seam_pt)
+        lap = ring[start:] + ring[:start]
+        if k < len(order) - 1:
+            spacing = math.dist(ring[0], ring[1]) or 1e-9
+            cut = int(math.ceil(lane_len / spacing))
+            if 2 * cut < len(lap):
+                lap = lap[:len(lap) - cut]
+        if path:
+            path.extend(_tangent_bezier(path[-1], _unit(path[-2], path[-1]), lap[0], _unit(lap[0], lap[1])))
+        path.extend(lap)
     return path
+
+
+def _unit(a, b):
+    dx, dy = b[0] - a[0], b[1] - a[1]
+    n = math.hypot(dx, dy)
+    return (dx / n, dy / n) if n > 1e-9 else (1.0, 0.0)
+
+
+def _seam_index(ring):
+    """Middle of the ring's longest run of near-straight vertices (turning
+    < 1 deg), so lane changes land on a straight; lowest point if none."""
+    n = len(ring)
+    straight = []
+    for i in range(n):
+        a, b, c = ring[i - 1], ring[i], ring[(i + 1) % n]
+        u, v = _unit(a, b), _unit(b, c)
+        straight.append(u[0] * v[0] + u[1] * v[1] > math.cos(math.radians(1.0)))
+    best_len = best_mid = 0
+    if not all(straight):
+        first = straight.index(False)
+        run = 0
+        for j in range(1, n + 1):
+            i = (first + j) % n
+            if straight[i]:
+                run += 1
+                if run > best_len:
+                    best_len, best_mid = run, (i - run // 2) % n
+            else:
+                run = 0
+    if best_len == 0:
+        return min(range(n), key=lambda i: (ring[i][1], ring[i][0]))
+    return best_mid
 
 
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
 
-def corner_step_path(base_poly, track_gap, min_radius, track_count):
+def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=False):
     """Concentric CW rings with corner-step transitions.
 
-    Rectangles use an analytical path; other shapes use polygon offsets.
-    Path starts heading +Y.  Returns (path, base_poly).
+    Rectangles use an analytical path; other shapes use polygon offsets with
+    lane-change steps on one seam. `outward` (alternate layers) runs from
+    the innermost ring out: same winding for polygons, the reversed path
+    for rectangles. Returns (path, base_poly).
     """
     check_gap_radius(track_gap, min_radius)
     if base_poly.is_empty:
@@ -236,8 +246,10 @@ def corner_step_path(base_poly, track_gap, min_radius, track_count):
 
     if _is_rectangle(base_poly):
         raw = _rect_path(base_poly, gap, r, N)
+        if outward:
+            raw = list(reversed(raw))
     else:
-        raw = _poly_path(base_poly, gap, r, N)
+        raw = _poly_path(base_poly, gap, r, N, outward=outward)
 
     if not raw:
         return [], base_poly

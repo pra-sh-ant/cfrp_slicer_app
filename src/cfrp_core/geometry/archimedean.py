@@ -16,7 +16,7 @@ from ._common import (
 
 
 def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False,
-                     seam_hint=None, polar_center=None):
+                     seam_hint=None, polar_center=None, outer_start=None):
     """One smooth, continuously-blended spiral inside an arbitrary polygon.
 
     Rings sit at inset d_k = gap/2 + k·gap from the outer shell. Instead of
@@ -34,6 +34,8 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     For inside-out the last ring is the outermost; inner_close closes it at
     full radius so alternating layers maintain symmetric outer-wall coverage.
 
+    `outer_start`: outside-in only, start the outer ring nearest this point
+    (e.g. where a boundary wall loop hands over).
     `polar_center`: pair ring points by angle about this point instead of by
     arc length (rings must be star-shaped about it; see resample_polar_ring).
 
@@ -81,7 +83,7 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         return path, base_poly
 
     # --- Resample ring0 first (no phase anchor) ---
-    ring0_pts = resample(ordered[0], samples, None)
+    ring0_pts = resample(ordered[0], samples, None if start_from_inside else outer_start)
 
     if not start_from_inside:
         # ----------------------------------------------------------------

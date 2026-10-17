@@ -1,10 +1,11 @@
 {
   "status": "Warning",
   "messages": [
-    "Curvature: 26 point(s) are tighter than the 3.0 mm min bend radius on layer(s) [1, 2]; these are speed-limited, not geometrically safe."
+    "Curvature: 28 point(s) are tighter than the 3.0 mm min bend radius on layer(s) [1, 2]; these are speed-limited, not geometrically safe."
   ],
   "max_z": 0.4,
   "constraint_notes": [
-    "Radius clearance uses 6.00 mm across the 40.00 mm narrow dimension; about 32.80 mm remains for concentric tracks."
+    "Radius clearance uses 6.00 mm across the 40.00 mm narrow dimension; about 32.80 mm remains for concentric tracks.",
+    "Fermat spiral: its centre U-turn joins adjacent tracks, at most 0.60 mm radius (below the 3.0 mm min bend radius), so those points are speed-limited (curvature warning). Archimedean never reverses."
   ]
 }

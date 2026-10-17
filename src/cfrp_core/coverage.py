@@ -8,6 +8,7 @@ bridges are excluded: they are not part of the layer's laminate.
 """
 from __future__ import annotations
 
+import shapely
 from shapely.geometry import LineString
 from shapely.ops import unary_union
 
@@ -46,7 +47,10 @@ def layer_coverage(trajectory, target_shapes, track_gap: float) -> dict[int, dic
         region = shape.buffer(half, join_style=1)
         if region.area <= 0:
             continue
-        strips = [LineString(run).buffer(half, cap_style='flat', join_style=1) for run in _runs(pts)]
+        # A flat-capped buffer of a path that doubles back can be invalid;
+        # repair it so the union below cannot fail.
+        strips = [shapely.make_valid(LineString(run).buffer(half, cap_style='flat', join_style=1))
+                  for run in _runs(pts)]
         if not strips:
             out[layer] = {"coverage": 0.0, "overlap": 0.0, "area_mm2": region.area}
             continue

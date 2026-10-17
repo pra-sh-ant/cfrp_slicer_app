@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+import shapely
 from shapely.affinity import translate
 
 from .config import ProcessConfig
@@ -36,8 +37,12 @@ def _compute_stats(trajectory: list[dict], config: ProcessConfig, target_shapes=
         "fiber_mass_g": fiber_mass,
     }
     if target_shapes:
-        # keys: coverage, overlap, worst_layer, worst_coverage (fractions 0..1)
-        stats.update(coverage_summary(layer_coverage(trajectory, target_shapes, config.track_gap_mm)))
+        # keys: coverage, overlap, worst_layer, worst_coverage (fractions 0..1).
+        # Informational only: a geometry failure here must not fail the slice.
+        try:
+            stats.update(coverage_summary(layer_coverage(trajectory, target_shapes, config.track_gap_mm)))
+        except shapely.errors.GEOSException:
+            pass
     return stats
 
 

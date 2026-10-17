@@ -230,20 +230,29 @@ def _ramp_min_run(layer_height, transition_angle_deg):
 def _extend_head_for_run(prev_cut, first_cut, layer_trajectory, min_run, max_len):
     """Move the head cut further along the layer until the ramp's horizontal
     run from prev_cut is at least min_run (never past max_len of travel).
-    Returns (first_cut, remaining points)."""
-    if min_run <= 0 or math.hypot(first_cut['x'] - prev_cut['x'], first_cut['y'] - prev_cut['y']) >= min_run:
+    The new cut may fall inside a long segment. Returns (first_cut,
+    remaining points)."""
+    px, py = prev_cut['x'], prev_cut['y']
+    if min_run <= 0 or math.hypot(first_cut['x'] - px, first_cut['y'] - py) >= min_run:
         return first_cut, layer_trajectory
     travelled, last = 0.0, first_cut
     for k, pt in enumerate(layer_trajectory[:-1]):
-        travelled += math.hypot(pt['x'] - last['x'], pt['y'] - last['y'])
-        if travelled > max_len:
-            break
-        if math.hypot(pt['x'] - prev_cut['x'], pt['y'] - prev_cut['y']) >= min_run:
-            cut = {'x': pt['x'], 'y': pt['y'], 'z': pt['z']}
-            remaining = list(layer_trajectory[k + 1:])
-            remaining[0] = dict(remaining[0])
-            remaining[0]['dist'] = math.hypot(remaining[0]['x'] - cut['x'], remaining[0]['y'] - cut['y'])
-            return cut, remaining
+        seg = math.hypot(pt['x'] - last['x'], pt['y'] - last['y'])
+        # first fraction t of this segment whose point is >= min_run away
+        steps = max(1, int(math.ceil(seg / 0.1)))
+        for i in range(1, steps + 1):
+            t = i / steps
+            if travelled + seg * t > max_len:
+                return first_cut, layer_trajectory
+            x = last['x'] + (pt['x'] - last['x']) * t
+            y = last['y'] + (pt['y'] - last['y']) * t
+            if math.hypot(x - px, y - py) >= min_run:
+                cut = {'x': x, 'y': y, 'z': pt['z']}
+                remaining = list(layer_trajectory[k + (1 if t >= 1.0 else 0):])
+                remaining[0] = dict(remaining[0])
+                remaining[0]['dist'] = math.hypot(remaining[0]['x'] - x, remaining[0]['y'] - y)
+                return cut, remaining
+        travelled += seg
         last = pt
     return first_cut, layer_trajectory
 
@@ -257,8 +266,8 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed,
 
     `min_run`: if the two cuts end up closer than this in XY (e.g. the layer
     starts where the last one ended but runs the other way), the head cut
-    moves further into the layer (within 40% of it) so the ramp is not
-    steeper than the configured transition angle.
+    moves further into the layer (by up to two more seam-trims, within 40%
+    of it) so the ramp is not steeper than the configured transition angle.
 
     Fibre can only be laid forward/up: callers must append layers strictly
     bottom to top.
@@ -267,8 +276,12 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed,
         prev_cut = trim_trajectory_tail(trajectory, seam_trim)
         layer_len = sum(float(p.get('dist', 0.0)) for p in layer_trajectory[1:])
         first_cut, layer_trajectory = trim_path_head(layer_trajectory, seam_trim)
+        # Up to two more seam-trims: enough for short or reversed seams; a
+        # ramp that needs more (e.g. thick layers at a shallow angle) would
+        # shortcut across the layer, so it is left steep and reported.
         first_cut, layer_trajectory = _extend_head_for_run(
-            prev_cut, first_cut, layer_trajectory, min_run, 0.4 * layer_len - seam_trim)
+            prev_cut, first_cut, layer_trajectory, min_run,
+            min(0.4 * layer_len - seam_trim, 2.0 * max(seam_trim, 1.0)))
 
         dx = first_cut['x'] - prev_cut['x']
         dy = first_cut['y'] - prev_cut['y']
@@ -288,9 +301,20 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed,
         # Tangent-continuous only when the seam turns <= 90 deg: for a
         # reversal (layer runs back the way the last one came) the Hermite
         # would hairpin within the chord and climb near-vertically there.
-        if (t0 is None or t1 is None or chord_xy < 1e-9
-                or t0[0] * t1[0] + t0[1] * t1[1] < 0.0):
+        reversal = t0 is not None and t1 is not None and t0[0] * t1[0] + t0[1] * t1[1] < 0.0
+        if t0 is None or t1 is None or chord_xy < 1e-9 or reversal:
             t0 = t1 = None
+        if reversal:
+            # The tail cut point is not in the trajectory; a reversed ramp
+            # heads back towards the last kept vertex, so its first step would
+            # be measured (and climb) over almost no XY. Start it at the cut.
+            prior = trajectory[-1]
+            trajectory.append({
+                "x": prev_cut['x'], "y": prev_cut['y'], "z": prev_cut['z'],
+                "dist": math.hypot(prev_cut['x'] - prior['x'], prev_cut['y'] - prior['y']),
+                "v": prior.get('v', ramp_speed), "e_mult": prior.get('e_mult', 1.0),
+                "layer": prior.get('layer'), "z_layer": prior.get('z_layer'),
+            })
         for step in range(1, steps + 1):
             progress = step / steps
             if t0 is None:

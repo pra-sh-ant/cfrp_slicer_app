@@ -100,6 +100,51 @@ def test_near_parallel_overlap_is_not_a_crossing():
 def test_sharp_corner_after_long_straight_is_tight():
     """Three-point circumradius grows with leg length, so this read ~25 mm."""
     pts = np.array([(0.0, 0.0), (50.0, 0.0), (50.0, 0.3)])
-    assert local_bend_radii(pts)[0] < 0.5
-    arc = np.array([(3 * math.cos(t), 3 * math.sin(t)) for t in np.linspace(0, 1.5, 7)])
-    assert local_bend_radii(arc) == pytest.approx(3.0, rel=1e-6)
+    assert local_bend_radii(pts)[0] < 1.0
+    for n in (7, 40, 400):   # any sampling density
+        arc = np.array([(3 * math.cos(t), 3 * math.sin(t)) for t in np.linspace(0, 1.5, n)])
+        assert local_bend_radii(arc)[1:-1] == pytest.approx(3.0, rel=0.01)
+
+
+def test_coarse_arc_resampled_finely_is_not_tight():
+    """A polygonal arc (vertices 0.5 mm apart) resampled at 0.1 mm bunches
+    each vertex's turn on one point; per-vertex measures read that as tight."""
+    from shapely.geometry import LineString as LS
+    coarse = [(3 * math.cos(t), 3 * math.sin(t)) for t in np.arange(0, 3.0, 0.5 / 3)]
+    line = LS(coarse)
+    fine = np.array([line.interpolate(d).coords[0] for d in np.arange(0, line.length, 0.1)])
+    assert local_bend_radii(fine)[10:-10].min() > 2.7
+
+
+# --- curvature round (Phase 25) ---------------------------------------------
+
+def test_enforce_min_radius_leaves_arcs_at_exactly_r_min_alone():
+    """Arcs at r_min read 2.99999... and used to be smoothed into kinks."""
+    from shapely.geometry import box
+
+    from cfrp_core.geometry._common import enforce_min_radius
+    from cfrp_core.geometry.corner_step import corner_step_path
+    path, _ = corner_step_path(box(26, 40, 161, 65), 1.2, 3.0, 7)
+    assert np.allclose(enforce_min_radius(path, 3.0), path)
+
+
+@pytest.mark.parametrize("shape", ["Hexagon", "Circle", "Triangle"])
+def test_corner_step_polygons_pass_multilayer(shape):
+    """Lane-change steps on one seam, outward layers keep the winding."""
+    cfg = base_2d_config(shape=shape, width=60.0, height=60.0, layers=4, tracks_per_layer=7,
+                         infill_type="Corner-Step Spiral", min_radius=3.0)
+    assert run_slice(cfg)[3]["status"] == "Pass"
+
+
+def test_boundary_wall_hands_over_with_a_lane_change():
+    cfg = base_2d_config(width=135.0, height=25.0, include_boundary=True, tracks_per_layer=7,
+                         min_radius=3.0, layers=1)
+    assert run_slice(cfg)[3]["status"] == "Pass"
+
+
+def test_revolve_fermat_uses_archimedean_when_uturn_cannot_fit():
+    cfg = from_legacy_dict(base_revolve_config(
+        "Hollow Cylinder (Z)", tracks_per_layer=7, base_radius=20.0, min_radius=3.0,
+        infill_type="Fermat Spiral (Connected Double Spiral)"))
+    resolved = resolve_process_constraints(cfg)
+    assert resolved.config.infill_type == "Archimedean (Concentric Spiral)"

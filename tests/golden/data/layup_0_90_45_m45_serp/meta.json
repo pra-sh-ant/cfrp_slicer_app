@@ -1,7 +1,7 @@
 {
   "status": "Warning",
   "messages": [
-    "Curvature: 327 point(s) are tighter than the 3.0 mm min bend radius on layer(s) [1, 2, 3, 4]; these are speed-limited, not geometrically safe."
+    "Curvature: 1363 point(s) are tighter than the 3.0 mm min bend radius on layer(s) [1, 2, 3, 4]; these are speed-limited, not geometrically safe."
   ],
   "max_z": 0.8,
   "constraint_notes": [

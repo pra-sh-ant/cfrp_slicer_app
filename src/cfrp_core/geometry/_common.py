@@ -255,23 +255,42 @@ def _circumradii(pts_arr):
     return radii
 
 
-def local_bend_radii(pts_arr):
-    """Bend radius at every interior vertex, robust to uneven spacing:
-    the circle through the vertex and the points half the shorter leg away
-    on each side,
-        R = ½·min(a, b) / sin(θ/2)     (θ = turning angle).
-    Equals the circumradius on an evenly sampled arc. The circumradius of
-    three points instead grows with leg length, so a sharp corner at the
-    end of a long straight (a scan line) used to look safe."""
-    a = pts_arr[1:-1] - pts_arr[:-2]
-    b = pts_arr[2:] - pts_arr[1:-1]
-    la = np.linalg.norm(a, axis=1)
-    lb = np.linalg.norm(b, axis=1)
-    cos = np.einsum('ij,ij->i', a, b) / np.maximum(la * lb, 1e-12)
-    theta = np.arccos(np.clip(cos, -1.0, 1.0))
-    radii = np.full(len(a), 9999.0)
-    m = (la > 0.01) & (lb > 0.01) & (theta > 1e-9)
-    radii[m] = 0.5 * np.minimum(la, lb)[m] / np.sin(theta[m] / 2.0)
+BEND_WINDOW_MM = 1.5   # ~one tow width: the length over which a bend is judged
+
+
+def local_bend_radii(pts_arr, window=BEND_WINDOW_MM):
+    """Bend radius at every interior vertex, judged over `window` mm of path:
+        R = (path length spanned) / (total turning inside it).
+    The span runs between the midpoints of the segments bounding the
+    vertices within ±window/2, each end half-segment clipped to window/2.
+    Exact on an evenly sampled arc at any spacing; a corner at the end of a
+    long straight reads ~window/θ (small), where the three-point circumradius
+    read it as huge; and a coarse polygonal arc resampled finely (turning
+    bunched on single points) is not mistaken for a tight bend."""
+    pts = np.asarray(pts_arr, dtype=np.float64)
+    n = len(pts)
+    if n < 3:
+        return np.zeros(0)
+    seg = np.diff(pts, axis=0)
+    seg_len = np.linalg.norm(seg, axis=1)
+    unit = seg / np.maximum(seg_len, 1e-12)[:, None]
+    cos = np.einsum('ij,ij->i', unit[:-1], unit[1:])
+    theta = np.arccos(np.clip(cos, -1.0, 1.0))           # at vertices 1..n-2
+    theta[(seg_len[:-1] < 1e-9) | (seg_len[1:] < 1e-9)] = 0.0
+    cum = np.concatenate([[0.0], np.cumsum(seg_len)])     # arc length at vertices
+    pos = cum[1:-1]                                       # interior vertices
+    half = 0.5 * window
+    j = np.searchsorted(pos, pos - half, side='left')     # first vertex in window
+    k = np.searchsorted(pos, pos + half, side='right') - 1
+    turn_cum = np.concatenate([[0.0], np.cumsum(theta)])
+    turning = turn_cum[k + 1] - turn_cum[j]
+    # vertex v (interior index) sits between segments v and v+1
+    length = (pos[k] - pos[j]
+              + np.minimum(seg_len[j] / 2.0, half)
+              + np.minimum(seg_len[k + 1] / 2.0, half))
+    radii = np.full(n - 2, 9999.0)
+    m = turning > 1e-9
+    radii[m] = length[m] / turning[m]
     return radii
 
 
@@ -288,9 +307,13 @@ def enforce_min_radius(path, min_rad, max_iter=100):
         return list(path)
     pts = np.array(path, dtype=np.float64)[:, :2].copy()
 
+    # 0.1% tolerance: arcs built at exactly min_rad (fillets, Corner-Step
+    # corners) read 2.99999... and smoothing them bent their line joins into
+    # real kinks (R ~1.6 mm at r_min 3). Stricter than validation's 1%.
+    limit = min_rad * (1.0 - 1e-3)
     for _ in range(max_iter):
         radii = _circumradii(pts)
-        mask = radii < min_rad
+        mask = radii < limit
         if not np.any(mask):
             break
         idxs = np.nonzero(mask)[0] + 1

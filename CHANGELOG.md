@@ -5,6 +5,43 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Fixed (Phase 25 — curvature: real kinks removed, audit made exact)
+Sweep (`tools/validation_sweep.py`, 1182 cases): Pass 95 → 451, crossings 60 → 16,
+steep ramps 33 → 6, no crashes. Goldens regenerated deliberately (see bottom).
+- **`enforce_min_radius` was creating kinks**: arcs built at exactly r_min read
+  2.99999… and were "smoothed", bending their joins to R ≈ 1.6 mm (every Corner-Step
+  corner; also crossings). It now ignores radii within 0.1% of r_min.
+- **Curvature audit measures bend over 1.5 mm of tow** (`local_bend_radii`):
+  length / turning within the window. Exact on arcs at any sampling; a corner after
+  a long straight still reads tight; a coarse polygonal arc resampled finely no
+  longer reads as a tight bend.
+- **Corner-Step on polygons**: ring-to-ring steps are lane changes of length
+  1.5·√(6·gap·r) on one seam (middle of the longest straight), so they bend at
+  ≥ r_min and never drift onto corners; outward (odd) layers keep the winding
+  instead of reversing the fibre at the seam. Circle/hexagon/triangle multi-layer
+  now pass. Rectangles keep the analytic path; its odd layers are still reversed.
+- **Boundary wall hand-over**: the wall seam is the projection of the previous end
+  (or the middle of the longest side), not the nearest polygon vertex (usually a
+  corner), and wall↔infill steps are the same lane change. Fermat and Archimedean
+  enter at the wall's seam in its direction.
+- **Fermat on revolve shells** switches to Archimedean whenever gap < 2·r_min (its
+  reversal joins adjacent tracks, ≤ gap/2 radius, on every layer — the old
+  wall-band test did not capture that). Flat Fermat gets an explanatory note.
+- **Ramp head extension** cuts inside long segments (it skipped to the next vertex,
+  e.g. 120 mm away on a Corner-Step rectangle) and is capped at two seam-trims, so
+  an impossible ramp (thick layer, shallow angle) is still reported. Reversal seams
+  start the ramp at the tail cut point.
+- **Coverage metric** repairs invalid tow strips and can no longer fail a slice.
+
+Remaining curvature is physical: serpentine/hatch and Fermat U-turns join adjacent
+tracks (radius ≤ gap/2) whenever gap < 2·r_min; the constraint notes say so.
+
+Golden changes: G-code changed for `*_fermat`, `*_serp`, `layup_*_serp`,
+`rectangle_arch`, `hexagon_arch`, `triangle_arch`, `rectangle_arch_boundary` (smoother
+seams). Now Pass: `circle_arch`, `rectangle_arch`, `rectangle_arch_boundary`,
+`sphere_arch`, `dome_arch`, `taper_arch`, `conical_dome`. Serpentine counts rise
+(every point of their 0.6 mm U-turns is counted now).
+
 ### Fixed (Phase 24 — validation sweep: every shape × infill × key setting)
 Found with `tools/validation_sweep.py` (1182 cases from GUI defaults). Before:
 406 Pass / 702 Warning / 42 Fail / 32 config errors, and two checks were blind.

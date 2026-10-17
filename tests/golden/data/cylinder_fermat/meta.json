@@ -5,6 +5,6 @@
   ],
   "max_z": 10.2,
   "constraint_notes": [
-    "Fermat spiral needs a U-turn that the 3.6 mm wall band cannot fit at 3.0 mm min bend radius; using Archimedean (no reversals) instead."
+    "Fermat spiral reverses between adjacent tracks (0.60 mm radius, below the 3.0 mm min bend radius) on every layer of a 3.6 mm shell wall; using Archimedean (no reversals) instead."
   ]
 }

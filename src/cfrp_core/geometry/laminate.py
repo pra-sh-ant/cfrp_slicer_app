@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
 
 from ..config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT
 from ._common import arc_along_ring, check_gap_radius, dedupe_path, largest_polygon
@@ -14,8 +14,55 @@ from .outlines import printable_boundary
 from .serpentine import oriented_serpentine
 
 
-def _nearest_vertex(coords, point):
-    return min(coords, key=lambda c: math.hypot(c[0] - point[0], c[1] - point[1]))
+def _lane_change_length(gap, min_rad):
+    """Length over which a one-gap sideways step bends at >= min_rad."""
+    return 1.5 * math.sqrt(6.0 * gap * min_rad) if min_rad > 0 else gap
+
+
+def _trim_end(points, length):
+    """`points` with the last `length` mm of travel removed (cut point
+    interpolated); unchanged if that would remove more than half of it."""
+    line = LineString(points)
+    if length <= 0 or line.length <= 2.0 * length:
+        return points
+    keep = line.length - length
+    out, travelled = [points[0]], 0.0
+    for a, b in zip(points[:-1], points[1:], strict=False):
+        seg = math.dist(a, b)
+        if travelled + seg >= keep:
+            f = (keep - travelled) / seg if seg > 1e-12 else 0.0
+            out.append((a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f))
+            return out
+        out.append(b)
+        travelled += seg
+    return points
+
+
+def _wall_seam(wall_poly, near=None):
+    """Where the wall loop starts/ends: the point of the wall nearest `near`
+    (the stroke's current end), or, with none, the middle of its longest
+    straight side, so the hand-over to the infill is not on a corner arc."""
+    ring = wall_poly.exterior
+    if near is not None:
+        p = ring.interpolate(ring.project(Point(near)))
+        return (p.x, p.y)
+    coords = list(ring.coords)
+    a, b = max(zip(coords[:-1], coords[1:], strict=False), key=lambda s: math.dist(*s))
+    return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
+
+
+def _ring_from(poly, start):
+    """poly's exterior as a closed point list starting and ending at `start`
+    (a point on it), keeping the exterior's direction."""
+    ring = poly.exterior
+    d0 = ring.project(Point(start))
+    coords = list(ring.coords)
+    cum = [0.0]
+    for a, b in zip(coords[:-1], coords[1:], strict=False):
+        cum.append(cum[-1] + math.dist(a, b))
+    after = [c for c, d in zip(coords[:-1], cum[:-1], strict=False) if d > d0 + 1e-9]
+    before = [c for c, d in zip(coords[:-1], cum[:-1], strict=False) if d < d0 - 1e-9]
+    return [tuple(start)] + after + before + [tuple(start)]
 
 
 def _entry_route(entry_from, path, corridor):
@@ -74,11 +121,13 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
 
     # Corner-Step Spiral: ring 0 IS the boundary — bypass wall/boundary logic.
     if infill_type == CORNER_STEP:
-        path, _ = corner_step_path(base_poly, gap, min_rad, tracks_per_layer)
+        # Odd layers run outward. Rectangles (analytic path) are reversed,
+        # which reverses the fibre at the layer seam; other shapes keep the
+        # winding (see _poly_path).
+        path, _ = corner_step_path(base_poly, gap, min_rad, tracks_per_layer,
+                                   outward=layer_idx % 2 != 0)
         if not path:
             return []
-        if layer_idx % 2 != 0:
-            path = list(reversed(path))
         if last_pt:
             path = [last_pt] + path
         return path
@@ -100,25 +149,37 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         infill_bounds = base_poly
 
     is_outward = (layer_idx % 2 != 0)
+    # Wall first (even layers): it starts nearest the previous end and hands
+    # over to the infill at that same seam.
+    wall_first = include_boundary and not is_outward
+    wall_start = _wall_seam(wall_poly, last_pt) if wall_first else None
 
     if infill_type == ARCHIMEDEAN:
         infill_path, _ = archimedean_path(
             infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward,
-            seam_hint=last_pt if is_outward else None,
+            seam_hint=last_pt if is_outward else None, outer_start=wall_start,
         )
     elif infill_type == FERMAT:
         # Enter where the previous layer ended. (Entering diametrically
         # opposite, as before, left the jump from the previous end as a
         # straight chord across the whole layer at layer Z, which every ring
         # of the layer then crossed.)
+        # After a wall loop, enter at the wall's seam going the wall's way.
+        entry, entry_dir = last_pt, last_dir
+        if wall_first:
+            wall_loop = _ring_from(wall_poly, wall_start)
+            entry = wall_start
+            dx, dy = wall_loop[-1][0] - wall_loop[-2][0], wall_loop[-1][1] - wall_loop[-2][1]
+            n = math.hypot(dx, dy)
+            entry_dir = (dx / n, dy / n) if n > 1e-9 else None
         variants = [
             fermat_spiral_path(
                 infill_bounds, gap, min_rad, track_count=tracks_per_layer,
-                start_from_inside=is_outward, entry_hint=last_pt, mirror=mirror,
+                start_from_inside=is_outward, entry_hint=entry, mirror=mirror,
             )
-            for mirror in ((False, True) if last_dir is not None else (False,))
+            for mirror in ((False, True) if entry_dir is not None else (False,))
         ]
-        infill_path = max(variants, key=lambda p: _start_alignment(p, last_dir))
+        infill_path = max(variants, key=lambda p: _start_alignment(p, entry_dir))
     else:
         # Zigzags. Fixed 45° hatching runs +45°/-45° on alternate layers
         # regardless of the layup angle (balanced cross-ply).
@@ -127,8 +188,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         infill_path = oriented_serpentine(infill_bounds, angle, gap, min_rad, start_from_end=is_outward)
         # Where the stroke enters the zigzag: the previous layer's end, or the
         # end of the wall loop when the wall is printed first.
-        if include_boundary and not is_outward:
-            entry_from = _nearest_vertex(wall_coords, last_pt) if last_pt else wall_coords[0]
+        if wall_first:
+            entry_from = wall_start
         else:
             entry_from = last_pt
         if entry_from is not None and infill_path:
@@ -158,23 +219,32 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     if is_outward:
         if last_pt:
             continuous_path.append(last_pt)
+        # Lane change out to the wall: stop the infill L short of its end and
+        # start the wall where the infill would have ended (see wall_first).
+        # Only spirals end running along the wall; a zigzag ends on a line.
+        peel_pt = infill_path[-1]
+        wall_reordered = _ring_from(wall_poly, _wall_seam(wall_poly, peel_pt))
+        if infill_type in (ARCHIMEDEAN, FERMAT):
+            trimmed = _trim_end(infill_path, _lane_change_length(gap, min_rad))
+            if not LineString([trimmed[-1], wall_reordered[0]]).crosses(LineString(trimmed)):
+                infill_path = trimmed
         continuous_path.extend(infill_path)
-
-        peel_pt = continuous_path[-1]
-        distances = [math.hypot(x - peel_pt[0], y - peel_pt[1]) for x, y in wall_coords]
-        min_idx = distances.index(min(distances))
-        wall_reordered = wall_coords[min_idx:] + wall_coords[:min_idx] + [wall_coords[min_idx]]
         continuous_path.extend(wall_reordered)
 
     else:
         if last_pt:
-            distances = [math.hypot(x - last_pt[0], y - last_pt[1]) for x, y in wall_coords]
-            min_idx = distances.index(min(distances))
-            wall_reordered = wall_coords[min_idx:] + wall_coords[:min_idx] + [wall_coords[min_idx]]
             continuous_path.append(last_pt)
-        else:
-            wall_reordered = wall_coords
+        wall_reordered = _ring_from(wall_poly, wall_start)
 
+        # Lane change into the infill: when it starts at the wall's seam,
+        # stop the wall loop L short so the one-gap sideways step is spread
+        # over L (bend ~ L²/(6·gap) >= min radius) instead of a sharp jog.
+        if math.dist(infill_path[0], wall_reordered[0]) < 3.0 * gap:
+            trimmed = _trim_end(wall_reordered, _lane_change_length(gap, min_rad))
+            # Not when the seam sits on a corner: the shortened wall then ends
+            # round the corner and the step would cut across the infill.
+            if not LineString([trimmed[-1], infill_path[0]]).crosses(LineString(infill_path)):
+                wall_reordered = trimmed
         continuous_path.extend(wall_reordered)
 
         # Zigzags already start nearest the wall's end (chosen above); both
