@@ -5,6 +5,41 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 41 — holes, pieces, seams, mesh problems)
+- **Fermat spiral round holes**: the Fermat spiral stopped at the first ring that
+  came near a hole. On holed outlines it now uses the rings that bend round the
+  holes (`notched_rings`), stitched as a double spiral (`corner_step.stitch_fermat`):
+  in along every other ring, a half-circle turn at the centre, back out along the
+  rings between, both passes changing lanes in one window on parallel diagonals, so
+  they cannot cross; the seam moves off holes. Coverage on a 60 x 40 board with four
+  corner holes 18 % -> 80 % (87 % filled solid); two close holes 23 % -> 84 %;
+  no crossings, no fibre over a hole. A central hole (where every ring meets it at
+  once) keeps the old spiral.
+- **Seam stagger on flat Archimedean parts** (`seam_stagger_deg`, was round shells
+  only): each layer's spiral runs a little further along each inner ring before
+  stepping in, so the layer ends -- and the next starts -- that much further round
+  (at most 60° per ring). Layer starts on a 60 x 40 plate, 6 layers: 0.4 mm apart ->
+  22 mm apart at 137.5°, no crossings. (Shifting each ring's start instead made the
+  blend cut corners: up to 9 crossings per layer.)
+- **Parts split by holes** (Custom Outline): with *Print All Islands* every piece is
+  filled in one stroke, joined by flagged fibre bridges (as STL islands); without it,
+  spiral patterns fill the largest piece itself (a Fermat spiral on such a part
+  printed nothing; Archimedean / Corner-Step rings crossed at the necks) and the
+  info list says the other pieces get no fibre.
+- **Mesh problems in the 3D view**: open edges of a non-watertight mesh, gaps the
+  slicer bridged, outlines it had to drop and empty slices come back as markers
+  (`SliceResult.markers`, `mesh_slicer.open_edges`) and show as red dots
+  (*Problems* toggle).
+
+### Not done (Phase 41)
+- **Adaptive layer height for STL** (item 11): a continuous tow has one compacted
+  thickness, so thinner layers on curved tops would need a thinner tow, not a
+  different Z step. Solid top layers (Phase 38) close the top surface instead.
+
+### Internal (Phase 41)
+- The multi-island stroke helpers moved from `layers/stl.py` to `layers/islands.py`
+  (`multi_island_layer`, `flag_bridges`, `island_path`), shared with flat parts.
+
 ### Added (Phase 40 — usability)
 - **Projects** (`cfrp_core.project`, File > Open / Save Project, Ctrl+Shift+O / S):
   one `.cfrpproj` file with the slicer settings (machine included), the PCB

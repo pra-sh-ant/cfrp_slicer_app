@@ -476,3 +476,15 @@ def test_undo_from_the_window_follows_the_tab(win):
     win._editor.new_design()
     win._undo()                                          # the editor's own undo
     assert len(win._editor.design.traces) == n
+
+
+def test_viewer_shows_mesh_problem_markers(app):
+    from cfrp_core import ProcessConfig, slice_part
+    from cfrp_core.machine import DEFAULT_MACHINE
+    from gui.viewer_gl import ViewerGL
+    r = slice_part(ProcessConfig())
+    v = ViewerGL(DEFAULT_MACHINE)
+    v.update_scene(r.trajectory, r.target_shapes, r.max_z, markers=((10.0, 10.0, 0.2, "open edge"),))
+    assert not v.problems_chk.isHidden() and v.problems_chk.text() == "Problems (1)"
+    v.update_scene(r.trajectory, r.target_shapes, r.max_z)
+    assert v.problems_chk.isHidden()

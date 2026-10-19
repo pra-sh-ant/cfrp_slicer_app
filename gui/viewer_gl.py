@@ -395,6 +395,13 @@ class ViewerGL(QWidget):
         self.travel_chk.setToolTip("Show DIW travel moves (no ink)")
         self.travel_chk.toggled.connect(self._apply_range)
         bar.addWidget(self.travel_chk)
+        self.problems_chk = QCheckBox("Problems")
+        self.problems_chk.setChecked(True)
+        self.problems_chk.setToolTip("Red dots where the STL mesh is broken: open edges, gaps the slicer "
+                                     "bridged, outlines it had to drop, empty slices")
+        self.problems_chk.toggled.connect(self._show_problems)
+        self.problems_chk.setVisible(False)
+        bar.addWidget(self.problems_chk)
         bar.addStretch()
         _btn("Save image…", "Save the view as PNG", self.save_screenshot, 90)
         outer.addLayout(bar)
@@ -465,6 +472,8 @@ class ViewerGL(QWidget):
         self._outline_item = None
         self._nozzle = None
         self._start = None
+        self._problems = None
+        self._markers = ()
         if self._view is not None:
             self._draw_bed()
 
@@ -517,6 +526,9 @@ class ViewerGL(QWidget):
         self._end = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(0.98, 0.2, 0.3, 1), size=12)
         self._end.setVisible(False)
         self._view.addItem(self._end)
+        self._problems = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(1.0, 0.33, 0.18, 1), size=9)
+        self._problems.setVisible(False)
+        self._view.addItem(self._problems)
 
     # ------------------------------------------------------------------
     # Scene update
@@ -527,18 +539,22 @@ class ViewerGL(QWidget):
         return self.resin_chk.isChecked() and self.mode_cb.currentText() == "Feature"
 
     def update_scene(self, trajectory, target_shapes, max_z, bead_width=1.0, bead_height=0.2,
-                     r_min=3.0, extra=None, part_mesh=None, prepared=None):
+                     r_min=3.0, extra=None, part_mesh=None, prepared=None, markers=()):
         """Show a slice result. `extra`: further ToolpathData (e.g. DIW)
         drawn after the fibre. `part_mesh`: (N, 3, 3) triangles of the part
         for the see-through overlay (None = extrude the first outline).
         `prepared`: a toolpath_mesh.Prepared built off the UI thread for
         this trajectory (its meshes are used if the display mode still
-        matches)."""
+        matches). `markers`: (x, y, z, kind) problem spots of the mesh."""
         self._r_min = float(r_min)
         self._part_tris = part_mesh
         self._part_top = float(max_z or 0.0)
         self._reset_measure()
         self._outlines = list(target_shapes or [])
+        self._markers = tuple(markers or ())
+        self.problems_chk.setVisible(bool(self._markers))
+        self.problems_chk.setText(f"Problems ({len(self._markers)})")
+        self._show_problems()
         self._prepared = prepared if prepared is not None and extra is None else None
         if self._prepared is not None:
             data = self._prepared.data
@@ -851,6 +867,13 @@ class ViewerGL(QWidget):
                     tris.append([[*a, z0], [*b, z0], [*b, z1]])
                     tris.append([[*a, z0], [*b, z1], [*a, z1]])
         return np.asarray(tris, dtype=np.float32) if tris else None
+
+    def _show_problems(self, *_):
+        if self._problems is None:
+            return
+        if self._markers:
+            self._problems.setData(pos=np.array([m[:3] for m in self._markers], dtype=np.float32))
+        self._problems.setVisible(bool(self._markers) and self.problems_chk.isChecked())
 
     def _show_part(self, on=None):
         if self._view is None:

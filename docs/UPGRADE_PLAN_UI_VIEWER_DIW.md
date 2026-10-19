@@ -62,17 +62,17 @@ fibre layers would mean cutting the fibre).
 
 | # | Upgrade | Status |
 |---|---------|--------|
-| 1 | Seam stagger / interlock for flat parts | open |
+| 1 | Seam stagger / interlock for flat parts | done (Phase 41): Archimedean spiral runs further along each ring |
 | 2 | Inter-layer checks (fibre over a hole, Z down, climb over a hole) | done (Phase 38) |
 | 3 | Ramp / entry on holed boards crossing a hole | done (Phase 38): entry routes stay on the part |
 | 4 | Solid bottom / top skins, per-layer plan | done (Phase 38) |
-| 5 | Layup meaningful for spirals | open |
+| 5 | Layup meaningful for spirals | done (Phase 41) as Seam Stagger: a spiral has no fibre angle; what it can turn per layer is its seam |
 | 6 | Thickness and Z check | done (Phase 38): thickness note, Z-Offset note, Z-down error |
 | 7 | Plain tight-bend summary / fix hints | done (Phase 38): "How to fix" per message |
-| 8 | Fermat spiral around holes | open |
-| 9 | Multi-piece slices in one stroke with flagged bridges | open |
-| 10 | Mesh-problem markers in the 3D view | open |
-| 11 | Adaptive layer height for STL | open |
+| 8 | Fermat spiral around holes | done (Phase 41) |
+| 9 | Multi-piece slices in one stroke with flagged bridges | done (Phase 41): Custom Outline pieces split by holes |
+| 10 | Mesh-problem markers in the 3D view | done (Phase 41) |
+| 11 | Adaptive layer height for STL | not done: a tow has one compacted thickness (solid top layers close the top instead) |
 | 12 | Ink over an insulation edge rule | done (Phase 39) |
 | 13 | Crossovers (bridges / wire levels) and vias | done (Phase 39): level-2 wires, bridges, conformal Z, router fallback; vias = pad windows (embedded mode) |
 | 14 | Current capacity per trace | done (Phase 39) |
@@ -92,7 +92,6 @@ fibre layers would mean cutting the fibre).
 | 28 | Highlight the invalid field | done (Phase 40) |
 
 ### Other known limits
-- Fermat spiral on holed outlines still stops at the first hole (caution shown) -- item 8.
 - A zigzag round a hole near a 45° edge can keep a crossing (the U-turns reach
   ~0.2 mm past the edge corridor); zigzag layers on holed parts can cross the
   climb from a previous layer that ended mid-part (warnings).

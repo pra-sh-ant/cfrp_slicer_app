@@ -17,9 +17,10 @@ HELP = {
                 "filled with fibre.",
     "stl_scale": "Makes the model bigger or smaller. Use 25.4 if the file was drawn in inches, "
                  "10 for centimetres, 1000 for metres. 1 = the file is already in millimetres.",
-    "stl_islands": "When a slice has several separate pieces (e.g. table legs): off = only the "
-                   "biggest piece gets fibre; on = all pieces, with the fibre stretched across the "
-                   "gaps between them (snip those bridges after curing).",
+    "stl_islands": "When a slice has several separate pieces (e.g. table legs), or holes cut a custom "
+                   "outline into pieces: off = only the biggest piece gets fibre; on = all pieces, "
+                   "with the fibre stretched across the gaps between them (snip those bridges after "
+                   "curing).",
     "stl_closing_radius": "Repairs tiny cracks in the model's slices: gaps narrower than about twice "
                           "this are closed. Raise it for a messy model; lower it if real thin slots vanish.",
     "stl_stitch": "Repairs holes in a broken model: open edges closer than this are joined. Raise it "
@@ -97,8 +98,10 @@ HELP = {
                         "gentler climb, needs more room.",
     "seam_trim_length": "How much is cut off each layer's end to make room for the climb to the next "
                         "layer.",
-    "seam_stagger": "Round shells: turn each layer's start point by this angle so the starts don't "
-                    "line up into one weak seam (137.5° spreads them evenly).",
+    "seam_stagger": "Turn each layer's start point by this angle so the starts (where the fibre steps up "
+                    "a layer) don't line up into one weak seam (137.5° spreads them evenly). Round "
+                    "shells, and flat Archimedean parts (the spiral is twisted a little; at most 20° "
+                    "per ring).",
 
     # --- mushroom ----------------------------------------------------------------------------
     "v_z": "Speed of the overhang test's vertical pull.",

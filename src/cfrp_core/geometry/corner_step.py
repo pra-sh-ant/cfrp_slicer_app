@@ -296,10 +296,10 @@ def stitch_rings(rings, gap, r, outward=False, seam_hint=None, lead_in=0.0, keep
     return best[1]
 
 
-def _stitch(rings, lane_len, outward, seam_pt, lead_in):
+def _stitch(rings, lane_len, outward, seam_pt, lead_in, cut_last=False):
     # Outward (alternate layers): innermost ring first, lane changes outward,
     # same winding, so a layer starts where the inward one ended without
-    # reversing the fibre.
+    # reversing the fibre. `cut_last`: the last lap stops short too.
     order = rings[::-1] if outward else rings
     path: list[tuple[float, float]] = []
     for k, ring in enumerate(order):
@@ -308,7 +308,7 @@ def _stitch(rings, lane_len, outward, seam_pt, lead_in):
             closed = ring[:-1] if ring[0] == ring[-1] else ring
             path.extend(ring_tail(closed, start % len(closed), lead_in))
         lap = ring[start:] + ring[:start]
-        if k < len(order) - 1:
+        if k < len(order) - 1 or cut_last:
             spacing = math.dist(ring[0], ring[1]) or 1e-9
             cut = int(math.ceil(lane_len / spacing))
             if 2 * cut < len(lap):
@@ -317,6 +317,68 @@ def _stitch(rings, lane_len, outward, seam_pt, lead_in):
             path.extend(_tangent_bezier(path[-1], _unit(path[-2], path[-1]), lap[0], _unit(lap[0], lap[1])))
         path.extend(lap)
     return path
+
+
+def stitch_fermat(rings, gap, r, seam_hint=None, keepouts=()):
+    """Connected Fermat spiral on closed rings one gap apart (outermost
+    first; e.g. rings notched round holes): in along the even rings, a
+    U-turn at the centre, back out along the odd rings the other way round.
+    Both passes change lanes (two gaps) in one window at one seam, on
+    parallel diagonals a gap apart, and every ring is cut over that window,
+    so the passes never cross. Starts on the outer ring and ends one gap
+    inside it, at the seam. `keepouts`: as stitch_rings, a seam whose lane
+    changes would cross a hole (or a ring) moves to the first clean place."""
+    if len(rings) < 2:
+        return []
+    evens, odds = rings[0::2], rings[1::2]
+    lane_len = 1.5 * math.sqrt(6.0 * 2.0 * gap * r) if r > 0 else 2.0 * gap
+
+    def build(seam_pt):
+        inward = _stitch(evens, lane_len, False, seam_pt, 0.0, cut_last=True)
+        back = _stitch(odds, lane_len, False, seam_pt, 0.0, cut_last=True)[::-1]
+        if len(inward) < 2 or len(back) < 2:
+            return inward + back
+        return inward + _u_turn(inward[-1], _unit(inward[-2], inward[-1]), back[0]) + back
+
+    seam_idx = _nearest_index(rings[0], seam_hint) if seam_hint is not None else _seam_index(rings[0])
+    path = build(rings[0][seam_idx])
+    import shapely
+    zones = [k.buffer(gap * 0.25) for k in keepouts if not k.is_empty]
+    zone = shapely.union_all(zones) if zones else None
+    head = [tuple(seam_hint)] if seam_hint is not None else []
+
+    def score(p):
+        return _lane_score(head + p, zone) if zone is not None else float(count_crossings(head + p))
+
+    best = score(path), path
+    if best[0] == 0:
+        return path
+    for idx in _seam_candidates(rings[0], seam_idx):
+        cand = build(rings[0][idx])
+        sc = score(cand)
+        if sc < best[0]:
+            best = sc, cand
+            if sc == 0:
+                break
+    return best[1]
+
+
+def _u_turn(p0, t, p1, step=0.25):
+    """Points after p0 up to p1 on the half circle between them that
+    bulges along t (the way p0 was heading): the turn at a Fermat spiral's
+    centre, from one ring back along the next."""
+    cx, cy = (p0[0] + p1[0]) / 2.0, (p0[1] + p1[1]) / 2.0
+    rho = math.dist(p0, p1) / 2.0
+    if rho < 1e-6:
+        return []
+    nx, ny = (p0[0] - cx) / rho, (p0[1] - cy) / rho
+    n_pts = max(6, int(math.ceil(math.pi * rho / step)))
+    out = []
+    for k in range(1, n_pts):
+        phi = math.pi * k / n_pts
+        out.append((cx + rho * (math.cos(phi) * nx + math.sin(phi) * t[0]),
+                    cy + rho * (math.cos(phi) * ny + math.sin(phi) * t[1])))
+    return out + [tuple(p1)]
 
 
 def _lane_score(path, zone):

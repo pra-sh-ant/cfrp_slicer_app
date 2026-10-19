@@ -24,7 +24,9 @@ src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt import
     planning.py           plan_layers (pattern, fill, spiral direction per layer; solid
                           skins), stl_skins (exposed STL slices), fill track counts
     flat.py               build_flat_laminate (built-in outlines, Custom Outline)
-    stl.py                build_stl_laminate (slices, islands, fallbacks, mesh notes)
+    stl.py                build_stl_laminate (slices, fallbacks, mesh notes and markers)
+    islands.py            one stroke over several pieces (STL islands, flat parts split
+                          by holes): multi_island_layer, flag_bridges
     revolve.py            build_revolve_shell (helical shells, spiral Z)
   trajectory.py           TrajectoryPoint (the point dict's keys) + check_trajectory
   hints.py                fix_hint: plain-language fix for each check message

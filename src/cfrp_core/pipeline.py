@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import shapely
 from shapely.affinity import translate
 
-from .config import ProcessConfig
+from .config import ARCHIMEDEAN, CORNER_STEP, FERMAT, ProcessConfig
 from .constraints import resolve_process_constraints
 from .coverage import coverage_summary, layer_coverage
 from .gcode import compile_gcode
@@ -68,6 +68,7 @@ class SliceResult:
     info: tuple[str, ...]                 # other notes (e.g. bed auto-positioning)
     stats: dict = None                    # print_time_s, fiber_length_mm, fiber_mass_g
     bed_shift: tuple = (0.0, 0.0)         # XY added by fit_trajectory_to_bed
+    markers: tuple = ()                   # (x, y, z, kind): where an STL mesh is broken
 
 
 def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> SliceResult:
@@ -77,9 +78,9 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     cfg = resolved.config
     g = cfg.geometry
 
-    part_warnings, part_info = [], []
+    part_warnings, part_info, markers = [], [], []
     if g.shape == "STL Import":
-        trajectory, target_shapes, max_z, part_warnings, part_info = build_stl_laminate(cfg)
+        trajectory, target_shapes, max_z, part_warnings, part_info, markers = build_stl_laminate(cfg)
     elif g.is_revolve:
         trajectory, target_shapes, max_z = build_revolve_shell(cfg)
     elif g.is_specialty:
@@ -94,6 +95,17 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
                     f"the first layer's tow into the bed. A stand-off near the tow thickness is usual.")
     if not g.is_specialty and g.shape != "STL Import":
         info.append(f"Laminate: {cfg.layers} layer(s) x {lh:g} mm = {cfg.layers * lh:.2f} mm thick.")
+    if g.shape == "Custom Outline":
+        from .geometry import base_polygon
+        from .layers.flat import part_pieces
+        base = base_polygon(g, cfg.track_gap_mm, cfg.min_radius_mm)
+        n = len(part_pieces(base, cfg.track_gap_mm, cfg.min_radius_mm))
+        spirals = all(p.pattern in (ARCHIMEDEAN, CORNER_STEP, FERMAT) for p in plan_layers(cfg, cfg.layers))
+        if n > 1 and g.stl_islands != "all" and spirals and len(getattr(base, "interiors", ())):
+            info.append(f"The holes split the outline into {n} pieces; only the largest gets fibre. Turn on "
+                        f"Print All Islands to fill every piece (fibre bridges join them).")
+        elif n > 1:
+            info.append(f"The holes split the outline into {n} pieces, filled in one stroke joined by bridges.")
     if not g.is_specialty and not g.is_revolve and g.shape != "STL Import":
         plans = plan_layers(cfg, cfg.layers)
         if cfg.solid_bottom_layers or cfg.solid_top_layers:
@@ -140,4 +152,5 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
         config=cfg, trajectory=trajectory, target_shapes=target_shapes, gcode=gcode,
         validation=validation, max_z=max_z, constraint_notes=resolved.notes, info=tuple(info),
         stats=stats, bed_shift=(float(shift_x), float(shift_y)),
+        markers=tuple((x + shift_x, y + shift_y, z, kind) for x, y, z, kind in markers),
     )

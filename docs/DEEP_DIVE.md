@@ -55,7 +55,7 @@ Per point: corner-radius cap (v_max at R>=3*r_min down to v_min at R=r_min), hea
 
 ## 8. Known limits
 
-Fermat multi-island connectors can cross printed track; pump floor unmeasured (= v_min); `e ~ v/v_max` is an assumption; revolve seam angle drifts; a few Fermat curvature violations on Rectangle/Circle. Holes: spiral rings stop near the first hole (`hole_keepouts`), so area beyond it is unfilled (plate with 2 holes: 83 % coverage Archimedean, 66 % Fermat, 61 % serpentine); a keyhole-slit approach was tried and measured worse with every generator, so holes need a contour-tree generator. Serpentine loses edge coverage (erodes by r_min); Fermat leaves its centre unfilled. `SliceResult.stats["coverage"]` measures all of these.
+Fermat multi-island connectors can cross printed track; pump floor unmeasured (= v_min); `e ~ v/v_max` is an assumption; revolve seam angle drifts; a few Fermat curvature violations on Rectangle/Circle. Holes: rings bend round them (`notched_rings`: a keep-out per hole that grows one gap per ring after the first ring meets it), stitched by lane changes on one seam (`stitch_rings`, Archimedean / Corner-Step) or as a double spiral (`stitch_fermat`); the seam moves off holes. (Earlier the rings stopped at the first hole: 17 % of a four-hole board covered; a keyhole-slit approach measured worse with every generator.) Serpentine loses edge coverage (erodes by r_min); Fermat leaves its centre unfilled. `SliceResult.stats["coverage"]` measures all of these.
 
 ## 9. Extending for continuous-fiber thermoset parts
 

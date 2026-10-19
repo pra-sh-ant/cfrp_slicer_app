@@ -128,3 +128,29 @@ def test_stl_cup_gets_a_solid_floor_top(tmp_path):
 def test_stl_skins_ignore_empty_neighbours():
     sq = box(0, 0, 10, 10)
     assert stl_skins([sq, None, sq, sq], 1, 1) == [True, False, False, True]
+
+
+@pytest.mark.parametrize("shape,w,h", [("Square/Rectangle", 60.0, 40.0), ("Hexagon", 60.0, 60.0)])
+def test_seam_stagger_spreads_flat_spiral_seams_without_crossings(shape, w, h):
+    import math
+
+    from cfrp_core.capabilities import field_states
+    from cfrp_core.geometry._common import count_crossings
+
+    def starts(stagger):
+        cfg = base_2d_config(shape=shape, width=w, height=h, layers=6, tracks_per_layer=7, min_radius=3.0,
+                             seam_stagger=stagger)
+        res = slice_part(from_legacy_dict(cfg), DEFAULT_MACHINE)
+        out = []
+        for lay in sorted({p["layer"] for p in res.trajectory}):
+            pts = [p for p in res.trajectory if p["layer"] == lay and not p.get("is_anchor")]
+            assert count_crossings([(p["x"], p["y"]) for p in pts], 5.0) == 0
+            body = [p for p in pts if not p.get("is_transition")]
+            out.append((body[0]["x"], body[0]["y"]))
+        return min(math.dist(a, b) for i, a in enumerate(out) for b in out[i + 1:])
+
+    assert starts(0.0) < 1.0                    # every seam in one spot
+    assert starts(137.5) > 5.0                  # spread round the part
+    assert field_states(dict(shape=shape, infill_type=ARCH, layers=6))["seam_stagger"].enabled
+    assert not field_states(dict(shape=shape, infill_type=ARCH, layers=1))["seam_stagger"].enabled
+    assert not field_states(dict(shape=shape, infill_type=SERP, layers=6))["seam_stagger"].enabled

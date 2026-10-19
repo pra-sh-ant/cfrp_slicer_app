@@ -94,11 +94,7 @@ def infill_states(p: dict) -> dict[str, OptionState]:
             else:
                 states[name] = _off("Z shells are concentric rings only (Archimedean or Fermat).")
             continue
-        if name == FERMAT and shape == CUSTOM and p.get("custom_holes"):
-            states[name] = OptionState(True, "The Fermat spiral stops at the first hole, leaving most of a "
-                                             "holed outline empty; Archimedean and Corner-Step bend their "
-                                             "rings round holes. " + caution, caution=True)
-        elif name in (FERMAT, *ZIGZAGS) and caution:
+        if name in (FERMAT, *ZIGZAGS) and caution:
             states[name] = OptionState(True, caution, caution=True)
         else:
             states[name] = ON
@@ -139,8 +135,11 @@ def field_states(p: dict) -> dict[str, OptionState]:
     else:
         s["include_boundary"] = ON
     stl_only = _off("Only for STL Import.")
-    for key in ("stl_path", "stl_islands", "stl_scale"):
+    for key in ("stl_path", "stl_scale"):
         s[key] = ON if family == "stl" else stl_only
+    # A Custom Outline can be split into pieces by its holes, like a slice.
+    s["stl_islands"] = (ON if family == "stl" or shape == CUSTOM
+                        else _off("Only for STL Import and the Custom Outline (pieces split by holes)."))
     s["base_radius"] = (ON if family in ("revolve", "mushroom")
                         else _off("Only for Z shells and the Mushroom."))
     if family == "revolve":
@@ -227,8 +226,13 @@ def field_states(p: dict) -> dict[str, OptionState]:
         s["seam_stagger"] = ON
     elif shape == SQUARE_TUBE:
         s["seam_stagger"] = _off("The square tube keeps its seam on a straight side.")
+    elif family == "flat" and infill == ARCHIMEDEAN and layers > 1:
+        s["seam_stagger"] = ON
+    elif family == "flat" and infill == ARCHIMEDEAN:
+        s["seam_stagger"] = _off("Only one layer: there are no layer seams to stagger.")
     else:
-        s["seam_stagger"] = _off("Only for round Z shells (rotates each layer's seam).")
+        s["seam_stagger"] = _off("Only for round Z shells and flat Archimedean parts (it twists the "
+                                 "spiral so each layer's seam moves round).")
     for key in ("v_z", "v_overhang", "dwell"):
         s[key] = ON if family == "mushroom" else mushroom_only
     return s

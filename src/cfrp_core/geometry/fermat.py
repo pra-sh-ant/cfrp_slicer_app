@@ -12,6 +12,7 @@ from ._common import (
     dedupe_path,
     hole_keepouts,
     inset_components,
+    notched_rings,
     resample_closed_ring,
 )
 
@@ -57,6 +58,7 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
 
     holes = hole_keepouts(base_poly)
     remaining = [int(track_count)] if track_count is not None else [None]
+    built = [0]                                   # rings the region walk laid (a hole stops it early)
 
     def _next_ring(poly, inset):
         """One offset+fillet step. Returns None (vanished), a list of
@@ -80,6 +82,7 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
                 return a_rings, b_rings, (comps_b or [])
             a_rings.append(comps_a[0])
             b_rings.append(comps_b[0])
+            built[0] += 2
             if remaining[0] is not None:
                 remaining[0] -= 2
             inset_a += 2.0 * track_gap
@@ -197,6 +200,22 @@ def fermat_spiral_path(base_poly, track_gap, min_radius, track_count=None,
         return in_path + child_path + reversal_arc + out_path
 
     path = spiral_region(base_poly, entry_hint)
+    if holes:
+        # A hole ends the region walk at the first ring that comes near it.
+        # Rings that bend round the holes (notched_rings) then fill the part
+        # as a stitched double spiral, if they give clearly more (an
+        # annulus's bore stops every ring at once: nothing gained).
+        notched = notched_rings(base_poly, track_gap, min_radius,
+                                max_rings=int(track_count) if track_count is not None else None)
+        if len(notched) >= 2 and len(notched) > built[0] + 1:
+            from .corner_step import RING_PTS, resample_ring_cw, stitch_fermat
+            rings = [resample_ring_cw(list(p.exterior.coords), max(RING_PTS, int(math.ceil(p.exterior.length / 0.5))))
+                     for p in notched]
+            if mirror:
+                rings = [ring[::-1] for ring in rings]
+            stitched = stitch_fermat(rings, track_gap, min_radius, seam_hint=entry_hint, keepouts=holes)
+            if stitched:
+                path = stitched
     if not path:
         return []
     if start_from_inside:

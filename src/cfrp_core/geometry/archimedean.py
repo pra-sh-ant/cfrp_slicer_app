@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import math
 
+import numpy as np
+
 from ._common import (
     blend_chain,
     check_gap_radius,
@@ -16,9 +18,11 @@ from ._common import (
     ring_tail,
 )
 
+MAX_TWIST_PER_RING = 60.0 / 360.0     # laps of extra run along one ring (seam turn)
+
 
 def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False,
-                     seam_hint=None, polar_center=None, outer_start=None, lead_in=0.0):
+                     seam_hint=None, polar_center=None, outer_start=None, lead_in=0.0, seam_turn=0.0):
     """One smooth, continuously-blended spiral inside an arbitrary polygon.
 
     Rings sit at inset d_k = gap/2 + k·gap from the outer shell. Instead of
@@ -40,6 +44,10 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     (e.g. where a boundary wall loop hands over).
     `polar_center`: pair ring points by angle about this point instead of by
     arc length (rings must be star-shaped about it; see resample_polar_ring).
+    `seam_turn` (laps): end the blended spiral that much further round than
+    it would (see _twisted_chain; at most MAX_TWIST_PER_RING per ring). As
+    each layer starts where the last ended, consecutive layers' seams are
+    staggered.
 
     Returns (path, base_poly). Raises ValueError if `track_count` rings were
     requested but fewer fit.
@@ -103,6 +111,11 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
     # Shared sample count: ~one point per 0.75 mm on the longest ring, ≥120.
     max_length = max(poly.exterior.length for poly in ordered)
     samples = max(120, int(max_length / 0.75))
+    # Seam turn: samples to follow each inner ring (rings 1 .. n-2) before
+    # blending on.
+    arcs = len(ordered) - 2
+    step = (int(round(min(abs(seam_turn) / arcs, MAX_TWIST_PER_RING) * samples))
+            if seam_turn and arcs > 0 else 0)
 
     if len(ordered) == 1:
         ring = resample(ordered[0], samples, None)
@@ -128,8 +141,11 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         # handles ALL ring-to-ring transitions (including ring0→ring1)
         # with the same smooth, curvature-continuous linear blending.
         first_lap = ring0_pts + [ring0_pts[0]]
-        inner_close = resampled[-1][1:] + [resampled[-1][0]]
-        continuous_path = first_lap + blend_chain(resampled, samples) + inner_close
+        if step:
+            continuous_path = first_lap + _twisted_chain(ordered, resample, samples, ring0_pts, step)
+        else:
+            inner_close = resampled[-1][1:] + [resampled[-1][0]]
+            continuous_path = first_lap + blend_chain(resampled, samples) + inner_close
 
     else:
         # ----------------------------------------------------------------
@@ -152,7 +168,10 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         # Lead-in (first layer only): the innermost ring just before the
         # start; the first lap blends away from it, so nothing crosses it.
         lead = ring_tail(ring0_pts, 0, lead_in) if lead_in > 0 else []
-        continuous_path = lead + blend_chain(resampled, samples) + inner_close
+        if step:
+            continuous_path = lead + _twisted_chain(ordered, resample, samples, ring0_pts, step)
+        else:
+            continuous_path = lead + blend_chain(resampled, samples) + inner_close
 
     path = dedupe_path(continuous_path)
 
@@ -163,3 +182,25 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
             path = path + [path[0]]
 
     return path, base_poly
+
+
+def _twisted_chain(ordered, resample, samples, first, step):
+    """Like blend_chain + the closing lap, but after arriving on each ring
+    but the last the path follows that ring `step` samples further before
+    blending on, so every ring pair starts further round and the spiral ends
+    (step x rings) further round. Each blend stays phase-aligned, as in the
+    plain spiral (shifting the next ring's start instead made the blend cut
+    corners: crossings on rectangles and hexagons); the extra run lies on
+    its ring, a gap from the revolutions either side."""
+    u = np.linspace(0.0, 1.0, samples, endpoint=False).reshape(-1, 1)
+    path = []
+    a = np.asarray(first, dtype=np.float64)
+    for k, poly in enumerate(ordered[1:], start=1):
+        b = np.asarray(resample(poly, samples, (float(a[0][0]), float(a[0][1]))), dtype=np.float64)
+        path += [(float(x), float(y)) for x, y in a[:samples] * (1.0 - u) + b[:samples] * u]
+        if k < len(ordered) - 1:
+            path += [(float(x), float(y)) for x, y in b[:step]]
+            a = np.asarray(resample(poly, samples, (float(b[step][0]), float(b[step][1]))), dtype=np.float64)
+        else:
+            path += [(float(x), float(y)) for x, y in b] + [(float(b[0][0]), float(b[0][1]))]
+    return path

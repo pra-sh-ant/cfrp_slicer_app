@@ -139,11 +139,12 @@ def _join_open_chains(chains, tol):
     return rings, still_open
 
 
-def _stitch(chains, max_gap):
+def _stitch(chains, max_gap, where=None):
     """Close what a hole in the mesh left open (as Cura's extensive
     stitching does): repeatedly bridge the closest pair of open ends -- a
     chain's own two ends, or the end of one chain to an end of another --
-    while that gap is at most max_gap. Returns (rings, still_open, stitches)."""
+    while that gap is at most max_gap. Returns (rings, still_open, stitches);
+    `where` (list) receives the middle of every gap bridged."""
     chains = [list(c) for c in chains]
     rings, stitches = [], 0
     while chains:
@@ -166,6 +167,13 @@ def _stitch(chains, max_gap):
             break
         _, i, j, flips = best
         stitches += 1
+        if where is not None:
+            if j is None:
+                a, b = chains[i][-1], chains[i][0]
+            else:
+                a = chains[i][0] if flips[0] else chains[i][-1]
+                b = chains[j][-1] if flips[1] else chains[j][0]
+            where.append(((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0))
         if j is None:
             ring = chains.pop(i)
             rings.append(ring + [ring[0]])
@@ -178,7 +186,7 @@ def _stitch(chains, max_gap):
 
 
 def segments_to_region(segs: np.ndarray, closing_radius: float = DEFAULT_CLOSING_RADIUS_MM,
-                       stitch_mm: float = 0.0, report: dict | None = None):
+                       stitch_mm: float = 0.0, report: dict | None = None, z: float | None = None):
     """Chain section segments into rings and combine them with the even-odd
     rule (an island inside a hole inside a part stays an island). Returns a
     Polygon or MultiPolygon (possibly empty).
@@ -186,7 +194,8 @@ def segments_to_region(segs: np.ndarray, closing_radius: float = DEFAULT_CLOSING
     Chains still open after joining ends within ~2 x closing_radius come from
     holes in the mesh; with `stitch_mm` > 0, gaps up to that size are bridged
     straight. `report` (dict) counts 'stitched' gaps and 'open' chains that
-    could not be closed (dropped)."""
+    could not be closed (dropped); with `z`, report['markers'] also gets
+    (x, y, z, kind) for each, kind 'stitched gap' or 'open outline'."""
     if len(segs) == 0:
         return Polygon()
     merged = linemerge(MultiLineString([s.tolist() for s in segs]))
@@ -201,13 +210,19 @@ def segments_to_region(segs: np.ndarray, closing_radius: float = DEFAULT_CLOSING
     tol = max(float(closing_radius), 1e-6) * 2.0
     rings, still_open = _join_open_chains(open_chains, tol)
     closed.extend(rings)
+    marks = report.setdefault('markers', []) if report is not None and z is not None else None
     if still_open and stitch_mm > 0:
-        rings, still_open, n = _stitch(still_open, float(stitch_mm))
+        where = [] if marks is not None else None
+        rings, still_open, n = _stitch(still_open, float(stitch_mm), where)
         closed.extend(rings)
         if report is not None:
             report['stitched'] = report.get('stitched', 0) + n
+        if marks is not None:
+            marks.extend((x, y, z, 'stitched gap') for x, y in where)
     if still_open and report is not None:
         report['open'] = report.get('open', 0) + len(still_open)
+        if marks is not None:
+            marks.extend((c[0][0], c[0][1], z, 'open outline') for c in still_open)
 
     polys = []
     for ring in closed:
@@ -289,13 +304,13 @@ def slice_mesh_regions(
 
     def region_at(z):
         if len(bodies) <= 1:
-            return segments_to_region(section_segments(tris, z), closing_radius, stitch_mm, report)
-        parts = [segments_to_region(section_segments(t, z), closing_radius, stitch_mm, report)
+            return segments_to_region(section_segments(tris, z), closing_radius, stitch_mm, report, z)
+        parts = [segments_to_region(section_segments(t, z), closing_radius, stitch_mm, report, z)
                  for t in adds]
         parts = [p for p in parts if not p.is_empty]
         region = unary_union(parts) if parts else Polygon()
         for t in subs:
-            hole = segments_to_region(section_segments(t, z), closing_radius, stitch_mm, report)
+            hole = segments_to_region(section_segments(t, z), closing_radius, stitch_mm, report, z)
             if not hole.is_empty:
                 region = region.difference(hole)
         return region
@@ -311,7 +326,42 @@ def slice_mesh_regions(
         if first is None:
             first = k
         slices.append((z_offset + (k - first) * layer_height, region))
+    if report is not None:
+        # problem markers at print Z (a plane's Z as its slice is printed)
+        base = float(z_planes[first]) if first is not None else z_min
+        def to_print(zz):
+            return z_offset + (zz - base)
+        cx, cy = (tris[:, :, 0].min() + tris[:, :, 0].max()) / 2.0, (tris[:, :, 1].min() + tris[:, :, 1].max()) / 2.0
+        marks = [(x, y, to_print(zz), kind) for x, y, zz, kind in report.get('markers', [])]
+        marks += [(float(cx), float(cy), to_print(zz), 'empty slice') for zz in report['empty_planes']
+                  if base <= zz <= z_max]
+        report['markers'] = marks
+        report['to_print_z'] = to_print
     return slices
+
+
+def open_edges(mesh, limit: int = 400) -> np.ndarray:
+    """Midpoints (N, 3) of the mesh's open edges -- edges only one triangle
+    uses (coordinates matched to 1 micron) -- at most `limit`, spread over
+    the mesh. Empty for a watertight mesh."""
+    tris = _triangles(mesh)
+    if not len(tris):
+        return np.zeros((0, 3))
+    keys = np.round(tris.reshape(-1, 3) * 1e3).astype(np.int64)
+    _, vid = np.unique(keys, axis=0, return_inverse=True)
+    vid = vid.reshape(-1, 3)
+    edges = np.sort(np.concatenate([vid[:, [0, 1]], vid[:, [1, 2]], vid[:, [2, 0]]]), axis=1)
+    uniq, inverse, counts = np.unique(edges, axis=0, return_inverse=True, return_counts=True)
+    single = counts[inverse.ravel()] == 1
+    if not single.any():
+        return np.zeros((0, 3))
+    pts = tris.reshape(-1, 3)
+    a = np.concatenate([np.arange(len(tris)) * 3, np.arange(len(tris)) * 3 + 1, np.arange(len(tris)) * 3 + 2])
+    b = np.concatenate([np.arange(len(tris)) * 3 + 1, np.arange(len(tris)) * 3 + 2, np.arange(len(tris)) * 3])
+    mid = (pts[a[single]] + pts[b[single]]) / 2.0
+    if len(mid) > limit:
+        mid = mid[np.linspace(0, len(mid) - 1, limit).astype(int)]
+    return mid
 
 
 def slice_mesh(

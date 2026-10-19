@@ -164,7 +164,8 @@ def max_track_count(base_poly, track_gap, min_radius, infill_type, include_bound
 
 
 def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_layer,
-                   include_boundary, angle, layer_idx=0, last_pt=None, last_dir=None, lead_in=0.0):
+                   include_boundary, angle, layer_idx=0, last_pt=None, last_dir=None, lead_in=0.0,
+                   seam_turn=0.0):
     """2D path for one layer of a flat part.
 
     Even layers spiral outside-in, odd layers inside-out. With
@@ -173,7 +174,9 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     reversed, never a spiral). `last_pt` (the previous layer's end) is
     prepended to keep the stroke continuous. `last_dir` (unit direction the
     previous layer ended with) lets the Fermat spiral pick the winding that
-    continues it rather than reversing at the seam.
+    continues it rather than reversing at the seam. `seam_turn` (laps):
+    Archimedean only, twist the spiral so the layer ends that much further
+    round (seam stagger between layers).
     """
     check_gap_radius(track_gap, min_radius)
     gap = track_gap
@@ -222,7 +225,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         infill_path, _ = archimedean_path(
             infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward,
             seam_hint=last_pt if is_outward else None, outer_start=wall_start,
-            lead_in=lead_in if is_outward and not include_boundary else 0.0,
+            lead_in=lead_in if is_outward and not include_boundary else 0.0, seam_turn=seam_turn,
         )
         # Outside-in after another layer: the outer ring starts at its first
         # vertex, which on a sliced mesh can be anywhere; if that is not where
@@ -231,7 +234,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         if (last_pt is not None and not is_outward and wall_start is None and infill_path
                 and math.dist(infill_path[0], last_pt) > 2.0 * gap):
             infill_path, _ = archimedean_path(
-                infill_bounds, gap, min_rad, track_count=tracks_per_layer, outer_start=last_pt)
+                infill_bounds, gap, min_rad, track_count=tracks_per_layer, outer_start=last_pt,
+                seam_turn=seam_turn)
     elif infill_type == FERMAT:
         # Enter where the previous layer ended. (Entering diametrically
         # opposite, as before, left the jump from the previous end as a

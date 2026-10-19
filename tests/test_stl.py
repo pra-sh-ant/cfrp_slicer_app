@@ -340,3 +340,22 @@ def test_fill_solid_on_a_flat_part_lays_every_ring_that_fits(infill):
     assert fit > 2
     assert full.stats["fiber_length_mm"] > few.stats["fiber_length_mm"] * 1.5
     assert not any("reduced" in n for n in full.constraint_notes)
+
+
+def test_mesh_problems_are_marked_where_they_are(tmp_path):
+    """Open edges and bridged gaps come back as (x, y, z, kind) markers at
+    print coordinates, next to the toolpath (for the 3D view)."""
+    trimesh = pytest.importorskip("trimesh")
+    m = trimesh.creation.cylinder(radius=25, height=6, sections=96)
+    m.update_faces(np.arange(len(m.faces)) != 5)
+    res = _slice(_stl(tmp_path, "holed", m), stl_stitch=5.0)
+    kinds = {k for *_, k in res.markers}
+    assert {"stitched gap", "open edge"} <= kinds
+    zs = [p["z"] for p in res.trajectory]
+    xs = [p["x"] for p in res.trajectory]
+    for x, _y, z, _ in res.markers:
+        assert min(zs) - 0.5 <= z <= max(zs) + 3.5
+        assert min(xs) - 3 <= x <= max(xs) + 3
+    assert any("marked in the 3D view" in n for n in res.info)
+    clean = _slice(_stl(tmp_path, "whole", trimesh.creation.cylinder(radius=25, height=6, sections=96)))
+    assert clean.markers == ()
