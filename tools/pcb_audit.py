@@ -194,7 +194,8 @@ def main():
     print("messages:")
     for m, c in messages.most_common(40):
         print(f"  {c:4}  {m}")
+    return 1 if problems else 0
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())

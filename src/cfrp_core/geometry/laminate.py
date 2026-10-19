@@ -9,6 +9,7 @@ from ..config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT
 from ._common import (
     arc_along_ring,
     check_gap_radius,
+    count_crossings,
     dedupe_path,
     hole_keepouts,
     inset_components,
@@ -16,7 +17,7 @@ from ._common import (
     notched_rings,
 )
 from .archimedean import archimedean_path
-from .corner_step import _is_rectangle, corner_step_path
+from .corner_step import corner_step_path, is_rectangle
 from .fermat import fermat_spiral_path
 from .outlines import printable_boundary
 from .serpentine import oriented_serpentine
@@ -46,7 +47,7 @@ def _trim_end(points, length):
     return points
 
 
-def _wall_seam(wall_poly, near=None):
+def wall_seam(wall_poly, near=None):
     """Where the wall loop starts/ends: the point of the wall nearest `near`
     (the stroke's current end), or, with none, the middle of its longest
     straight side, so the hand-over to the infill is not on a corner arc."""
@@ -59,7 +60,7 @@ def _wall_seam(wall_poly, near=None):
     return ((a[0] + b[0]) / 2.0, (a[1] + b[1]) / 2.0)
 
 
-def _ring_from(poly, start):
+def ring_from(poly, start):
     """poly's exterior as a closed point list starting and ending at `start`
     (a point on it), keeping the exterior's direction."""
     ring = poly.exterior
@@ -73,23 +74,35 @@ def _ring_from(poly, start):
     return [tuple(start)] + after + before + [tuple(start)]
 
 
-def _entry_route(entry_from, path, corridor):
+def _entry_route(entry_from, path, corridor, allowed=None, gap=1.0, min_rad=0.0):
     """Points along `corridor`'s ring from entry_from towards path[0], used
     only when the straight jump entry_from -> path[0] crosses `path` and the
     detour crosses it less (a corridor narrower than the U-turns would cut
-    through them instead)."""
+    through them instead). With holes, a route must stay inside `allowed`
+    (where fibre may lie; default the corridor)."""
     if corridor.is_empty or corridor.geom_type != 'Polygon' or len(path) < 3:
         return []
     line = LineString(path)
     straight = LineString([entry_from, path[0]])
     if len(corridor.interiors):
         # Holes: the straight jump may span one; route like the zigzag's own
-        # run connectors (straight or along any margin ring, both ways).
-        if not straight.crosses(line) and corridor.buffer(1e-6).covers(straight):
+        # run connectors (straight or along any margin ring, both ways),
+        # keeping only routes that stay on the part -- a hop from the entry
+        # point onto a ring across the plate ran over a hole between --
+        # else the shortest way on the rings' roadmap.
+        region = corridor.buffer(1e-6)
+        zone = (allowed if allowed is not None else corridor).buffer(1e-6)
+        if not straight.crosses(line) and zone.covers(straight):
             return []
-        from .serpentine import _margin_rings, _routes
-        options = _routes(tuple(entry_from), path[0], corridor.buffer(1e-6), _margin_rings(corridor, 0.0),
-                          reach=1e9)
+        from .serpentine import _margin_rings, _Roadmap, _routes
+        rings = _margin_rings(corridor, 0.0)
+        options = [r for r in _routes(tuple(entry_from), path[0], region, rings, reach=1e9)
+                   if zone.covers(LineString([entry_from] + r))]
+        if not options:
+            detour = _Roadmap(zone, rings, max(min_rad, gap) + 1.5 * gap, max(gap, 0.75))(entry_from, path[0])
+            options = [detour] if detour else []
+        if not options:
+            return []
         best = min(options, key=lambda r: (_crossing_count(LineString([entry_from] + r), line),
                                            LineString([entry_from] + r).length))
         return best[:-1]
@@ -144,7 +157,7 @@ def max_track_count(base_poly, track_gap, min_radius, infill_type, include_bound
             # archimedean_path bends rings round the holes when they stop it
             count = max(count, len(notched_rings(bounds, gap, min_radius)))
         return count
-    if infill_type == CORNER_STEP and _is_rectangle(base_poly):
+    if infill_type == CORNER_STEP and is_rectangle(base_poly):
         x0, y0, x1, y1 = base_poly.bounds
         return max(0, int((min(x1 - x0, y1 - y0) - 2.0 * min_radius + gap) / (2.0 * gap) + 1e-9))
     return None
@@ -203,7 +216,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     # Wall first (even layers): it starts nearest the previous end and hands
     # over to the infill at that same seam.
     wall_first = include_boundary and not is_outward
-    wall_start = _wall_seam(wall_poly, last_pt) if wall_first else None
+    wall_start = wall_seam(wall_poly, last_pt) if wall_first else None
 
     if infill_type == ARCHIMEDEAN:
         infill_path, _ = archimedean_path(
@@ -227,7 +240,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         # After a wall loop, enter at the wall's seam going the wall's way.
         entry, entry_dir = last_pt, last_dir
         if wall_first:
-            wall_loop = _ring_from(wall_poly, wall_start)
+            wall_loop = ring_from(wall_poly, wall_start)
             entry = wall_start
             dx, dy = wall_loop[-1][0] - wall_loop[-2][0], wall_loop[-1][1] - wall_loop[-2][1]
             n = math.hypot(dx, dy)
@@ -264,12 +277,26 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             def cost(p):
                 d = math.hypot(p[0][0] - entry_from[0], p[0][1] - entry_from[1])
                 return d + 5.0 * max(min_rad, gap) * max(0.0, -_start_alignment(p, arrive))
-            infill_path = min(candidates, key=cost)
             # ...and if the straight jump to it would still cut across the
             # lines, run along a ring between the outline and the line ends
             # (the lines are eroded by min_rad, so the corridor is clear).
-            corridor = wall_poly.buffer(-gap, join_style=1) if include_boundary else wall_poly
-            infill_path = _entry_route(entry_from, infill_path, largest_polygon(corridor)) + infill_path
+            corridor = largest_polygon(wall_poly.buffer(-gap, join_style=1) if include_boundary else wall_poly)
+
+            def entry(p):
+                route = _entry_route(entry_from, p, corridor, allowed=wall_poly, gap=gap, min_rad=min_rad)
+                hits = (count_crossings([tuple(entry_from)] + [tuple(q) for q in route] + list(p))
+                        - count_crossings(p)) if holed else 0
+                return (hits, cost(p)), route
+            # On a part with holes: fewest lines crossed on the way in, then
+            # the nearest corner. (A layer that ended by a hole, mid-part,
+            # entered the nearest corner across the new layer's lines.)
+            holed = bool(len(getattr(wall_poly, 'interiors', ())))
+            if holed:
+                (_, route), infill_path = min(((entry(p), p) for p in candidates), key=lambda e: e[0][0])
+            else:
+                infill_path = min(candidates, key=cost)
+                route = entry(infill_path)[1]
+            infill_path = route + infill_path
 
     if not infill_path:
         return wall_coords if include_boundary else []
@@ -291,7 +318,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         # start the wall where the infill would have ended (see wall_first).
         # Only spirals end running along the wall; a zigzag ends on a line.
         peel_pt = infill_path[-1]
-        wall_reordered = _ring_from(wall_poly, _wall_seam(wall_poly, peel_pt))
+        wall_reordered = ring_from(wall_poly, wall_seam(wall_poly, peel_pt))
         if infill_type in (ARCHIMEDEAN, FERMAT):
             trimmed = _trim_end(infill_path, _lane_change_length(gap, min_rad))
             if not LineString([trimmed[-1], wall_reordered[0]]).crosses(LineString(trimmed)):
@@ -302,7 +329,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     else:
         if last_pt:
             continuous_path.append(last_pt)
-        wall_reordered = _ring_from(wall_poly, wall_start)
+        wall_reordered = ring_from(wall_poly, wall_start)
 
         # Lane change into the infill: when it starts at the wall's seam,
         # stop the wall loop L short so the one-gap sideways step is spread

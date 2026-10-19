@@ -63,6 +63,8 @@ PERTURB = {
     "first_layer_solid": lambda p: not p.get("first_layer_solid", False),
     "first_layer_infill": lambda p: "Corner-Step Spiral",
     "first_layer_min_coverage": lambda p: 0.5,
+    "solid_bottom_layers": lambda p: 2,
+    "solid_top_layers": lambda p: 2,
     "stl_closing_radius": lambda p: 0.3,
     "stl_stitch": lambda p: 1.0,
 }

@@ -1,9 +1,11 @@
 """Zigzag patterns: oriented serpentine infill (spec §5.6)."""
 from __future__ import annotations
 
+import heapq
 import math
 
 import numpy as np
+import shapely
 from shapely import STRtree
 from shapely.affinity import rotate
 from shapely.geometry import LineString, MultiLineString, Point
@@ -127,11 +129,13 @@ def _margin_rings(poly, gap):
     return rings
 
 
-def _routes(a, b, poly, rings, reach, step=0.75):
+def _routes(a, b, poly, rings, reach, step=0.75, roadmap=None):
     """Candidate connectors from a to b, each the points after a up to b:
     straight if that stays on the part, and along every margin ring within
     `reach` of both ends, both ways round. None of them spans a hole or
-    leaves the outline."""
+    leaves the outline. When none exists (a run end by the outline, the next
+    run's start beyond a hole: no ring is near both), the shortest way on
+    the `roadmap` (a callable), and only failing that the straight line."""
     out = []
     if poly.covers(LineString([a, b])):
         out.append([tuple(b)])
@@ -146,10 +150,95 @@ def _routes(a, b, poly, rings, reach, step=0.75):
             n = max(2, int(span / step))
             pts = [ring.interpolate((t0 + sign * span * k / n) % length).coords[0] for k in range(n + 1)]
             out.append(pts + [tuple(b)])
+    if not out and roadmap is not None:
+        detour = roadmap(a, b)
+        if detour:
+            out.append(detour)
     return out or [[tuple(b)]]
 
 
+class _Roadmap:
+    """Points about every `step` along the margin rings, linked along each
+    ring and by straight hops of up to `reach` that stay on the part.
+    Shortest-path search on it finds a connector that keeps to the part when
+    no single ring joins its ends. (The straight fallback ran 1.9 mm of
+    fibre across a 2.5 mm hole by a plate's edge -- found by the property
+    tests.)"""
+
+    def __init__(self, region, rings, reach, step):
+        self.region, self.reach = region, reach
+        pts, edges = [], []
+        for ring in rings:
+            n = max(3, int(math.ceil(ring.length / step)))
+            base = len(pts)
+            pts.extend(ring.interpolate(ring.length * k / n).coords[0] for k in range(n))
+            edges.extend((base + k, base + (k + 1) % n) for k in range(n))
+        self.pts = np.asarray(pts, dtype=np.float64).reshape(-1, 2)
+        self.adj = [[] for _ in pts]
+        for i, j in edges:
+            self._link(i, j)
+        if len(pts) > 1:
+            geoms = shapely.points(self.pts)
+            self.tree = STRtree(geoms)
+            i, j = self.tree.query(geoms, predicate='dwithin', distance=reach)
+            keep = i < j
+            i, j = i[keep], j[keep]
+            if len(i):
+                ok = shapely.covers(region, shapely.linestrings(np.stack([self.pts[i], self.pts[j]], axis=1)))
+                for a, b in zip(i[ok].tolist(), j[ok].tolist(), strict=True):
+                    self._link(a, b)
+        else:
+            self.tree = None
+
+    def _link(self, i, j):
+        d = float(np.hypot(*(self.pts[i] - self.pts[j])))
+        self.adj[i].append((j, d))
+        self.adj[j].append((i, d))
+
+    def _near(self, p):
+        """(node, distance) of roadmap nodes a straight hop on the part from p."""
+        if self.tree is None:
+            return []
+        idx = self.tree.query(Point(p), predicate='dwithin', distance=self.reach)
+        if not len(idx):
+            return []
+        segs = shapely.linestrings(np.stack([np.broadcast_to(p, (len(idx), 2)), self.pts[idx]], axis=1))
+        ok = shapely.covers(self.region, segs)
+        return [(int(k), float(np.hypot(*(self.pts[k] - p)))) for k in idx[ok]]
+
+    def __call__(self, a, b):
+        a, b = np.asarray(a, dtype=np.float64), np.asarray(b, dtype=np.float64)
+        goal = {k: d for k, d in self._near(b)}
+        if not goal:
+            return None
+        dist, prev, heap = {}, {}, []
+        for k, d in self._near(a):
+            if d < dist.get(k, math.inf):
+                dist[k], prev[k] = d, None
+                heapq.heappush(heap, (d, k))
+        best, end = math.inf, None
+        while heap:
+            d, k = heapq.heappop(heap)
+            if d > dist.get(k, math.inf) or d >= best:
+                continue
+            if k in goal and d + goal[k] < best:
+                best, end = d + goal[k], k
+            for j, w in self.adj[k]:
+                nd = d + w
+                if nd < dist.get(j, math.inf):
+                    dist[j], prev[j] = nd, k
+                    heapq.heappush(heap, (nd, j))
+        if end is None:
+            return None
+        chain = []
+        while end is not None:
+            chain.append(tuple(self.pts[end].tolist()))
+            end = prev[end]
+        return chain[::-1] + [tuple(b.tolist())]
+
+
 _CROSSING_COST = 1e6     # one crossing outweighs any connector length
+_OFF_PART_COST = 1e9     # fibre off the part / over a hole outweighs any crossings
 _EXACT_ORDER_RUNS = 8    # run counts up to this get the exact order search
 
 
@@ -222,6 +311,13 @@ def _join_runs(runs, poly, gap, start_from_end, min_rad=0.0):
     region = poly.buffer(1e-6)
     rings = _margin_rings(poly, gap)
     reach = max(min_rad, gap) + 1.5 * gap
+    roadmap = []                                 # built on first need
+
+    def detour(a, b):
+        if not roadmap:
+            roadmap.append(_Roadmap(region, rings, reach, max(gap, 0.75)))
+        return roadmap[0](a, b)
+
     n = len(runs)
     cost = {}
     for i in range(n):
@@ -233,12 +329,14 @@ def _join_runs(runs, poly, gap, start_from_end, min_rad=0.0):
                 for b in range(4):
                     start = variants[j][b][0]
                     best = None
-                    for route in _routes(end, start, region, rings, reach):
+                    for route in _routes(end, start, region, rings, reach, roadmap=detour):
                         link = LineString([end] + route)
                         hits = sum(1 for k in tree.query(link, predicate='crosses') if k not in (i, j))
                         hits += sum(1 for g in (geoms[i][a], geoms[j][b])
                                     if g is not None and link.crosses(g))
                         c = hits * _CROSSING_COST + link.length
+                        if not region.covers(link):
+                            c += _OFF_PART_COST
                         if best is None or c < best[0]:
                             best = (c, route)
                     cost[i, a, j, b] = best

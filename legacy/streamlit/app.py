@@ -6,11 +6,11 @@ All slicing logic lives in src/cfrp_core; this file only collects sidebar
 inputs, calls the core and renders results. It is replaced by the desktop
 GUI in Phase 7 and removed in Phase 10.
 """
-import streamlit as st
-
 import presets
-from cfrp_core import DEFAULT_MACHINE, ConfigError, from_legacy_dict, resolve_process_constraints, slice_part
+import streamlit as st
 from ui import results, sidebar
+
+from cfrp_core import DEFAULT_MACHINE, ConfigError, from_legacy_dict, resolve_process_constraints, slice_part
 
 st.set_page_config(layout="wide", page_title="CFRP Slicer Pro", page_icon="🔬")
 

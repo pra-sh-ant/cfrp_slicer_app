@@ -5,6 +5,75 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 38 — robustness, multi-layer planning, code health)
+- **Solid bottom / top layers** (`solid_bottom_layers`, `solid_top_layers`, GUI
+  *Pattern & Layers*, default off): that many layers at the bottom and top are
+  filled solid with the First Layer / Skin Pattern. On an imported STL every slice
+  whose top or bottom is exposed gets them too (the top of a base under thinner
+  walls, the underside of an overhang). The info list names the skin layers.
+- **Layer plan** (`layers.plan_layers`): pattern, fill and spiral direction per
+  layer. Archimedean / Corner-Step layers after a zigzag layer now start
+  outside-in from the perimeter, where the zigzag ended (inside-out, the climb ran
+  to the centre and the layer's rings crossed it): with a zigzag first layer under
+  spiral layers, crossings on layer 2 fell from 30 to 11 (Corner-Step) and 26 to
+  20 (Archimedean) over four shapes x two zigzags. A run of an odd number of
+  spiral layers between zigzag layers ends with a Fermat layer, noted in the info.
+  Without skins and with one pattern the plan is unchanged.
+- **New checks** (errors): fibre over a hole of the part; Z going down; a
+  layer-to-layer climb over a hole or off the part.
+- **"How to fix"** under each warning / error in the issue list and the print
+  report (`cfrp_core.hints.fix_hint`), in plain words.
+- Info notes: laminate thickness (layers x layer height), and a Z-Offset under
+  half the layer height.
+- **Property tests** (`tests/test_property_fibre.py`, hypothesis): random convex
+  outlines and plates with up to three holes, every pattern, random gap / radius /
+  layers / fill, must keep the fibre rules. Cases found by longer runs are pinned.
+- **Audits in CI**: `validation_sweep.py --quick`, `multilayer_audit.py --quick`
+  and `pcb_audit.py 12` run after the tests and fail the build on a crash, a Fail
+  status or a broken invariant.
+- `cfrp_core.trajectory`: `TrajectoryPoint` (the keys a point may carry) and
+  `check_trajectory` (missing / unknown keys, non-finite numbers, bad flags).
+
+### Fixed (Phase 38 — found by the property tests and a 480-case holed-plate scan)
+- Ring spirals on plates with holes (Archimedean's rings that bend round holes,
+  Corner-Step on holed outlines) put the lane-change seam in the middle of the
+  longest edge even when a hole sat there: the lane change ran 0.8 mm over the
+  hole, or across the next ring (4 crossings). The seam now moves to the next
+  clean place (other straights, then points round the ring), counting the jump
+  from where the stroke arrives.
+- Radius smoothing pulled a ring's inside corner by a hole 2 mm over the hole
+  (`enforce_min_radius_clear` keeps smoothed points out of holes).
+- Zigzag connectors that no single margin ring could serve fell back to a straight
+  line, 1.9 mm across a hole by the plate's edge; they now go round on the margin
+  rings, and a connector off the part is never chosen.
+- The entry from the previous layer (or the wall loop) into a zigzag on a holed
+  part hopped onto a ring across the plate, over a hole (7 Fails in the scan); entry
+  routes must now stay on the part, and the zigzag starts at the corner whose way in
+  crosses fewest lines.
+- "Requested N tracks, but only N-1 fit" on holed plates although the constraint
+  step had allowed N: the rings that bend round holes are now used whenever only
+  they reach the requested count (10 refusals in the scan).
+- STL parts whose bottom slices are empty (a sphere, a cone tip): the first printed
+  slice and the next one could both run outside-in; directions now count from the
+  first printed slice.
+- Fill Solid with a different First Layer Pattern gave that first layer the main
+  pattern's track count instead of filling it.
+
+### Known limits (Phase 38)
+- A zigzag around a hole close to a 45° edge can keep a crossing: the only clean
+  order needs a connector along the edge, where the U-turns reach ~0.2 mm past
+  the corridor. Zigzag layers on holed parts can still cross the climb from the
+  previous layer when it ended mid-part. Both are warnings, not fibre over a hole.
+
+### Internal (Phase 38)
+- `layers.py` split into the `layers/` package (`common`, `planning`, `flat`,
+  `stl`, `revolve`); no module imports another's private helpers
+  (`is_rectangle`, `stitch_rings`, `resample_ring_cw`, `ring_from`, `wall_seam`
+  are public now).
+- The Streamlit front end moved to `legacy/streamlit/` with its own requirements
+  and tests; the root requirements are the core + the PySide6 GUI.
+- Golden outputs unchanged (63 golden tests).
+
 ### Added (Phase 37 — the suggested upgrades)
 - **Auto-router** (`cfrp_core.diw.router`): unrouted connections (ratsnest: same-net
   islands joined by a minimum spanning tree) drawn dashed in the editor;

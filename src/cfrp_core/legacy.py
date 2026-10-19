@@ -69,6 +69,8 @@ _FIELD_MAP = {
     "first_layer_solid": (None, "first_layer_solid"),
     "first_layer_infill": (None, "first_layer_infill"),
     "first_layer_min_coverage": (None, "first_layer_min_coverage"),
+    "solid_bottom_layers": (None, "solid_bottom_layers"),
+    "solid_top_layers": (None, "solid_top_layers"),
 }
 
 

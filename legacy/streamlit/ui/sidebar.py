@@ -8,9 +8,8 @@ and testable instead of one 250-line block.
 """
 import math
 
-import streamlit as st
-
 import presets
+import streamlit as st
 
 
 def render_run_controls():

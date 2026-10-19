@@ -58,15 +58,46 @@ fibre layers would mean cutting the fibre).
 10. **Print simulation report** (PDF/HTML): time, materials, resistances, DRC,
     coverage per layer, for sharing with a team.
 
-### What is left (next candidates)
-- Fermat spiral on holed outlines (it still stops at the first hole; caution shown).
-- Ramp seam on holed zigzag layers can cut the entry detour (1 crossing on the test board).
-- Viewer: translucent STL mesh overlay; build the tube mesh in the worker thread for very large parts.
-- PCB editor: vertex editing of outlines and traces, DXF/Gerber import, multi-layer
-  (stacked) conductors with insulated crossovers, embedding electronics between
-  fibre layers (needs a fibre cut, so not in the one-stroke pipeline).
-- DIW: start/stop flow compensation (retract / pre-pressure distances), per-material
-  presets (silver, carbon, liquid metal, UV dielectric), cure (UV) between DIW layers.
+### The 28 basic upgrades (asked for after Phase 37)
+
+| # | Upgrade | Status |
+|---|---------|--------|
+| 1 | Seam stagger / interlock for flat parts | open |
+| 2 | Inter-layer checks (fibre over a hole, Z down, climb over a hole) | done (Phase 38) |
+| 3 | Ramp / entry on holed boards crossing a hole | done (Phase 38): entry routes stay on the part |
+| 4 | Solid bottom / top skins, per-layer plan | done (Phase 38) |
+| 5 | Layup meaningful for spirals | open |
+| 6 | Thickness and Z check | done (Phase 38): thickness note, Z-Offset note, Z-down error |
+| 7 | Plain tight-bend summary / fix hints | done (Phase 38): "How to fix" per message |
+| 8 | Fermat spiral around holes | open |
+| 9 | Multi-piece slices in one stroke with flagged bridges | open |
+| 10 | Mesh-problem markers in the 3D view | open |
+| 11 | Adaptive layer height for STL | open |
+| 12 | Ink over an insulation edge rule | open |
+| 13 | Crossovers (bridges / wire levels) and vias | open |
+| 14 | Current capacity per trace | open |
+| 15 | Part orientation checks, pin-1 marker | open |
+| 16 | Ink drying wait and ordering | open |
+| 17 | Bead spread factor | open |
+| 18 | Split layers.py | done (Phase 38) |
+| 19 | No private cross-module imports | done (Phase 38) |
+| 20 | Retire Streamlit | done (Phase 38): `legacy/streamlit/` |
+| 21 | Typed trajectory | done (Phase 38): `TrajectoryPoint`, `check_trajectory` |
+| 22 | Hypothesis property tests | done (Phase 38) |
+| 23 | Audits in CI | done (Phase 38) |
+| 24 | Speed: viewer mesh in the worker thread | open |
+| 25 | Settings undo, "ignored keys" on load | open |
+| 26 | One project file (.cfrpproj) | open |
+| 27 | Named profiles (machine, fibre/resin, ink) | open |
+| 28 | Highlight the invalid field | open |
+
+### Other known limits
+- Fermat spiral on holed outlines still stops at the first hole (caution shown) -- item 8.
+- A zigzag round a hole near a 45° edge can keep a crossing (the U-turns reach
+  ~0.2 mm past the edge corridor); zigzag layers on holed parts can cross the
+  climb from a previous layer that ended mid-part (warnings).
+- Embedding electronics between fibre layers needs two strokes (done as the
+  `embedded` print mode with a pause, not inside one stroke).
 
 Still open from Phase 29 (not defects, known limits): zigzag curvature
 warnings are inherent while Track Gap < 2·r_min (U-turn radius gap/2); the

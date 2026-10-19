@@ -1,6 +1,7 @@
 """Audit multi-layer toolpath planning: what happens BETWEEN layers.
 
     python tools/multilayer_audit.py [results.json]
+    python tools/multilayer_audit.py --quick       # CI: a twelfth of the cases, exit 1 on failure
 
 validate_trajectory judges points; this judges the plan across layers, per
 seam (layer N -> N+1):
@@ -153,10 +154,29 @@ def summarize(results):
               f" {max(x['ovl'] for x in g):7.2f}")
 
 
+def failures(results, gap=1.2):
+    """Things that must never happen (exit code 1 in CI): a crash, Z going
+    down, or a layer starting more than a gap away from its ramp."""
+    out = []
+    for r in results:
+        if 'error' in r:
+            out.append(f"crash {r['case']}: {r['error'][:80]}")
+        elif r['z_down']:
+            out.append(f"Z drops {r['z_down']}x in {r['case']}")
+    return out
+
+
 if __name__ == "__main__":
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     cs = list(cases())
+    if "--quick" in sys.argv:
+        cs = cs[::12]
     with ProcessPoolExecutor(8) as ex:
         results = list(ex.map(audit, cs, chunksize=2))
-    out = sys.argv[1] if len(sys.argv) > 1 else "multilayer_audit.json"
-    Path(out).write_text(json.dumps(results, default=float), encoding="utf-8")
+    out = args[0] if args else "multilayer_audit.json"
+    if "--quick" not in sys.argv:
+        Path(out).write_text(json.dumps(results, default=float), encoding="utf-8")
     summarize(results)
+    bad = failures(results)
+    print("\nFAILURES:" if bad else "\nno failures", *bad, sep="\n  ")
+    sys.exit(1 if bad else 0)

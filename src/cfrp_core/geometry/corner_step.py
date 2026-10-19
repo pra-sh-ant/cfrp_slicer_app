@@ -16,8 +16,10 @@ import math
 
 from ._common import (
     check_gap_radius,
+    count_crossings,
     dedupe_path,
     fillet,
+    hole_keepouts,
     largest_polygon,
     notched_rings,
     resample_closed_ring,
@@ -25,14 +27,14 @@ from ._common import (
 )
 
 _ARC_PTS = 32
-_RING_PTS = 256
+RING_PTS = 256
 
 
 # ---------------------------------------------------------------------------
 # Rectangle detection
 # ---------------------------------------------------------------------------
 
-def _is_rectangle(poly):
+def is_rectangle(poly):
     # A rectangle with holes is not one: the analytic path would run over
     # them (13 mm of fibre across the bolt holes of a 60 x 40 board).
     if getattr(poly, 'interiors', None) and len(poly.interiors):
@@ -210,7 +212,7 @@ def _tangent_bezier(p0, tan_in, p1, tan_out):
     return pts
 
 
-def _resample_cw(coords, n_pts):
+def resample_ring_cw(coords, n_pts):
     from shapely.geometry import Polygon as ShapelyPolygon
     poly = ShapelyPolygon(coords)
     if poly.exterior.is_ccw:
@@ -223,9 +225,9 @@ def _poly_path(base_poly, gap, r, N, outward=False, seam_hint=None, lead_in=0.0)
     if base_poly.geom_type == 'Polygon' and len(base_poly.interiors):
         # Holes: rings that wrap round them (notched_rings), same stitching.
         for ring_poly in notched_rings(base_poly, gap, r, max_rings=N):
-            n_pts = max(_RING_PTS, int(math.ceil(ring_poly.exterior.length / 0.5)))
-            rings.append(_resample_cw(list(ring_poly.exterior.coords), n_pts))
-        return _stitch_rings(rings, gap, r, outward, seam_hint, lead_in)
+            n_pts = max(RING_PTS, int(math.ceil(ring_poly.exterior.length / 0.5)))
+            rings.append(resample_ring_cw(list(ring_poly.exterior.coords), n_pts))
+        return stitch_rings(rings, gap, r, outward, seam_hint, lead_in, keepouts=hole_keepouts(base_poly))
     for k in range(N):
         offset = gap / 2.0 + k * gap
         shrunk = base_poly.buffer(-offset, join_style=1)
@@ -238,17 +240,25 @@ def _poly_path(base_poly, gap, r, N, outward=False, seam_hint=None, lead_in=0.0)
         filleted = largest_polygon(filleted)
         # At most 0.5 mm apart: a fixed count left big rings too coarse to
         # follow their r_min corner arcs (1.6 mm chords on a 135 mm hexagon).
-        n_pts = max(_RING_PTS, int(math.ceil(filleted.exterior.length / 0.5)))
-        coords = _resample_cw(list(filleted.exterior.coords), n_pts)
+        n_pts = max(RING_PTS, int(math.ceil(filleted.exterior.length / 0.5)))
+        coords = resample_ring_cw(list(filleted.exterior.coords), n_pts)
         rings.append(coords)
 
-    return _stitch_rings(rings, gap, r, outward, seam_hint, lead_in)
+    return stitch_rings(rings, gap, r, outward, seam_hint, lead_in)
 
 
-def _stitch_rings(rings, gap, r, outward=False, seam_hint=None, lead_in=0.0):
+def stitch_rings(rings, gap, r, outward=False, seam_hint=None, lead_in=0.0, keepouts=()):
     """Closed rings (outermost first) joined into one stroke by lane changes
     on one seam. `lead_in` (mm): prepend that much of the first ring before
-    its start (a lead-in anchor lying on the ring itself)."""
+    its start (a lead-in anchor lying on the ring itself).
+
+    `keepouts` (the part's holes): rings notched round a hole are not
+    parallel near it, so a seam there sends a lane change over the hole or
+    across the next ring (found by the property tests: a 3 mm bolt hole
+    under the middle of a plate's long edge). If the usual seam does that,
+    the seam moves to the first other place where neither happens -- the
+    other straights, longest first, then points round the ring -- or, if
+    none is clean, the least bad one."""
     if not rings:
         return []
 
@@ -262,8 +272,31 @@ def _stitch_rings(rings, gap, r, outward=False, seam_hint=None, lead_in=0.0):
     # Seam where the previous layer ended, if known (on a sliced mesh every
     # side of a polygonised circle is "longest", so that choice would jump
     # between layers); else the middle of the longest straight.
-    seam_pt = rings[0][_nearest_index(rings[0], seam_hint) if seam_hint is not None
-                       else _seam_index(rings[0])]
+    seam_idx = _nearest_index(rings[0], seam_hint) if seam_hint is not None else _seam_index(rings[0])
+    path = _stitch(rings, lane_len, outward, rings[0][seam_idx], lead_in)
+    zones = [k.buffer(gap * 0.25) for k in keepouts if not k.is_empty]
+    if not zones or len(rings) < 2:
+        return path
+    import shapely
+    zone = shapely.union_all(zones)
+    # With a hint the stroke arrives there (previous layer's end, end of the
+    # wall loop): score the jump from it too, or a far seam wins and the
+    # jump to it cuts across every ring.
+    head = [tuple(seam_hint)] if seam_hint is not None else []
+    best = _lane_score(head + path, zone), path
+    if best[0] == 0:
+        return path
+    for idx in _seam_candidates(rings[0], seam_idx):
+        cand = _stitch(rings, lane_len, outward, rings[0][idx], lead_in)
+        score = _lane_score(head + cand, zone)
+        if score < best[0]:
+            best = score, cand
+            if score == 0:
+                break
+    return best[1]
+
+
+def _stitch(rings, lane_len, outward, seam_pt, lead_in):
     # Outward (alternate layers): innermost ring first, lane changes outward,
     # same winding, so a layer starts where the inward one ended without
     # reversing the fibre.
@@ -284,6 +317,53 @@ def _stitch_rings(rings, gap, r, outward=False, seam_hint=None, lead_in=0.0):
             path.extend(_tangent_bezier(path[-1], _unit(path[-2], path[-1]), lap[0], _unit(lap[0], lap[1])))
         path.extend(lap)
     return path
+
+
+def _lane_score(path, zone):
+    """Crossings, plus a heavy penalty per mm of tow in a keep-out (fibre
+    over a hole fails validation; a crossing only warns)."""
+    from shapely.geometry import LineString
+    score = float(count_crossings(path))
+    line = LineString(path)
+    if line.intersects(zone):
+        score += 1.0 + 100.0 * line.intersection(zone).length
+    return score
+
+
+def _seam_candidates(ring, skip, n_even=16):
+    """Seam indices to try after `skip`, best first: the middles of the
+    ring's straight runs, longest first, then evenly spaced points."""
+    n = len(ring)
+    out, seen = [], {skip}
+    for idx in [mid for _length, mid in _straight_runs(ring)[:6]] + [(skip + k * n // n_even) % n
+                                                                    for k in range(1, n_even)]:
+        if idx not in seen:
+            seen.add(idx)
+            out.append(idx)
+    return out
+
+
+def _straight_runs(ring):
+    """(length in vertices, middle index) of each run of near-straight
+    vertices (turning < 1 deg), longest first."""
+    n = len(ring)
+    straight = []
+    for i in range(n):
+        a, b, c = ring[i - 1], ring[i], ring[(i + 1) % n]
+        u, v = _unit(a, b), _unit(b, c)
+        straight.append(u[0] * v[0] + u[1] * v[1] > math.cos(math.radians(1.0)))
+    if all(straight) or not any(straight):
+        return []
+    first = straight.index(False)
+    runs, run = [], 0
+    for j in range(1, n + 1):
+        i = (first + j) % n
+        if straight[i]:
+            run += 1
+        elif run:
+            runs.append((run, (i - 1 - run // 2) % n))
+            run = 0
+    return sorted(runs, key=lambda t: -t[0])
 
 
 def _unit(a, b):
@@ -341,7 +421,7 @@ def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=Fals
     r = min_radius
 
     # A lead-in on the innermost ring needs real rings: polygon path.
-    if _is_rectangle(base_poly) and not (outward and lead_in > 0):
+    if is_rectangle(base_poly) and not (outward and lead_in > 0):
         raw = (_rect_path_outward(base_poly, gap, r, N) if outward
                else _rect_path(base_poly, gap, r, N, corner_lead=corner_lead))
     else:

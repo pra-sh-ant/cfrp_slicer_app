@@ -71,19 +71,23 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
         # ring, so they are joined by lane changes on one seam rather than
         # blended. Annuli, whose bore is reached by every ring at once, gain
         # nothing and keep the blended spiral.
-        from .corner_step import _RING_PTS, _resample_cw, _stitch_rings
+        from .corner_step import RING_PTS, resample_ring_cw, stitch_rings
         notched = notched_rings(base_poly, track_gap, min_radius, max_rings=target_count)
-        if len(notched) > len(ring_polys) + 1:
+        # Also when only the notched rings reach the requested count
+        # (max_track_count promises that many, so refusing was a mismatch).
+        if len(notched) > len(ring_polys) + 1 or (
+                target_count is not None and len(ring_polys) < target_count <= len(notched)):
             if target_count is not None and len(notched) < target_count:
                 raise ValueError(
                     f"Requested {target_count} tracks, but only {len(notched)} fit with "
                     f"a {track_gap:.2f} mm gap and {min_radius:.2f} mm bend radius."
                 )
-            rings = [_resample_cw(list(p.exterior.coords), max(_RING_PTS, int(math.ceil(p.exterior.length / 0.5))))
+            rings = [resample_ring_cw(list(p.exterior.coords), max(RING_PTS, int(math.ceil(p.exterior.length / 0.5))))
                      for p in notched]
             hint = seam_hint if start_from_inside else outer_start
-            return dedupe_path(_stitch_rings(rings, track_gap, min_radius, outward=start_from_inside,
-                                             seam_hint=hint, lead_in=lead_in if start_from_inside else 0.0)), base_poly
+            return dedupe_path(stitch_rings(rings, track_gap, min_radius, outward=start_from_inside,
+                                             seam_hint=hint, lead_in=lead_in if start_from_inside else 0.0,
+                                             keepouts=holes)), base_poly
 
     if not ring_polys:
         return [], base_poly

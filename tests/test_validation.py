@@ -82,3 +82,45 @@ def test_flat_specialty_skips_cornering_planner_checks():
     cfg = base_2d_config(shape="3D Overhang (Mushroom)", v_z=2.0, v_overhang=5.0, dwell=1.5,
                          accel=0.0, decel=0.0, v_min=0.0)
     _resolve(cfg)
+
+
+# --- Phase 38: fibre over holes, Z drops, ramps over empty space ------------------
+
+def _pt(x, y, z, layer=1, **kw):
+    return dict(x=x, y=y, z=z, dist=1.0, v=5.0, e_mult=1.0, layer=layer, **kw)
+
+
+def _plate_with_hole():
+    from shapely.geometry import Point, box
+    part = box(0, 0, 40, 30).difference(Point(20, 15).buffer(4))
+    return part.buffer(-0.6)          # target shapes are the wall centreline (gap/2 inside)
+
+
+def test_fibre_over_a_hole_is_an_error():
+    from cfrp_core import ProcessConfig
+    from cfrp_core.validation import validate_trajectory
+    traj = [_pt(x, 15.0, 0.2) for x in range(5, 36)]
+    res = validate_trajectory(traj, ProcessConfig(), target_shapes=[(0.2, _plate_with_hole(), 1)])
+    assert res["status"] == "Fail" and any("Fibre over a hole" in m for m in res["messages"])
+    clear = [_pt(x, 3.0, 0.2) for x in range(5, 36)]
+    assert not any("hole" in m for m in validate_trajectory(clear, ProcessConfig(),
+                                                             target_shapes=[(0.2, _plate_with_hole(), 1)])["messages"])
+
+
+def test_z_going_down_is_an_error():
+    from cfrp_core import ProcessConfig
+    from cfrp_core.validation import validate_trajectory
+    traj = [_pt(x, 5.0, 0.4) for x in range(5, 20)] + [_pt(x, 6.0, 0.2) for x in range(20, 30)]
+    res = validate_trajectory(traj, ProcessConfig())
+    assert any(m.startswith("Z goes down") for m in res["messages"])
+
+
+def test_ramp_over_a_hole_is_an_error():
+    from cfrp_core import ProcessConfig
+    from cfrp_core.validation import validate_trajectory
+    shape = _plate_with_hole()
+    traj = [_pt(x, 3.0, 0.2, 1) for x in range(5, 16)]
+    traj += [_pt(16 + k * 0.5, 3.0 + k * 1.5, 0.2 + k * 0.02, 2, is_transition=True) for k in range(1, 11)]
+    traj += [_pt(x, 18.0, 0.4, 2) for x in range(21, 36)]
+    res = validate_trajectory(traj, ProcessConfig(), target_shapes=[(0.2, shape, 1), (0.4, shape, 2)])
+    assert any("Layer climb over empty space" in m for m in res["messages"])

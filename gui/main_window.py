@@ -48,6 +48,7 @@ _DEFAULTS = {
     "seam_trim_length": 3.0, "anchor_length": 15.0, "min_radius": 3.0,
     "v_z": 2.0, "v_overhang": 5.0, "dwell": 1.5, "fill_solid": False,
     "first_layer_solid": True, "first_layer_infill": "Same as other layers", "first_layer_min_coverage": 0.0,
+    "solid_bottom_layers": 0, "solid_top_layers": 0,
     "stl_closing_radius": 0.049, "stl_stitch": 5.0,
     "bed_x": 180.0, "bed_y": 220.0, "z_max": 200.0, "bed_margin": 1.0,
     "uv": 225, "purge_e": 15.0, "purge_f": 60.0, "travel_f": 600.0,

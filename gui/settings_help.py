@@ -40,8 +40,16 @@ HELP = {
     "fill_solid": "Ignore Tracks Per Layer and fill every layer completely (as many rounds as fit).",
     "first_layer_solid": "Make the very first layer completely filled, whatever the other layers do. "
                          "Gives the part a closed, flat base that sticks well to the bed.",
-    "first_layer_infill": "Pattern for the first layer only. Spirals fill closest to the edge (fullest "
-                          "base); zigzag line ends must stay a bend radius away from the edge.",
+    "first_layer_infill": "Pattern for the first layer and for the solid bottom/top layers. Spirals "
+                          "fill closest to the edge (fullest base); zigzag line ends must stay a bend "
+                          "radius away from the edge.",
+    "solid_bottom_layers": "How many layers at the bottom are filled completely (skins), whatever the "
+                           "other layers do: a closed, stiff base. On an imported model, every place "
+                           "where the part has a bottom surface (an overhang) gets them too. Off = only "
+                           "First Layer Solid.",
+    "solid_top_layers": "How many layers at the top are filled completely: a closed, smooth top "
+                        "surface. On an imported model, every place where the part has a top surface "
+                        "(the top of a base under thinner walls) gets them too.",
     "first_layer_min_coverage": "Warn me if the first layer is less covered with fibre than this "
                                 "(0 = don't check). Tight bends can't reach the very corners, so "
                                 "100 % is rarely possible.",

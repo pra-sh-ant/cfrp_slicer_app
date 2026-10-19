@@ -7,15 +7,20 @@ dependencies = [
     "numpy==2.5.2",
     "shapely==2.1.2",
     "pydantic==2.13.5",
+    "pyclipper==1.4.0",
 ]
 
 [project.optional-dependencies]
+# STL import (loaded only when a mesh is sliced)
+stl = [
+    "trimesh==5.1.1",
+]
 gui = [
     "PySide6>=6.7",
     "pyqtgraph>=0.13",
     "PyOpenGL>=3.1",
 ]
-# Legacy Streamlit front end (removed in Phase 10).
+# Legacy Streamlit front end (frozen in legacy/streamlit/, not tested by CI).
 streamlit-ui = [
     "streamlit==1.62.0",
     "plotly==7.0.0",

@@ -1,4 +1,4 @@
-"""Build script for the CFRP Slicer Pro standalone executable.
+r"""Build script for the CFRP Slicer Pro standalone executable.
 
 Usage:
     .venv312\Scripts\python.exe build_exe.py [--onefile]

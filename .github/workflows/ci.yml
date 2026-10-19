@@ -26,4 +26,18 @@ jobs:
 
       - name: Tests (including golden characterization tests)
         shell: pwsh
+        env:
+          QT_QPA_PLATFORM: offscreen
         run: python -m pytest -q
+
+      - name: Audit - every shape x pattern x setting (quick)
+        shell: pwsh
+        run: python tools/validation_sweep.py --quick
+
+      - name: Audit - layer-to-layer planning (quick)
+        shell: pwsh
+        run: python tools/multilayer_audit.py --quick
+
+      - name: Audit - structural PCB random boards (quick)
+        shell: pwsh
+        run: python tools/pcb_audit.py 12

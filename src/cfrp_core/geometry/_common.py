@@ -423,6 +423,39 @@ def enforce_min_radius(path, min_rad, max_iter=100):
     return [(float(p[0]), float(p[1])) for p in pts]
 
 
+def enforce_min_radius_clear(path, min_rad, keepouts=(), clearance=0.0, max_iter=6):
+    """enforce_min_radius, but never moving fibre into a keepout (a hole
+    grown by `clearance`): a point the smoothing pushed in goes back to where
+    it was (the original path keeps clear of holes), and so do both ends of
+    any segment that still cuts a keepout. The bend left there is tighter
+    than min_rad and is reported by the curvature audit, instead of the
+    fibre being laid over the hole. (Rings that bend round a hole meet the
+    straight part at a sharp inside corner; rounding it cut ~2 mm across a
+    hole edge -- found by the property tests.)"""
+    smooth = enforce_min_radius(path, min_rad)
+    zones = [k.buffer(clearance) if clearance else k for k in keepouts if not k.is_empty]
+    if not zones or len(smooth) < 2:
+        return smooth
+    import shapely
+    region = shapely.union_all(zones)
+    orig = [(float(x), float(y)) for x, y in path]
+    out = list(smooth)
+    for _ in range(max_iter):
+        pts = np.asarray(out, dtype=np.float64)
+        inside = shapely.contains_xy(region, pts[:, 0], pts[:, 1])
+        segs = shapely.linestrings(np.stack([pts[:-1], pts[1:]], axis=1))
+        hit = shapely.intersects(segs, region)
+        bad = set(np.nonzero(inside)[0].tolist())
+        for i in np.nonzero(hit)[0].tolist():
+            bad.update((i, i + 1))
+        bad = [i for i in bad if out[i] != orig[i]]
+        if not bad:
+            break
+        for i in bad:
+            out[i] = orig[i]
+    return out
+
+
 def audit_min_radius(path, min_rad):
     """Count vertices where circumradius < min_rad. Returns (violations, total_interior)."""
     if min_rad <= 0 or len(path) < 3:

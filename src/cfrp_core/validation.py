@@ -4,7 +4,7 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Polygon
 
 from .config import ProcessConfig
 from .geometry import dedupe_path
@@ -32,7 +32,8 @@ def _z_chunks(pts3, z_tol):
 _count_crossings = count_crossings
 
 
-def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> dict:
+def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE,
+                        target_shapes=None) -> dict:
     """Check bed bounds, pump-floor engagement, seam jumps, ramp angle and
     self-crossing. Returns {"status": "Pass"|"Warning"|"Fail", "messages": [...]}
     (Fail if any error, else Warning if any warning, else Pass)."""
@@ -166,6 +167,75 @@ def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfi
         else:
             msg += " (first layer only, lying on the bed). Trim the ties after cure."
         warnings.append(msg)
+
+    # 6b. Fibre over a hole: the part's holes per layer (target_shapes carry
+    #     them) must stay clear of the tow (ramps and the lead-in anchor,
+    #     which lies on the bed outside the part, excepted).
+    #     The layer outlines are the wall centreline (half a gap inside the
+    #     part), so their holes are the part's holes grown by gap/2: shrink
+    #     back to the real hole. Not for Z shells, whose climb between layers
+    #     passes inside the bore of the (wider) layer below.
+    if target_shapes and not config.geometry.is_revolve:
+        import shapely
+        holes_by_layer = {}
+        shrink = gap / 2.0 + 0.1
+        for _z, shape, layer in target_shapes:
+            hs = [Polygon(r).buffer(-shrink) for g in getattr(shape, 'geoms', [shape])
+                  if g.geom_type == 'Polygon' for r in g.interiors]
+            hs = [h for h in hs if not h.is_empty]
+            if hs:
+                holes_by_layer[layer] = shapely.union_all(hs)
+        over = {}
+        for k in range(1, len(trajectory)):
+            a, b = trajectory[k - 1], trajectory[k]
+            layer = b.get('layer', 1)
+            zone = holes_by_layer.get(layer)
+            if zone is None or b.get('is_transition') or b.get('is_anchor') or b.get('is_bridge'):
+                continue
+            seg = LineString([(a['x'], a['y']), (b['x'], b['y'])])
+            if seg.intersects(zone):
+                over[layer] = over.get(layer, 0.0) + seg.intersection(zone).length
+        if over:
+            shown = sorted(over)[:8]
+            errors.append(f"Fibre over a hole: {sum(over.values()):.1f} mm of tow crosses a hole of the part "
+                          f"on layer(s) {shown}.")
+
+    # 6c. Z never goes down (the nozzle would plough through printed fibre).
+    drop, drop_layer = 0.0, None
+    for k in range(1, len(trajectory)):
+        dz = trajectory[k - 1]['z'] - trajectory[k]['z']
+        if dz > drop + 1e-6:
+            drop, drop_layer = dz, trajectory[k].get('layer', 1)
+    if drop > 1e-4:
+        errors.append(f"Z goes down by up to {drop:.2f} mm (layer {drop_layer}): the nozzle would drag "
+                      f"through fibre already laid.")
+
+    # 6d. Layer-to-layer climbs over empty space: a ramp must lie on the
+    #     layer below or the layer it climbs to (a ramp across a hole or past
+    #     the outline spans air). Z shells climb along their own wall.
+    if target_shapes and not config.geometry.is_revolve:
+        import shapely
+        region_of = {}
+        for _z, shape, layer in target_shapes:
+            if shape is not None and not shape.is_empty:
+                region_of[layer] = shape.buffer(gap / 2.0 + 0.3)
+        void = {}
+        for k in range(1, len(trajectory)):
+            b = trajectory[k]
+            if not b.get('is_transition'):
+                continue
+            a = trajectory[k - 1]
+            layer = b.get('layer', 1)
+            zones = [region_of[n] for n in (layer - 1, layer) if n in region_of]
+            if not zones:
+                continue
+            seg = LineString([(a['x'], a['y']), (b['x'], b['y'])])
+            out = seg.difference(shapely.union_all(zones)).length
+            if out > 0.05:
+                void[layer] = void.get(layer, 0.0) + out
+        if void:
+            errors.append(f"Layer climb over empty space: {sum(void.values()):.1f} mm of a layer-to-layer ramp "
+                          f"crosses a hole or leaves the part on layer(s) {sorted(void)[:8]}.")
 
     # 7. Layers that produced no path (e.g. a slice too small for one track
     #    turn): the part has a gap there.

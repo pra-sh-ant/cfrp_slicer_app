@@ -1,4 +1,10 @@
-streamlit==1.62.0
-shapely==2.1.2
+# Core slicer + the Qt desktop app. The frozen Streamlit UI has its own
+# list in legacy/streamlit/requirements.txt.
 numpy==2.5.2
-plotly==7.0.0
+shapely==2.1.2
+pydantic==2.13.5
+pyclipper==1.4.0
+trimesh==5.1.1
+PySide6==6.11.2
+pyqtgraph==0.14.0
+PyOpenGL==3.1.10

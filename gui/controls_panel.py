@@ -294,10 +294,14 @@ class ControlsPanel(QWidget):
         self.first_solid_chk.setChecked(True)
         self.first_infill_cb = QComboBox()
         self.first_infill_cb.addItems(["Same as other layers"] + INFILL_OPTIONS)
-        self._add(sec, "first_layer_infill", "First Layer Pattern", self.first_infill_cb)
+        self._add(sec, "first_layer_infill", "First Layer / Skin Pattern", self.first_infill_cb)
         self.first_cov_spin = self._add(sec, "first_layer_min_coverage", "First Layer Target",
                                         _spin(0, 100, 5, 0, 0, "%"))
         self.first_cov_spin.setSpecialValueText("no check")
+        self.skin_bottom_spin = self._add(sec, "solid_bottom_layers", "Solid Bottom Layers", _ispin(0, 100, 0))
+        self.skin_top_spin = self._add(sec, "solid_top_layers", "Solid Top Layers", _ispin(0, 100, 0))
+        for w in (self.skin_bottom_spin, self.skin_top_spin):
+            w.setSpecialValueText("off")
         self.layup_edit = QLineEdit("0")
         self.layup_edit.setPlaceholderText("e.g. 0, 90, 45, -45")
         self._add(sec, "layup_seq", "Layup Angles (°)", self.layup_edit)
@@ -308,6 +312,8 @@ class ControlsPanel(QWidget):
         self.first_solid_chk.toggled.connect(self._emit)
         self.first_infill_cb.currentTextChanged.connect(self._emit)
         self.first_cov_spin.valueChanged.connect(self._emit)
+        self.skin_bottom_spin.valueChanged.connect(self._emit)
+        self.skin_top_spin.valueChanged.connect(self._emit)
         self.infill_cb.currentTextChanged.connect(self._emit)
         self.layup_edit.textChanged.connect(self._emit)
 
@@ -563,6 +569,10 @@ class ControlsPanel(QWidget):
                                    or is_flat_specialty or shape in REVOLVE_SHAPES
                                    else self.first_infill_cb.currentText()),
             "first_layer_min_coverage": self.first_cov_spin.value() / 100.0,
+            "solid_bottom_layers": (0 if is_flat_specialty or shape in REVOLVE_SHAPES
+                                    else self.skin_bottom_spin.value()),
+            "solid_top_layers": (0 if is_flat_specialty or shape in REVOLVE_SHAPES
+                                 else self.skin_top_spin.value()),
             "stl_closing_radius": self.stl_close_spin.value(),
             "stl_stitch": self.stl_stitch_spin.value(),
             "layer_height": self.lh_spin.value(),
@@ -674,6 +684,8 @@ class ControlsPanel(QWidget):
             self.first_cov_spin.blockSignals(True)
             self.first_cov_spin.setValue(float(p["first_layer_min_coverage"]) * 100.0)
             self.first_cov_spin.blockSignals(False)
+        _set(self.skin_bottom_spin, "solid_bottom_layers", int)
+        _set(self.skin_top_spin, "solid_top_layers", int)
         _set(self.stl_close_spin, "stl_closing_radius")
         _set(self.stl_stitch_spin, "stl_stitch")
         for key, w in (("bed_x", self.bed_x_spin), ("bed_y", self.bed_y_spin), ("z_max", self.z_max_spin),

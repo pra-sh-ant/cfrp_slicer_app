@@ -186,12 +186,15 @@ def field_states(p: dict) -> dict[str, OptionState]:
     if family in ("revolve", "mushroom"):
         why = ("Shells have no flat base layer." if family == "revolve"
                else "The Mushroom overhang test has a fixed path.")
-        for key in ("first_layer_solid", "first_layer_infill", "first_layer_min_coverage"):
+        for key in ("first_layer_solid", "first_layer_infill", "first_layer_min_coverage",
+                    "solid_bottom_layers", "solid_top_layers"):
             s[key] = _off(why)
     else:
         s["first_layer_solid"] = ON
         s["first_layer_infill"] = ON
         s["first_layer_min_coverage"] = ON
+        s["solid_bottom_layers"] = ON
+        s["solid_top_layers"] = ON
     for key in ("stl_closing_radius", "stl_stitch"):
         s[key] = ON if family == "stl" else stl_only
 

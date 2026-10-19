@@ -11,7 +11,7 @@ from .config import ProcessConfig
 from .constraints import resolve_process_constraints
 from .coverage import coverage_summary, layer_coverage
 from .gcode import compile_gcode
-from .layers import build_flat_laminate, build_revolve_shell, build_stl_laminate
+from .layers import build_flat_laminate, build_revolve_shell, build_stl_laminate, plan_layers, skin_summary
 from .machine import DEFAULT_MACHINE, MachineProfile, fit_trajectory_to_bed
 from .specialty import specialty_shape
 from .validation import validate_trajectory
@@ -88,6 +88,19 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
         trajectory, target_shapes, max_z = build_flat_laminate(cfg)
 
     info = list(part_info)
+    lh, sod = float(cfg.layer_height_mm), float(cfg.z_offset_mm)
+    if sod < 0.5 * lh:
+        info.append(f"Z-Offset ({sod:g} mm) is under half the layer height ({lh:g} mm): the nozzle may press "
+                    f"the first layer's tow into the bed. A stand-off near the tow thickness is usual.")
+    if not g.is_specialty and g.shape != "STL Import":
+        info.append(f"Laminate: {cfg.layers} layer(s) x {lh:g} mm = {cfg.layers * lh:.2f} mm thick.")
+    if not g.is_specialty and not g.is_revolve and g.shape != "STL Import":
+        plans = plan_layers(cfg, cfg.layers)
+        if cfg.solid_bottom_layers or cfg.solid_top_layers:
+            summary = skin_summary(plans)
+            if summary:
+                info.append(summary)
+        info.extend(dict.fromkeys(p.note for p in plans if p.note))
     trajectory, shift_x, shift_y = fit_trajectory_to_bed(trajectory, machine)
     if shift_x or shift_y:
         info.append(f"Path auto-positioned for the homed machine envelope: X {shift_x:+.2f} mm, Y {shift_y:+.2f} mm.")
@@ -96,7 +109,7 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
             for z, shape, layer in target_shapes
         ]
     gcode = compile_gcode(trajectory, cfg)
-    validation = validate_trajectory(trajectory, cfg, machine)
+    validation = validate_trajectory(trajectory, cfg, machine, target_shapes)
 
     if max_z is None:  # specialty: the path's own top
         max_z = max((pt['z'] for pt in trajectory), default=float(cfg.z_offset_mm))

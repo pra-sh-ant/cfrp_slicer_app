@@ -1,6 +1,7 @@
 """Slice every shape x infill x key setting and group validation messages.
 
     python tools/validation_sweep.py [results.json]
+    python tools/validation_sweep.py --quick       # CI: a fifteenth of the cases, exit 1 on Fail/crash
 
 Prints each warning/error category with how many cases hit it and on which
 shapes/infills; writes every case's status, messages and notes to the JSON.
@@ -72,11 +73,15 @@ def run(over):
 
 
 if __name__ == "__main__":
+    args = [a for a in sys.argv[1:] if not a.startswith("--")]
     cs = list(cases())
+    if "--quick" in sys.argv:
+        cs = cs[::15]
     with ProcessPoolExecutor(8) as ex:
         results = list(ex.map(run, cs, chunksize=4))
-    out = sys.argv[1] if len(sys.argv) > 1 else "validation_sweep.json"
-    Path(out).write_text(json.dumps(results, default=str), encoding="utf-8")
+    out = args[0] if args else "validation_sweep.json"
+    if "--quick" not in sys.argv:
+        Path(out).write_text(json.dumps(results, default=str), encoding="utf-8")
     print("cases", len(results), Counter(r["status"] for r in results))
     cat = defaultdict(list)
     for r in results:
@@ -89,3 +94,6 @@ if __name__ == "__main__":
         infs = Counter(c.get("infill_type", "")[:10] for c in v)
         print(f"\n[{st}] x{len(v)}  {k}\n    shapes={dict(shapes)}\n    infills={dict(infs)}")
     print("\nslowest", sorted(((round(r['t'],1), r['case']['shape']) for r in results), reverse=True)[:5])
+    bad = [r for r in results if r["status"] in ("Fail", "EXC")]
+    print(f"\n{len(bad)} case(s) failed or crashed" if bad else "\nno failures")
+    sys.exit(1 if bad else 0)

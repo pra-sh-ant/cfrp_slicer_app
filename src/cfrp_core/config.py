@@ -285,6 +285,12 @@ class ProcessConfig(_Frozen):
     first_layer_infill: InfillPattern | None = None
     # Warn when the first layer's fibre coverage is below this (0..1, 0 = no check).
     first_layer_min_coverage: float = 0.0
+    # Solid skins: this many layers at the bottom / top of a flat part are
+    # filled solid with the First Layer Pattern, whatever the other layers
+    # use; on an STL part, also every slice whose top or bottom is exposed
+    # (the top of a base under thinner walls, a roof). 0 = off.
+    solid_bottom_layers: int = 0
+    solid_top_layers: int = 0
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")
@@ -325,6 +331,13 @@ class ProcessConfig(_Frozen):
     def _first_cov(cls, v: float) -> float:
         if not (0.0 <= v <= 1.0):
             raise ValueError("First layer minimum coverage must be between 0 and 1 (0-100 %).")
+        return v
+
+    @field_validator("solid_bottom_layers", "solid_top_layers")
+    @classmethod
+    def _skins(cls, v: int) -> int:
+        if not 0 <= v <= 1000:
+            raise ValueError("Solid Bottom / Top Layers must be between 0 and 1000.")
         return v
 
     @field_validator("seam_stagger_deg")

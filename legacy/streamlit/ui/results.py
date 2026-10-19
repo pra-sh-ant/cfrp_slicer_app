@@ -1,6 +1,5 @@
 """Renders the sliced result: validation banner, 3D visualizer tab, G-code tab."""
 import streamlit as st
-
 from viewer import render_3d_viewer
 
 

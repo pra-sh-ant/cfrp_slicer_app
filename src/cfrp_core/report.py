@@ -8,6 +8,7 @@ import datetime
 import html
 
 from .coverage import layer_coverage
+from .hints import fix_hint
 
 
 def _t(seconds):
@@ -25,7 +26,12 @@ def _issues(validation):
     if not items:
         return "<p class='ok'>All checks passed.</p>"
     cls = "bad" if validation.get("status") == "Fail" else "warn"
-    return "<ul>" + "".join(f"<li class='{cls}'>{html.escape(m)}</li>" for m in items) + "</ul>"
+
+    def item(m):
+        hint = fix_hint(m)
+        return (f"<li class='{cls}'>{html.escape(m)}"
+                + (f"<br><span class='hint'>How to fix: {html.escape(hint)}</span>" if hint else "") + "</li>")
+    return "<ul>" + "".join(item(m) for m in items) + "</ul>"
 
 
 def html_report(fibre=None, board=None, image_png: bytes | None = None, title="Print report") -> str:
@@ -94,6 +100,7 @@ color: #445; font-weight: 600; }} td {{ padding: 3px 8px; }}
 table.grid td, table.grid th {{ border-bottom: 1px solid #dde; }}
 .bar {{ background: #5b8def; color: white; font-size: 11px; padding: 1px 4px; min-width: 28px; }}
 .pass, .ok {{ color: #148a3c; }} .warning, .warn {{ color: #a86b00; }} .fail, .bad {{ color: #c0262d; }}
+.hint {{ color: #444; font-size: 0.92em; }}
 h2 span {{ font-size: 14px; margin-left: 8px; }} img {{ max-width: 100%; border-radius: 6px; }}
 </style></head><body><h1>{html.escape(title)}</h1><p class="when">{when}</p>
 {''.join(parts)}</body></html>"""

@@ -21,6 +21,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from cfrp_core.hints import fix_hint
 from cfrp_core.machine import MachineProfile
 
 from .viewer_gl import ViewerGL
@@ -91,10 +92,11 @@ class IssuesPanel(QWidget):
         color = {"error": "#f87171", "warning": "#fbbf24", "info": "#93c5fd", "ok": "#4ade80"}[kind]
         layers = layers_in(text)
         suffix = "   → click to show layer" if layers else ""
-        item = QListWidgetItem(f"{icon}  {text}{suffix}")
+        hint = fix_hint(text) if kind in ("error", "warning") else ""
+        item = QListWidgetItem(f"{icon}  {text}{suffix}" + (f"\n      How to fix: {hint}" if hint else ""))
         item.setForeground(QColor(color))
         item.setData(Qt.UserRole, layers[0] if layers else None)
-        item.setToolTip(text)
+        item.setToolTip(text + (f"\n\nHow to fix: {hint}" if hint else ""))
         self._list.addItem(item)
 
     def set_result(self, validation, notes=(), info=()):

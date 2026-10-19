@@ -1,11 +1,8 @@
 # Architecture
 
-Status: **Phase 18** (full outer-perimeter lap + 45° diagonal entry + 45° Diagonal
-Hatch infill + seam-trim ramp fix; prior: smooth archimedean transitions, 3D viewer
-presets, track-gap coverage, L-Bracket removed, Fermat ring-arc fix, About dialog +
-CSV export, keyboard shortcuts, cancel + geometry persistence, print stats,
-recent files, layer-height clamp, Fermat seam phase-shift, spiral Z, Torus
-removed, Conical Dome promoted, PySide6 GUI, parameter save/load, packaging).
+Status: **Phase 38** (layers package, per-layer plan with solid skins, typed
+trajectory check, property tests, audits in CI, Streamlit front end retired to
+`legacy/`; see docs/CHANGELOG.md for the history).
 
 ## 1. Layout
 
@@ -22,7 +19,15 @@ src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt import
   geometry/               _common (fillet, inset rings, resample, blend, dedupe),
                           outlines, archimedean, fermat, serpentine, laminate, revolve
   kinematics.py           speed planner (vectorised; exact accel/decel scans), lru-cached
-  layers.py               anchor, plan_layer, seam trims, spiral Z, flat & revolve layer loops
+  layers/                 layer loops, one module per kind of part:
+    common.py             KinematicsParams, lead-in anchors, plan_layer, seam trims, append_layer
+    planning.py           plan_layers (pattern, fill, spiral direction per layer; solid
+                          skins), stl_skins (exposed STL slices), fill track counts
+    flat.py               build_flat_laminate (built-in outlines, Custom Outline)
+    stl.py                build_stl_laminate (slices, islands, fallbacks, mesh notes)
+    revolve.py            build_revolve_shell (helical shells, spiral Z)
+  trajectory.py           TrajectoryPoint (the point dict's keys) + check_trajectory
+  hints.py                fix_hint: plain-language fix for each check message
   specialty.py            Mushroom overhang test (lru-cached, copies returned)
   gcode/writer.py         compile_gcode (Marlin-style, M1995 UV)
   validation.py           validate_trajectory (spec §13)
@@ -31,8 +36,8 @@ src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt import
   diw/                    DIW structural electronics: design (BoardDesign, footprints,
                           sensors), config (DiwConfig), slicer, validation (DRC), gcode
   board.py                slice_structural_board: fibre laminate + DIW on top
-app.py, ui/, viewer.py,   legacy Streamlit front end: collects inputs, calls
-presets.py                cfrp_core, renders. Removed in Phase 10.
+legacy/streamlit/         retired Streamlit front end (own requirements + tests);
+                          not installed or tested by CI
 gui/                      PySide6 app: controls_panel (greyed settings), results_panel
                           (issues, dashboard, G-code), viewer_gl + toolpath_mesh +
                           range_slider (shaded tube viewer), pcb_editor (structural PCB)
@@ -50,7 +55,10 @@ tests/                    pytest + hypothesis; tests/golden = characterization d
   hard-coded 180 × 220 × 200 mm bed with a 1 mm margin.
 - **Trajectory:** still `list[dict]` per point (Phase 1 keeps the shape):
   `x, y, z, dist, v, e_mult, pump_floored, layer_start, is_transition,
-  layer, z_layer, cure_dwell`.
+  layer, z_layer, cure_dwell` (+ `is_bridge`, `is_anchor`; DIW adds
+  `feature, extruding, width, height`). `trajectory.TrajectoryPoint` lists
+  them; `check_trajectory` reports missing / unknown keys and bad values
+  (used by the property tests).
 - **Result:** `SliceResult(config, trajectory, target_shapes, gcode,
   validation, max_z, constraint_notes, info)`. The core never prints or
   calls UI; notes (constraint adjustments, bed auto-positioning) are returned.
@@ -69,19 +77,23 @@ slice_part(config, machine)
  │               seam trim + interpolated transition (no Z ramp)
  ├─ specialty: specialty.specialty_shape -> overhang_test (mushroom)
  ├─ flat:      layers.build_flat_laminate
- │               geometry.base_polygon
- │               geometry.serpentine_infill  (Serpentine Infill shape)
- │             | geometry.printable_boundary + laminate_layer
+ │               layers.plan_layers (pattern / solid / direction per layer)
+ │               geometry.base_polygon, printable_boundary + laminate_layer
  │                   -> archimedean_path | fermat_spiral_path | oriented_serpentine
- │               layers.add_lead_in_anchor (layer 1), plan_layer, append_layer
+ │                      | corner_step_path
+ │               layers.add_lead_in_anchor (layer 1), enforce_min_radius_clear,
+ │               plan_layer, append_layer
+ ├─ STL:       layers.build_stl_laminate
+ │               mesh_slicer.slice_mesh_regions, stl_skins + plan_layers,
+ │               _stl_layer_path (pattern fallbacks, islands in one stroke)
  ├─ machine.fit_trajectory_to_bed (+ shift target outlines)
  ├─ gcode.compile_gcode
  └─ validation.validate_trajectory -> machine.check_bounds, geometry.dedupe_path
 ```
 
-Legacy UI: `app.main` -> `ui.sidebar.render_*` -> flat dict ->
-`from_legacy_dict` -> `slice_part` -> `ui.results.render_results` ->
-`viewer.render_3d_viewer`.
+GUI: `gui.controls_panel.get_params` -> flat dict -> `from_legacy_dict` ->
+`slice_part` (worker thread) -> `gui.results_panel` (issues with
+`hints.fix_hint`, dashboard, viewer).
 
 ## 4. Behaviour-preservation notes (Phase 1)
 
@@ -155,4 +167,33 @@ laminates) now uses a tangent-continuous Hermite ramp.
   of the legacy planner (random and tie-heavy grid paths).
 - `tests/test_core_isolation.py`: imports every `cfrp_core` module and slices
   with streamlit/plotly/Qt/VTK imports blocked.
+- `tests/test_property_fibre.py`: hypothesis-generated outlines (convex shapes,
+  plates with holes) x patterns x settings must keep the fibre rules (never
+  over a hole, on the part, Z never down, spiral layers without crossings, a
+  well-formed trajectory); refusals must be plain ValueErrors. Cases found by
+  longer runs are pinned as `@example`s.
+- Audits, also run by CI in quick mode (exit 1 on a failure):
+  `tools/validation_sweep.py --quick` (shapes x patterns x settings),
+  `tools/multilayer_audit.py --quick` (layer-to-layer planning),
+  `tools/pcb_audit.py 12` (random structural boards in every print mode).
 - `ruff`, CI on `windows-latest` / Python 3.12, `requirements.lock`.
+
+## 9. Phase 38 — layer plan, skins, robustness
+
+- `layers.plan_layers(config, n, skins)` decides each layer's pattern, fill and
+  generator index (the index's parity sets a spiral's direction). Solid
+  bottom/top skins use the First Layer Pattern. A run of Archimedean /
+  Corner-Step layers ends inside-out before a zigzag (or Fermat) layer and
+  starts outside-in after one; an odd run between zigzags ends with a Fermat
+  layer (noted in `info`). With no skins and one pattern the plan is the old
+  one (index = layer), so goldens are unchanged.
+- STL skins: `stl_skins` marks a slice when it is within the skin count of the
+  first/last slice or more than 20 % of it is uncovered by the next (top) /
+  previous (bottom) slices.
+- Holes: `stitch_rings(keepouts=...)` moves the lane-change seam off a hole
+  (scoring the arrival jump when a seam hint is given), zigzag connectors that
+  no single margin ring serves go round on a roadmap of the margin rings
+  (`serpentine._Roadmap`) and are never allowed off the part, and
+  `enforce_min_radius_clear` keeps the radius smoothing out of holes.
+- Validation adds: fibre over a hole, Z going down, a layer climb over a hole
+  or off the part (all errors).
