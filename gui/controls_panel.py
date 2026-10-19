@@ -3,30 +3,40 @@
 Emits `params_changed` whenever any value changes. Callers read
 `get_params()` to get the current flat dict (same keys as the legacy
 sidebar output) and `get_layup()` for the parsed layup list.
+
+Every setting is one keyed row in a collapsible section. Rows that do not
+apply to the current setup are greyed out with the reason as tooltip, and
+patterns that do not apply are greyed in the Infill drop-down; the rules
+come from `cfrp_core.capabilities`, not from this file.
 """
 from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
     QComboBox,
     QDoubleSpinBox,
     QFileDialog,
     QFormLayout,
-    QGroupBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 
+from cfrp_core.capabilities import field_states, first_enabled, infill_states
 from cfrp_core.config import REVOLVE_SHAPES, SHAPES, SPECIALTY_SHAPES
+
+from .settings_help import HELP
 
 _FLAT_SPECIALTY = SPECIALTY_SHAPES - REVOLVE_SHAPES  # just Mushroom now
 
@@ -43,36 +53,108 @@ REVOLVE_INFILL_OPTIONS = [
 ]
 
 
-def _spin(min_v, max_v, step, value, decimals=2):
+def _spin(min_v, max_v, step, value, decimals=2, suffix=""):
     w = QDoubleSpinBox()
     w.setRange(min_v, max_v)
     w.setSingleStep(step)
     w.setDecimals(decimals)
     w.setValue(value)
-    w.setFixedWidth(100)
+    w.setMinimumWidth(104)
+    w.setKeyboardTracking(False)
+    if suffix:
+        w.setSuffix(f" {suffix}")
     return w
 
 
-def _ispin(min_v, max_v, value):
+def _ispin(min_v, max_v, value, suffix=""):
     w = QSpinBox()
     w.setRange(min_v, max_v)
     w.setValue(value)
-    w.setFixedWidth(100)
+    w.setMinimumWidth(104)
+    w.setKeyboardTracking(False)
+    if suffix:
+        w.setSuffix(f" {suffix}")
     return w
 
 
-def _group(title, layout):
-    box = QGroupBox(title)
-    box.setCheckable(False)
-    box.setLayout(layout)
-    return box
+def _caution_icon(size=14):
+    """Small amber warning triangle for patterns that will raise warnings."""
+    pm = QPixmap(size, size)
+    pm.fill(Qt.transparent)
+    p = QPainter(pm)
+    p.setRenderHint(QPainter.Antialiasing)
+    p.setBrush(QColor("#f5b942"))
+    p.setPen(Qt.NoPen)
+    p.drawPolygon(QPolygonF([QPointF(size / 2, 1), QPointF(size - 1, size - 1), QPointF(1, size - 1)]))
+    p.setPen(QColor("#1b1b28"))
+    f = p.font()
+    f.setBold(True)
+    f.setPixelSize(int(size * 0.7))
+    p.setFont(f)
+    p.drawText(pm.rect().adjusted(0, 2, 0, 0), Qt.AlignCenter, "!")
+    p.end()
+    return QIcon(pm)
+
+
+class _Section(QWidget):
+    """Collapsible settings section: a header button and a form body."""
+
+    def __init__(self, title, parent=None):
+        super().__init__(parent)
+        self.title = title
+        self._header = QToolButton()
+        self._header.setObjectName("sectionHeader")
+        self._header.setCheckable(True)
+        self._header.setChecked(True)
+        self._header.setToolButtonStyle(Qt.ToolButtonTextBesideIcon)
+        self._header.setArrowType(Qt.DownArrow)
+        self._header.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+        self._header.toggled.connect(self._toggle)
+        self.body = QWidget()
+        self.body.setObjectName("sectionBody")
+        self.form = QFormLayout(self.body)
+        self.form.setLabelAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self.form.setContentsMargins(8, 4, 8, 8)
+        self.form.setHorizontalSpacing(10)
+        self.form.setVerticalSpacing(5)
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(0)
+        lay.addWidget(self._header)
+        lay.addWidget(self.body)
+        self.set_unused(0)
+
+    def _toggle(self, open_):
+        self._header.setArrowType(Qt.DownArrow if open_ else Qt.RightArrow)
+        self.body.setVisible(open_)
+
+    def set_open(self, open_):
+        self._header.setChecked(open_)
+
+    def is_open(self):
+        return self._header.isChecked()
+
+    def set_unused(self, n):
+        self._header.setText(self.title + (f"   ·  {n} not used here" if n else ""))
 
 
 class ControlsPanel(QWidget):
     params_changed = Signal()
+    open_editor_requested = Signal()
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self._rows: dict[str, tuple[QLabel, QWidget, _Section]] = {}
+        self._sections: list[_Section] = []
+        self._custom: dict = {}
+        self._updating = False
+        self._caution = _caution_icon()
+
+        self._search = QLineEdit()
+        self._search.setPlaceholderText("Search settings…")
+        self._search.setClearButtonEnabled(True)
+        self._search.setObjectName("settingsSearch")
+        self._search.textChanged.connect(self._filter)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -94,30 +176,60 @@ class ControlsPanel(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(4)
+        outer.addWidget(self._search)
         outer.addWidget(scroll)
 
         self._update_shape_visibility()
 
     # ------------------------------------------------------------------
+    # Row registry
+    # ------------------------------------------------------------------
+    def _section(self, title):
+        sec = _Section(title)
+        self._sections.append(sec)
+        self._vbox.addWidget(sec)
+        return sec
+
+    def _add(self, sec, key, label, widget):
+        lbl = QLabel(label)
+        lbl.setObjectName("settingLabel")
+        sec.form.addRow(lbl, widget)
+        self._rows[key] = (lbl, widget, sec)
+        help_text = HELP.get(key, "")
+        lbl.setToolTip(help_text)
+        widget.setToolTip(help_text)
+        return widget
+
+    # ------------------------------------------------------------------
     # Geometry section
     # ------------------------------------------------------------------
     def _build_geometry(self):
-        fl = QFormLayout()
-        fl.setLabelAlignment(Qt.AlignRight)
+        sec = self._section("Part")
 
         self.shape_cb = QComboBox()
         self.shape_cb.addItems(list(SHAPES))
         self.shape_cb.setCurrentText("Square/Rectangle")
-        fl.addRow("Shape", self.shape_cb)
+        self._add(sec, "shape", "Shape", self.shape_cb)
 
         # Flat shape fields
-        self.w_spin = _spin(1, 500, 1, 135.0, 1)
-        self.h_spin = _spin(1, 500, 1, 25.0, 1)
-        self._w_row = fl.addRow("Width (mm)", self.w_spin)
-        self._h_row = fl.addRow("Height (mm)", self.h_spin)
+        self.w_spin = self._add(sec, "width", "Width", _spin(1, 500, 1, 135.0, 1, "mm"))
+        self.h_spin = self._add(sec, "height", "Height", _spin(1, 500, 1, 25.0, 1, "mm"))
+        self.boundary_chk = self._add(sec, "include_boundary", "", QCheckBox("Print Outer Boundary"))
 
-        self.boundary_chk = QCheckBox("Print Outer Boundary")
-        self._boundary_row = fl.addRow("", self.boundary_chk)
+        # Custom outline (Structural PCB editor)
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        self.custom_lbl = QLabel("no outline yet")
+        self.custom_lbl.setObjectName("hint")
+        self.custom_btn = QPushButton("Edit…")
+        self.custom_btn.setFixedWidth(64)
+        self.custom_btn.clicked.connect(self.open_editor_requested.emit)
+        row.addWidget(self.custom_lbl, 1)
+        row.addWidget(self.custom_btn)
+        box = QWidget()
+        box.setLayout(row)
+        self._add(sec, "custom_outline", "Outline", box)
 
         # STL Import fields
         stl_row = QHBoxLayout()
@@ -132,42 +244,18 @@ class ControlsPanel(QWidget):
         stl_container = QWidget()
         stl_container.setLayout(stl_row)
         stl_row.setContentsMargins(0, 0, 0, 0)
-        self._stl_row = fl.addRow("STL File", stl_container)
-        self.stl_islands_chk = QCheckBox("Print All Islands (fibre-bridged)")
-        self.stl_islands_chk.setToolTip(
-            "Off: only the largest island of each slice is printed.\n"
-            "On: every island is printed in one stroke; the fibre spans the gaps "
-            "between islands (flagged as bridges; trim the ties after cure)."
-        )
-        fl.addRow("", self.stl_islands_chk)
-        self.stl_scale_spin = _spin(0.001, 1000, 1, 1.0, 3)
-        self.stl_scale_spin.setToolTip(
-            "Multiply the model on import: 25.4 if it was saved in inches, 10 for cm, "
-            "1000 for metres (1 = millimetres)."
-        )
-        self.stl_scale_spin.valueChanged.connect(self._emit)
-        self._stl_scale_label = QLabel("STL Scale (x)")
-        fl.addRow(self._stl_scale_label, self.stl_scale_spin)
+        self._add(sec, "stl_path", "STL File", stl_container)
+        self.stl_scale_spin = self._add(sec, "stl_scale", "STL Scale", _spin(0.001, 1000, 1, 1.0, 3, "x"))
+        self.stl_islands_chk = self._add(sec, "stl_islands", "", QCheckBox("Print All Islands (fibre-bridged)"))
 
         # Revolve / specialty fields
-        self.base_r_spin = _spin(1, 200, 1, 20.0, 1)
-        self._base_r_row = fl.addRow("Outer Radius (mm)", self.base_r_spin)
+        self.base_r_spin = self._add(sec, "base_radius", "Outer Radius", _spin(1, 200, 1, 20.0, 1, "mm"))
+        self.stem_h_spin = self._add(sec, "stem_height", "Height (Z)", _spin(0.1, 500, 1, 25.0, 1, "mm"))
+        self.disc_r_spin = self._add(sec, "disc_radius", "Top Disc Radius", _spin(0.1, 200, 1, 15.0, 1, "mm"))
+        self.stem_top_spin = self._add(sec, "stem_top", "Stem Top (abs. Z)", _spin(0.1, 500, 1, 25.0, 1, "mm"))
 
-        self.stem_h_spin = _spin(0.1, 500, 1, 25.0, 1)
-        self._stem_h_row = fl.addRow("Height (Z mm)", self.stem_h_spin)
-
-        # Mushroom-only
-        self.disc_r_spin = _spin(0.1, 200, 1, 15.0, 1)
-        self._disc_r_row = fl.addRow("Top Disc Radius (mm)", self.disc_r_spin)
-
-        self.stem_top_spin = _spin(0.1, 500, 1, 25.0, 1)
-        self._stem_top_row = fl.addRow("Stem Top Height (absolute Z, mm)", self.stem_top_spin)
-
-        self._vbox.addWidget(_group("Target Geometry", fl))
-
-        # wire signals
-        for w in (self.w_spin, self.h_spin, self.base_r_spin,
-                  self.stem_h_spin, self.disc_r_spin, self.stem_top_spin):
+        for w in (self.w_spin, self.h_spin, self.base_r_spin, self.stem_h_spin,
+                  self.disc_r_spin, self.stem_top_spin, self.stl_scale_spin):
             w.valueChanged.connect(self._emit)
         self.boundary_chk.toggled.connect(self._emit)
         self.stl_islands_chk.toggled.connect(self._emit)
@@ -177,27 +265,27 @@ class ControlsPanel(QWidget):
     # Layering section
     # ------------------------------------------------------------------
     def _build_layering(self):
-        fl = QFormLayout()
-        fl.setLabelAlignment(Qt.AlignRight)
-
-        self.layers_spin = _ispin(1, 50, 1)
-        self._layers_row = fl.addRow("Total Layers", self.layers_spin)
-
-        self.tracks_spin = _ispin(1, 50, 7)
-        fl.addRow("Tracks Per Layer", self.tracks_spin)
+        sec = self._section("Pattern & Layers")
 
         self.infill_cb = QComboBox()
         self.infill_cb.addItems(INFILL_OPTIONS)
-        self._infill_row = fl.addRow("Infill Pattern", self.infill_cb)
+        self._add(sec, "infill_type", "Infill Pattern", self.infill_cb)
+        self.infill_hint = QLabel("")
+        self.infill_hint.setObjectName("caution")
+        self.infill_hint.setWordWrap(True)
+        self.infill_hint.setVisible(False)
+        sec.form.addRow("", self.infill_hint)
 
+        self.tracks_spin = self._add(sec, "tracks_per_layer", "Tracks Per Layer", _ispin(1, 200, 7))
+        self.fill_chk = self._add(sec, "fill_solid", "", QCheckBox("Fill Solid (as many tracks as fit)"))
+        self.layers_spin = self._add(sec, "layers", "Total Layers", _ispin(1, 500, 1))
         self.layup_edit = QLineEdit("0")
         self.layup_edit.setPlaceholderText("e.g. 0, 90, 45, -45")
-        self._layup_row = fl.addRow("Layup Angles (°)", self.layup_edit)
-
-        self._vbox.addWidget(_group("Layering & Layup", fl))
+        self._add(sec, "layup_seq", "Layup Angles (°)", self.layup_edit)
 
         for w in (self.layers_spin, self.tracks_spin):
             w.valueChanged.connect(self._emit)
+        self.fill_chk.toggled.connect(self._emit)
         self.infill_cb.currentTextChanged.connect(self._emit)
         self.layup_edit.textChanged.connect(self._emit)
 
@@ -205,21 +293,11 @@ class ControlsPanel(QWidget):
     # Placement section
     # ------------------------------------------------------------------
     def _build_placement(self):
-        fl = QFormLayout()
-        fl.setLabelAlignment(Qt.AlignRight)
-
-        self.x_spin = _spin(0, 220, 1, 26.0, 1)
-        self.y_spin = _spin(0, 220, 1, 40.0, 1)
-        self.gap_spin = _spin(0.05, 20, 0.1, 1.2)
-        self.z_off_spin = _spin(0, 50, 0.05, 0.2)
-
-        fl.addRow("Start X (mm)", self.x_spin)
-        fl.addRow("Start Y (mm)", self.y_spin)
-        fl.addRow("Track Gap (mm)", self.gap_spin)
-        fl.addRow("Z-Offset / SOD (mm)", self.z_off_spin)
-
-        self._vbox.addWidget(_group("Placement & Offsets", fl))
-
+        sec = self._section("Placement")
+        self.x_spin = self._add(sec, "start_x", "Start X", _spin(0, 500, 1, 26.0, 1, "mm"))
+        self.y_spin = self._add(sec, "start_y", "Start Y", _spin(0, 500, 1, 40.0, 1, "mm"))
+        self.gap_spin = self._add(sec, "track_gap", "Track Gap", _spin(0.05, 20, 0.1, 1.2, 2, "mm"))
+        self.z_off_spin = self._add(sec, "z_offset", "Z-Offset / SOD", _spin(0, 50, 0.05, 0.2, 2, "mm"))
         for w in (self.x_spin, self.y_spin, self.gap_spin, self.z_off_spin):
             w.valueChanged.connect(self._emit)
 
@@ -227,98 +305,51 @@ class ControlsPanel(QWidget):
     # Materials section
     # ------------------------------------------------------------------
     def _build_materials(self):
-        fl = QFormLayout()
-        fl.setLabelAlignment(Qt.AlignRight)
-
-        self.needle_spin = _spin(0.01, 5, 0.1, 0.8)
-        self.lh_spin = _spin(0.01, 5, 0.05, 0.2)
-        self.emult_spin = _spin(0.01, 10, 0.1, 1.6)
-        self.density_spin = _spin(1e-5, 1, 0.0001, 0.00115, 5)
-        self.weight_spin = _spin(1e-5, 1, 0.00001, round(0.55 / (math.pi * 39), 6), 6)
-
-        fl.addRow("Needle Dia (mm)", self.needle_spin)
-        fl.addRow("Layer Height (mm)", self.lh_spin)
-        fl.addRow("E-Multiplier", self.emult_spin)
-        fl.addRow("Liquid Density (g/mm³)", self.density_spin)
-        fl.addRow("Fiber Weight (g/mm)", self.weight_spin)
-
-        self._vbox.addWidget(_group("Materials", fl))
-
-        for w in (self.needle_spin, self.lh_spin, self.emult_spin,
-                  self.density_spin, self.weight_spin):
+        sec = self._section("Material")
+        self.needle_spin = self._add(sec, "needle_dia", "Needle Dia", _spin(0.01, 5, 0.1, 0.8, 2, "mm"))
+        self.lh_spin = self._add(sec, "layer_height", "Layer Height", _spin(0.01, 5, 0.05, 0.2, 2, "mm"))
+        self.emult_spin = self._add(sec, "e_mult", "E-Multiplier", _spin(0.01, 10, 0.1, 1.6))
+        self.density_spin = self._add(sec, "density", "Liquid Density",
+                                      _spin(1e-5, 1, 0.0001, 0.00115, 5, "g/mm³"))
+        self.weight_spin = self._add(sec, "weight", "Fiber Weight",
+                                     _spin(1e-5, 1, 0.00001, round(0.55 / (math.pi * 39), 6), 6, "g/mm"))
+        for w in (self.needle_spin, self.lh_spin, self.emult_spin, self.density_spin, self.weight_spin):
             w.valueChanged.connect(self._emit)
 
     # ------------------------------------------------------------------
-    # Kinematics section
+    # Kinematics sections
     # ------------------------------------------------------------------
     def _build_kinematics(self):
-        fl = QFormLayout()
-        fl.setLabelAlignment(Qt.AlignRight)
-
-        self.vmax_spin = _spin(0.1, 100, 0.5, 10.0, 1)
-        self.vmin_spin = _spin(0, 100, 0.5, 5.0, 1)
-        self.accel_spin = _spin(0.1, 500, 1, 25.0, 1)
-        self.decel_spin = _spin(0.1, 500, 1, 15.0, 1)
-        self.p_adv_spin = _spin(0, 50, 0.5, 3.0, 1)
-        self.pump_floor_spin = _spin(0, 100, 0.5, 5.0, 1)
-        self.trans_angle_spin = _spin(5, 85, 5, 30.0, 0)
-        self.seam_trim_spin = _spin(0, 20, 0.5, 3.0, 1)
-        self.anchor_spin = _spin(0, 50, 1, 15.0, 1)
-        self.min_r_spin = _spin(0, 50, 0.5, 3.0, 1)
-
-        # Specialty-only
-        self.vz_spin = _spin(0.1, 50, 0.5, 2.0, 1)
-        self.v_overhang_spin = _spin(0.1, 50, 0.5, 5.0, 1)
-        self.dwell_spin = _spin(0, 30, 0.5, 1.5, 1)
-
-        # G-code
-        self.uv_spin = _ispin(0, 255, 225)
-        self.purge_e_spin = _spin(0, 100, 1, 15.0, 1)
-        self.purge_f_spin = _spin(1, 3000, 10, 60.0, 0)
-        self.travel_f_spin = _spin(1, 3000, 10, 600.0, 0)
-
-        fl.addRow("Print Speed Max (mm/s)", self.vmax_spin)
-        fl.addRow("Min Bend Speed (mm/s)", self.vmin_spin)
-        fl.addRow("Acceleration (mm/s²)", self.accel_spin)
-        fl.addRow("Deceleration (mm/s²)", self.decel_spin)
-        fl.addRow("Pressure Advance (mm)", self.p_adv_spin)
-        fl.addRow("Pump-Stall Floor (mm/s)", self.pump_floor_spin)
-        fl.addRow("Transition Angle (°)", self.trans_angle_spin)
-        fl.addRow("Seam Trim (mm)", self.seam_trim_spin)
-        self.seam_stagger_spin = _spin(0, 360, 5, 0.0, 1)
-        self.seam_stagger_spin.setToolTip(
-            "Round shells: rotate each layer's seam by this angle so seams do not "
-            "stack into one vertical line (0 = aligned; 137.5 spreads them evenly)."
-        )
+        sec = self._section("Speed & Flow")
+        self.vmax_spin = self._add(sec, "v_max", "Print Speed Max", _spin(0.1, 100, 0.5, 10.0, 1, "mm/s"))
+        self.vmin_spin = self._add(sec, "v_min", "Min Bend Speed", _spin(0, 100, 0.5, 5.0, 1, "mm/s"))
+        self.accel_spin = self._add(sec, "accel", "Acceleration", _spin(0.1, 500, 1, 25.0, 1, "mm/s²"))
+        self.decel_spin = self._add(sec, "decel", "Deceleration", _spin(0.1, 500, 1, 15.0, 1, "mm/s²"))
+        self.p_adv_spin = self._add(sec, "p_advance", "Pressure Advance", _spin(0, 50, 0.5, 3.0, 1, "mm"))
         self.pa_table_edit = QLineEdit()
         self.pa_table_edit.setPlaceholderText("empty = fixed advance; e.g. 5:1.0, 10:3.0")
-        self.pa_table_edit.setToolTip(
-            "Measured pressure advance per speed (speed mm/s : advance mm), from the "
-            "Pressure Advance calibration coupon run at several speeds. Interpolated at "
-            "each point's speed. Empty uses the fixed Pressure Advance value."
-        )
-        self.pa_table_edit.editingFinished.connect(self._emit)
-        self._pa_table_label = QLabel("PA Table")
-        fl.addRow(self._pa_table_label, self.pa_table_edit)
-        self._stagger_label = QLabel("Seam Stagger (°)")
-        fl.addRow(self._stagger_label, self.seam_stagger_spin)
-        fl.addRow("Anchor Length (mm)", self.anchor_spin)
-        fl.addRow("Min Bend Radius (mm)", self.min_r_spin)
+        self._add(sec, "pa_table", "PA Table", self.pa_table_edit)
+        self.pump_floor_spin = self._add(sec, "pump_stall_floor", "Pump-Stall Floor",
+                                         _spin(0, 100, 0.5, 5.0, 1, "mm/s"))
+        self.min_r_spin = self._add(sec, "min_radius", "Min Bend Radius", _spin(0, 50, 0.5, 3.0, 1, "mm"))
 
-        self._vz_label = QLabel("Z Pull Speed (mm/s)")
-        fl.addRow(self._vz_label, self.vz_spin)
-        self._vo_label = QLabel("Overhang Speed (mm/s)")
-        fl.addRow(self._vo_label, self.v_overhang_spin)
-        self._dwell_label = QLabel("Top Dwell (s)")
-        fl.addRow(self._dwell_label, self.dwell_spin)
+        sec = self._section("Seams & Transitions")
+        self.anchor_spin = self._add(sec, "anchor_length", "Anchor Length", _spin(0, 50, 1, 15.0, 1, "mm"))
+        self.trans_angle_spin = self._add(sec, "transition_angle", "Transition Angle", _spin(5, 85, 5, 30.0, 0, "°"))
+        self.seam_trim_spin = self._add(sec, "seam_trim_length", "Seam Trim", _spin(0, 20, 0.5, 3.0, 1, "mm"))
+        self.seam_stagger_spin = self._add(sec, "seam_stagger", "Seam Stagger", _spin(0, 360, 5, 0.0, 1, "°"))
 
-        fl.addRow("UV Intensity (PWM)", self.uv_spin)
-        fl.addRow("Purge Amount (E)", self.purge_e_spin)
-        fl.addRow("Purge Speed (mm/min)", self.purge_f_spin)
-        fl.addRow("Approach Speed (mm/min)", self.travel_f_spin)
+        sec = self._section("Mushroom Test")
+        self.vz_spin = self._add(sec, "v_z", "Z Pull Speed", _spin(0.1, 50, 0.5, 2.0, 1, "mm/s"))
+        self.v_overhang_spin = self._add(sec, "v_overhang", "Overhang Speed", _spin(0.1, 50, 0.5, 5.0, 1, "mm/s"))
+        self.dwell_spin = self._add(sec, "dwell", "Top Dwell", _spin(0, 30, 0.5, 1.5, 1, "s"))
 
-        self._kin_form = fl
-        self._vbox.addWidget(_group("Kinematics & G-code", fl))
+        sec = self._section("G-code Start")
+        self.uv_spin = self._add(sec, "uv", "UV Intensity (PWM)", _ispin(0, 255, 225))
+        self.purge_e_spin = self._add(sec, "purge_e", "Purge Amount (E)", _spin(0, 100, 1, 15.0, 1))
+        self.purge_f_spin = self._add(sec, "purge_f", "Purge Speed", _spin(1, 3000, 10, 60.0, 0, "mm/min"))
+        self.travel_f_spin = self._add(sec, "travel_f", "Approach Speed", _spin(1, 3000, 10, 600.0, 0, "mm/min"))
+        sec.set_open(False)
 
         for w in (self.vmax_spin, self.vmin_spin, self.accel_spin, self.decel_spin,
                   self.p_adv_spin, self.pump_floor_spin, self.trans_angle_spin,
@@ -327,98 +358,118 @@ class ControlsPanel(QWidget):
                   self.purge_e_spin, self.purge_f_spin, self.travel_f_spin):
             w.valueChanged.connect(self._emit)
         self.uv_spin.valueChanged.connect(self._emit)
+        self.pa_table_edit.editingFinished.connect(self._emit)
 
     # ------------------------------------------------------------------
-    # Shape-dependent visibility
+    # Option states (grey-out) and search
     # ------------------------------------------------------------------
     def _on_shape_changed(self, shape):
-        self._update_shape_visibility()
         self._emit()
 
     def _browse_stl(self):
         path, _ = QFileDialog.getOpenFileName(
-            self, "Select STL File", "", "STL Files (*.stl *.STL);;All Files (*)"
+            self, "Select STL File", "", "Meshes (*.stl *.STL *.obj *.OBJ);;All Files (*)"
         )
         if path:
-            self.stl_path_edit.setText(path)
+            self.set_stl_path(path)
+
+    def set_stl_path(self, path: str):
+        self.stl_path_edit.setText(path)
+        self.stl_path_edit.setToolTip(path)
+        if self.shape_cb.currentText() != "STL Import":
+            self.shape_cb.setCurrentText("STL Import")   # emits via _on_shape_changed
+        else:
             self._emit()
 
     def _update_shape_visibility(self):
-        shape = self.shape_cb.currentText()
-        is_revolve = shape in REVOLVE_SHAPES
-        is_mushroom = shape == "3D Overhang (Mushroom)"
-        is_flat_specialty = shape in _FLAT_SPECIALTY
-        is_specialty = is_revolve or is_flat_specialty
-        is_stl = shape == "STL Import"
-        is_flat = not is_specialty and not is_stl
-        is_circle_hex = shape in {"Hexagon", "Circle"}
-        is_sphere = shape == "Hollow Sphere (Z)"
+        """Grey out every row and pattern that does not apply (kept for the
+        old name; nothing is hidden any more)."""
+        self._apply_states()
 
-        # Flat shape geometry
-        self.w_spin.setVisible(is_flat)
-        self.h_spin.setVisible(is_flat and not is_circle_hex)
-        self.boundary_chk.setVisible(is_flat or is_stl)
+    def _apply_states(self):
+        params = self._raw_params()
+        f_states = field_states(params)
+        unused = {sec.title: 0 for sec in self._sections}
+        for key, (lbl, widget, sec) in self._rows.items():
+            st = f_states.get(key)
+            enabled = st is None or st.enabled
+            lbl.setEnabled(enabled)
+            widget.setEnabled(enabled)
+            help_text = HELP.get(key, "")
+            tip = help_text if enabled else f"<b>Not used here.</b> {st.reason}<br><br>{help_text}"
+            lbl.setToolTip(tip)
+            widget.setToolTip(tip)
+            if not enabled:
+                unused[sec.title] += 1
+        for sec in self._sections:
+            sec.set_unused(unused[sec.title])
 
-        # STL file picker
-        self.stl_path_edit.parentWidget().setVisible(is_stl)
-        self.stl_islands_chk.setVisible(is_stl)
-        self.stl_scale_spin.setVisible(is_stl)
-        self._stl_scale_label.setVisible(is_stl)
-
-        # Revolve/specialty geometry
-        self.base_r_spin.setVisible(is_revolve or is_mushroom)
-        self.stem_h_spin.setVisible(is_revolve and not is_sphere)
-        # Sphere: show computed height label, not editable spin
-        self.disc_r_spin.setVisible(is_mushroom)
-        self.stem_top_spin.setVisible(is_mushroom)
-
-        # Layering
-        self.layers_spin.setVisible(is_flat)
-        self.infill_cb.setVisible(not is_flat_specialty)
-        if is_revolve:
-            # Limit infill options to archimedean/fermat
-            current = self.infill_cb.currentText()
+        # Infill patterns: grey out what the slicer would not use.
+        states = infill_states(params)
+        model = self.infill_cb.model()
+        current = self.infill_cb.currentText()
+        for i in range(self.infill_cb.count()):
+            name = self.infill_cb.itemText(i)
+            st = states.get(name)
+            item = model.item(i)
+            if st is None:
+                continue
+            item.setEnabled(st.enabled)
+            self.infill_cb.setItemData(i, st.reason or None, Qt.ToolTipRole)
+            self.infill_cb.setItemIcon(i, self._caution if st.caution else QIcon())
+        choice = first_enabled(states, current)
+        if choice != current:
             self.infill_cb.blockSignals(True)
-            self.infill_cb.clear()
-            self.infill_cb.addItems(REVOLVE_INFILL_OPTIONS)
-            if current in REVOLVE_INFILL_OPTIONS:
-                self.infill_cb.setCurrentText(current)
+            self.infill_cb.setCurrentText(choice)
             self.infill_cb.blockSignals(False)
-        elif is_flat or is_stl:
-            current = self.infill_cb.currentText()
-            self.infill_cb.blockSignals(True)
-            self.infill_cb.clear()
-            self.infill_cb.addItems(INFILL_OPTIONS)
-            if current in INFILL_OPTIONS:
-                self.infill_cb.setCurrentText(current)
-            self.infill_cb.blockSignals(False)
-        self.tracks_spin.setVisible(not is_flat_specialty)
-        self.layup_edit.setVisible(is_flat or is_stl)
+        st = states.get(self.infill_cb.currentText())
+        hint = st.reason if st is not None and st.caution else ""
+        self.infill_hint.setText(f"⚠ {hint}" if hint else "")
+        self.infill_hint.setVisible(bool(hint))
 
-        # Kinematics: full planner for flat + revolve; specialty only Z speed
-        show_planner = not is_flat_specialty
-        show_specialty = is_flat_specialty
-        show_mushroom = is_mushroom
-
-        for w in (self.vmin_spin, self.accel_spin, self.decel_spin,
-                  self.p_adv_spin, self.pump_floor_spin, self.trans_angle_spin,
-                  self.seam_trim_spin, self.anchor_spin):
-            w.setVisible(show_planner)
-        self.pa_table_edit.setVisible(show_planner)
-        self._pa_table_label.setVisible(show_planner)
-        show_stagger = is_revolve and shape != "Hollow Square Tube (Z)"
-        self.seam_stagger_spin.setVisible(show_stagger)
-        self._stagger_label.setVisible(show_stagger)
-        self.vz_spin.setVisible(show_specialty)
-        self._vz_label.setVisible(show_specialty)
-        self.v_overhang_spin.setVisible(show_mushroom)
-        self._vo_label.setVisible(show_mushroom)
-        self.dwell_spin.setVisible(show_mushroom)
-        self._dwell_label.setVisible(show_mushroom)
+    def _filter(self, text):
+        text = text.strip().lower()
+        for key, (lbl, widget, sec) in self._rows.items():
+            label = lbl.text() or (widget.text() if isinstance(widget, QCheckBox) else "")
+            hit = not text or text in label.lower() or text in HELP.get(key, "").lower() or text in key
+            sec.form.setRowVisible(lbl, hit)
+        for sec in self._sections:
+            any_hit = any(sec.form.isRowVisible(lbl) for lbl, _, s in self._rows.values() if s is sec)
+            sec.setVisible(any_hit)
+            if text and any_hit:
+                sec.set_open(True)
 
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def set_custom_outline(self, outline, holes=(), name: str = ""):
+        """Outline (and holes) for the Custom Outline shape, in mm."""
+        self._custom = {"custom_outline": [tuple(map(float, p)) for p in outline],
+                        "custom_holes": [[tuple(map(float, p)) for p in h] for h in holes]}
+        n = len(self._custom["custom_holes"])
+        xs = [p[0] for p in self._custom["custom_outline"]] or [0.0]
+        ys = [p[1] for p in self._custom["custom_outline"]] or [0.0]
+        self.custom_lbl.setText(f"{name or 'outline'}: {max(xs) - min(xs):.0f} x {max(ys) - min(ys):.0f} mm"
+                                + (f", {n} hole(s)" if n else ""))
+        if "Custom Outline" in SHAPES and self.shape_cb.currentText() != "Custom Outline":
+            self.shape_cb.setCurrentText("Custom Outline")
+        else:
+            self._emit()
+
+    def _raw_params(self) -> dict:
+        """Current widget values (no shape-specific zeroing): input to the
+        option-state rules."""
+        return {
+            "shape": self.shape_cb.currentText(),
+            "infill_type": self.infill_cb.currentText(),
+            "layers": self.layers_spin.value(),
+            "fill_solid": self.fill_chk.isChecked(),
+            "pa_table": self.pa_table_edit.text(),
+            "track_gap": self.gap_spin.value(),
+            "min_radius": self.min_r_spin.value(),
+            "include_boundary": self.boundary_chk.isChecked(),
+        }
+
     def get_params(self) -> dict:
         shape = self.shape_cb.currentText()
         is_mushroom = shape == "3D Overhang (Mushroom)"
@@ -452,7 +503,7 @@ class ControlsPanel(QWidget):
 
         stl_path = self.stl_path_edit.text() or None
 
-        return {
+        params = {
             "shape": shape,
             "width": self.w_spin.value(),
             "height": self.h_spin.value(),
@@ -472,6 +523,7 @@ class ControlsPanel(QWidget):
             "layup_seq": self.layup_edit.text(),
             "infill_type": infill,
             "tracks_per_layer": self.tracks_spin.value(),
+            "fill_solid": self.fill_chk.isChecked(),
             "layer_height": self.lh_spin.value(),
             "needle_dia": self.needle_spin.value(),
             "e_mult": self.emult_spin.value(),
@@ -497,6 +549,9 @@ class ControlsPanel(QWidget):
             "purge_f": self.purge_f_spin.value(),
             "travel_f": self.travel_f_spin.value(),
         }
+        if shape == "Custom Outline":
+            params.update(self._custom)
+        return params
 
     def get_layup(self) -> list[float]:
         try:
@@ -525,7 +580,6 @@ class ControlsPanel(QWidget):
                     widget.blockSignals(False)
 
         _set(self.shape_cb, "shape")
-        self._update_shape_visibility()
 
         _set(self.w_spin, "width")
         _set(self.h_spin, "height")
@@ -548,7 +602,14 @@ class ControlsPanel(QWidget):
             self.stl_path_edit.setText(str(p["stl_path"]))
         _set(self.stl_scale_spin, "stl_scale")
         if "stl_islands" in p:
+            self.stl_islands_chk.blockSignals(True)
             self.stl_islands_chk.setChecked(p["stl_islands"] == "all")
+            self.stl_islands_chk.blockSignals(False)
+        if p.get("custom_outline"):
+            self._custom = {"custom_outline": [tuple(q) for q in p["custom_outline"]],
+                            "custom_holes": [[tuple(q) for q in h] for h in p.get("custom_holes", [])]}
+            self.custom_lbl.setText(f"outline: {len(self._custom['custom_outline'])} points, "
+                                    f"{len(self._custom['custom_holes'])} hole(s)")
 
         _set(self.x_spin, "start_x")
         _set(self.y_spin, "start_y")
@@ -556,6 +617,7 @@ class ControlsPanel(QWidget):
         _set(self.z_off_spin, "z_offset")
         _set(self.layers_spin, "layers", int)
         _set(self.tracks_spin, "tracks_per_layer", int)
+        _set(self.fill_chk, "fill_solid")
         _set(self.infill_cb, "infill_type")
         _set(self.layup_edit, "layup_seq")
 
@@ -588,4 +650,5 @@ class ControlsPanel(QWidget):
         self._emit()
 
     def _emit(self):
+        self._apply_states()
         self.params_changed.emit()

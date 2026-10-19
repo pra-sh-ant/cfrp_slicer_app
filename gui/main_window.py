@@ -42,7 +42,7 @@ _DEFAULTS = {
     "v_max": 10.0, "v_min": 5.0, "accel": 25.0, "decel": 15.0,
     "p_advance": 3.0, "pump_stall_floor": 5.0, "transition_angle": 30.0,
     "seam_trim_length": 3.0, "anchor_length": 15.0, "min_radius": 3.0,
-    "v_z": 2.0, "v_overhang": 5.0, "dwell": 1.5,
+    "v_z": 2.0, "v_overhang": 5.0, "dwell": 1.5, "fill_solid": False,
     "uv": 225, "purge_e": 15.0, "purge_f": 60.0, "travel_f": 600.0,
 }
 

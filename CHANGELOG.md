@@ -5,6 +5,44 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 30 — option states, greyed-out settings, new controls panel)
+- `cfrp_core.capabilities`: `field_states` / `infill_states` say which settings and
+  patterns apply to a setup and why not (read off the builders; e.g. layup is
+  ignored by spirals and the fixed ±45° hatch, Tracks Per Layer by zigzags,
+  seam trim / transition angle by single-layer parts and helical shells, the
+  fixed pressure advance by a PA table). `tests/test_capabilities.py` proves it:
+  changing any setting reported as unused leaves the sliced path identical.
+- GUI controls panel rebuilt: collapsible sections ("n not used here"), unit
+  suffixes, a help tooltip on every setting, settings search; settings that do
+  not apply are greyed out with the reason (nothing is hidden); patterns that do
+  not apply are greyed in the Infill list, patterns that will raise curvature
+  warnings carry a caution icon and an inline hint. Offscreen Qt tests added.
+- Trajectory points of the lead-in anchor carry `is_anchor` (viewer colouring).
+
+### Fixed (Phase 29 — robust STL slicing for continuous fibre)
+Same 25-mesh suite as Phase 28 (250 runs): Pass 12 → 24, self-crossings 7970 →
+771, curvature points 2.51 M → 1.28 M; remaining errors are only the intended
+unit/thin-wall messages.
+- **Spiral teardrop loops**: Clipper's invalid-ring repair (`buffer(0)`) returned
+  rings clockwise; blended into counter-clockwise neighbours the spiral drew a
+  loop across its rings (sliced cylinder, tube, vase). Repaired rings are now
+  oriented like Clipper's output.
+- **Zigzag crossings around holes**: run-to-run connectors are routed straight or
+  along margin rings (both ways round), scored by crossings then length, and the
+  run order and direction is chosen by an exact subset search (greedy beyond 8
+  runs). A classic cellular decomposition is tried as well and the cleaner path
+  kept. Plate with two bolt holes: 14 → 0 crossings at every angle.
+- **Thin walls**: slices too narrow for zigzag U-turns, with no room for Fermat's
+  two tracks, or fitting no Corner-Step ring now fall back to Archimedean rings
+  (info note) instead of stubs or a failed part; thin islands in multi-island
+  mode get one wall lap.
+- **Fill Solid** (`fill_solid`, opt-in): spirals lay as many tracks as fit (flat
+  parts and STL slices). Mean STL coverage 61 % → 79 %. The low-coverage warning
+  names it.
+- `count_crossings` moved to `geometry._common` (one bulk STRtree query).
+
+Goldens unchanged.
+
 ### Fixed (Phase 28 — real-world STL import)
 Tested 25 meshes (pen holder, cylinder, cube, cone, pyramid, sphere, tray, tube, torus,
 bracket with holes, table, two parts, inch/metre models, off-origin, missing face,
