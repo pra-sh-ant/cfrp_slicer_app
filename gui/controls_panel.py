@@ -59,7 +59,7 @@ def _spin(min_v, max_v, step, value, decimals=2, suffix=""):
     w.setSingleStep(step)
     w.setDecimals(decimals)
     w.setValue(value)
-    w.setMinimumWidth(104)
+    w.setMinimumWidth(86)
     w.setKeyboardTracking(False)
     if suffix:
         w.setSuffix(f" {suffix}")
@@ -70,7 +70,7 @@ def _ispin(min_v, max_v, value, suffix=""):
     w = QSpinBox()
     w.setRange(min_v, max_v)
     w.setValue(value)
-    w.setMinimumWidth(104)
+    w.setMinimumWidth(86)
     w.setKeyboardTracking(False)
     if suffix:
         w.setSuffix(f" {suffix}")
@@ -117,6 +117,8 @@ class _Section(QWidget):
         self.form.setContentsMargins(8, 4, 8, 8)
         self.form.setHorizontalSpacing(10)
         self.form.setVerticalSpacing(5)
+        self.form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
+        self.form.setRowWrapPolicy(QFormLayout.DontWrapRows)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
         lay.setSpacing(0)
@@ -135,7 +137,7 @@ class _Section(QWidget):
         return self._header.isChecked()
 
     def set_unused(self, n):
-        self._header.setText(self.title + (f"   ·  {n} not used here" if n else ""))
+        self._header.setText(self.title.replace("&", "&&") + (f"   ·  {n} not used here" if n else ""))
 
 
 class ControlsPanel(QWidget):
@@ -161,6 +163,7 @@ class ControlsPanel(QWidget):
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         inner = QWidget()
+        inner.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
         self._vbox = QVBoxLayout(inner)
         self._vbox.setSpacing(6)
         self._vbox.setContentsMargins(4, 4, 4, 4)
@@ -222,6 +225,8 @@ class ControlsPanel(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         self.custom_lbl = QLabel("no outline yet")
         self.custom_lbl.setObjectName("hint")
+        self.custom_lbl.setWordWrap(True)
+        self.custom_lbl.setMinimumWidth(60)
         self.custom_btn = QPushButton("Edit…")
         self.custom_btn.setFixedWidth(64)
         self.custom_btn.clicked.connect(self.open_editor_requested.emit)
@@ -236,6 +241,7 @@ class ControlsPanel(QWidget):
         self.stl_path_edit = QLineEdit()
         self.stl_path_edit.setPlaceholderText("Select an STL file…")
         self.stl_path_edit.setReadOnly(True)
+        self.stl_path_edit.setMinimumWidth(60)
         self.stl_browse_btn = QPushButton("Browse…")
         self.stl_browse_btn.setFixedWidth(70)
         self.stl_browse_btn.clicked.connect(self._browse_stl)
@@ -273,6 +279,7 @@ class ControlsPanel(QWidget):
         self.infill_hint = QLabel("")
         self.infill_hint.setObjectName("caution")
         self.infill_hint.setWordWrap(True)
+        self.infill_hint.setMinimumWidth(60)
         self.infill_hint.setVisible(False)
         sec.form.addRow("", self.infill_hint)
 

@@ -133,3 +133,80 @@ def test_viewer_builds_ranges_and_modes(app):
     v._draw_to(a + 5)
     assert v.info.text().startswith("L2")
     v.clear()
+
+
+# --- structural PCB editor (Phase 33) --------------------------------------------
+
+@pytest.fixture
+def editor(app):
+    from gui.pcb_editor import PcbEditor
+    return PcbEditor()
+
+
+def test_editor_starts_with_a_clean_example(editor):
+    assert editor.last_drc["status"] == "Pass"
+    assert editor.design.traces and editor.design.holes
+
+
+def test_draw_trace_undo_redo(editor):
+    from PySide6.QtCore import Qt
+    n = len(editor.design.traces)
+    editor.set_tool("trace")
+    editor.net_edit.setText("SIG")
+    for x, y in ((25, 33), (35, 33), (35, 36)):
+        editor._press(x, y, Qt.LeftButton)
+    editor._finish()
+    assert len(editor.design.traces) == n + 1
+    assert editor.design.traces[-1].net == "SIG" and len(editor.design.traces[-1].points) == 3
+    editor.undo()
+    assert len(editor.design.traces) == n
+    editor.redo()
+    assert len(editor.design.traces) == n + 1
+
+
+def test_outline_hole_pad_footprint_and_delete(editor):
+    from PySide6.QtCore import Qt
+    editor.new_design()
+    editor.set_tool("rect")
+    editor._press(0, 0, Qt.LeftButton)
+    editor._release(80, 50)
+    assert editor.design.outline[0] == (0.0, 0.0) and len(editor.design.outline) == 4
+    editor.set_tool("hole")
+    editor._press(6, 6, Qt.LeftButton)
+    editor.set_tool("pad")
+    editor._press(40, 25, Qt.LeftButton)
+    editor.set_tool("footprint")
+    editor.fp_combo.setCurrentText("SOT-23")
+    editor._press(60, 25, Qt.LeftButton)
+    assert len(editor.design.holes) == 1 and len(editor.design.pads) == 4
+    editor.set_tool("select")
+    editor._press(40, 25, Qt.LeftButton)
+    assert editor._sel == ("pad", 0)
+    editor._release(45, 30)                       # drag moves it
+    assert (editor.design.pads[0].x, editor.design.pads[0].y) == (45.0, 30.0)
+    editor.delete_selected()
+    assert len(editor.design.pads) == 3
+
+
+def test_editor_drc_flags_a_short(editor):
+    from PySide6.QtCore import Qt
+    editor.set_tool("trace")
+    editor.net_edit.setText("OTHER")
+    editor._press(36, 24, Qt.LeftButton)
+    editor._press(36, 34, Qt.LeftButton)          # crosses the LED trace at y=28
+    editor._finish()
+    assert editor.last_drc["status"] == "Fail"
+    assert any(m.startswith("Short") for m in editor.last_drc["messages"])
+
+
+def test_editor_save_load_and_slice_request(editor, tmp_path):
+    path = tmp_path / "b.spcb.json"
+    editor.save_design_as(str(path))
+    design = editor.design
+    editor.new_design()
+    editor.open_design(str(path))
+    assert editor.design == design
+    got = []
+    editor.slice_requested.connect(lambda d, c: got.append((d, c)))
+    editor._request_slice()
+    assert got and got[0][0] == design and got[0][1].line_width_mm == editor.d_lw.value()

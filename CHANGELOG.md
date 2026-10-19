@@ -5,6 +5,21 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 33 — Structural PCB editor)
+- New top-level tab **Structural PCB (DIW)** (`gui/pcb_editor.py`): mm canvas (Y
+  up) with grid and snap, zoom/pan, cursor read-out; tools for the board outline
+  (rectangle, rounded rectangle, polygon), holes, traces (width + net), pads, zones
+  (conductor / dielectric / keepout), footprints with auto-numbered references,
+  and generators for a strain-gauge/heater meander, interdigitated electrodes and
+  a spiral coil; select, drag-move, delete, undo/redo; properties of the selection
+  (trace length and resistance); live DRC list; DIW process settings;
+  New / Example / Open / Save (`.spcb.json`).
+- **Slice board** sends the outline (with its holes) to the fibre slicer as the
+  Custom Outline and slices the ink on top: one 3D view (colour by Feature or
+  Tool), merged fibre + DIW checks in the issue list, DIW ink, volume, time and
+  per-trace resistance on the dashboard, combined G-code. The Custom Outline
+  row's Edit… button and the toolbar's PCB Editor open the editor.
+
 ### Added (Phase 32b — DIW slicing for structural electronics)
 - `cfrp_core.diw`: structural PCB design model (`BoardDesign`: outline, holes,
   traces with width/net, pads, conductor/dielectric/keepout zones; JSON

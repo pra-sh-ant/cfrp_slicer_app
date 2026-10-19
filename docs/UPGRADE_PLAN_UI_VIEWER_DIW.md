@@ -26,8 +26,19 @@ fibre layers would mean cutting the fibre).
 | 30 remainder | **done**: toolbar (Slice, Auto-slice, Open STL, Save G-code, CSV, Calibration), issue list with click-to-layer, new theme | `0b99945` |
 | 31 3D viewer | **done**: shaded tubes in GPU buffers, range rendering, 8 colour modes, playback, picking, ortho, PNG export | `0b99945` |
 | 31 follow-ups | **left**: translucent STL mesh overlay, building the mesh in the worker thread for very large parts | — |
-| 32 Custom outline + DIW core | **left** | — |
-| 33 Structural PCB editor | **left** | — |
+| 32a Custom Outline + holes | **done**: shape, rings that bend round holes (board 17 % → 88 %), Corner-Step no longer runs over holes | `9c21c19` |
+| 32b DIW core | **done**: design model, footprints, sensors, DIW slicer, DRC + resistance, DIW G-code, combined board slicing | `c2cf929` |
+| 33 Structural PCB editor | **done**: editor tab, tools, footprints, sensor generators, undo/redo, live DRC, DIW settings, Slice board → fibre + ink in one view and one G-code | (this commit) |
+
+### What is left (next candidates)
+- Fermat spiral on holed outlines (it still stops at the first hole; caution shown).
+- Ramp seam on holed zigzag layers can cut the entry detour (1 crossing on the test board).
+- Viewer: translucent STL mesh overlay; build the tube mesh in the worker thread for very large parts.
+- PCB editor: vertex editing of outlines and traces, DXF/Gerber import, multi-layer
+  (stacked) conductors with insulated crossovers, embedding electronics between
+  fibre layers (needs a fibre cut, so not in the one-stroke pipeline).
+- DIW: start/stop flow compensation (retract / pre-pressure distances), per-material
+  presets (silver, carbon, liquid metal, UV dielectric), cure (UV) between DIW layers.
 
 Still open from Phase 29 (not defects, known limits): zigzag curvature
 warnings are inherent while Track Gap < 2·r_min (U-turn radius gap/2); the

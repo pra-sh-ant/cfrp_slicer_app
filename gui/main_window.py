@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QSplitter,
     QStatusBar,
+    QTabWidget,
     QToolBar,
 )
 
@@ -75,7 +76,18 @@ class MainWindow(QMainWindow):
         splitter.setStretchFactor(1, 1)
         splitter.setSizes([400, 1100])
 
-        self.setCentralWidget(splitter)
+        # Top level: the fibre slicer and the structural PCB editor
+        from .pcb_editor import PcbEditor
+        self._editor = PcbEditor()
+        self._editor.slice_requested.connect(self._slice_board)
+        self._editor.design_changed.connect(self._board_changed)
+        self._controls.open_editor_requested.connect(self._show_editor)
+        self._board = None            # (BoardDesign, DiwConfig) while a PCB is being sliced
+        self._modes = QTabWidget()
+        self._modes.setDocumentMode(True)
+        self._modes.addTab(splitter, "Fibre Slicer")
+        self._modes.addTab(self._editor, "Structural PCB (DIW)")
+        self.setCentralWidget(self._modes)
 
         # --- menu bar -------------------------------------------------------
         mb = self.menuBar()
@@ -130,6 +142,8 @@ class MainWindow(QMainWindow):
         tb.addAction("Export CSV…", lambda: self._results.gcode_tab.save_csv()).setToolTip(
             "Export the trajectory as CSV")
         tb.addSeparator()
+        tb.addAction("PCB Editor", self._show_editor).setToolTip(
+            "Draw a structural PCB: board outline, holes, traces, pads (DIW electronics)")
         tb.addAction("Calibration…", self._generate_calibration).setToolTip(
             "Write the calibration coupons for these settings")
         self._toolbar = tb
@@ -210,7 +224,8 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setVisible(True)
         self._busy.setVisible(True)
 
-        self._worker = SlicerWorker(params, layup, self._machine)
+        board = self._board if params.get("shape") == "Custom Outline" else None
+        self._worker = SlicerWorker(params, layup, self._machine, board=board)
         self._worker.finished.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
@@ -221,15 +236,60 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setVisible(False)
         self._status_lbl.setText("Cancelled.")
 
+    def _show_editor(self):
+        self._editor.set_min_radius(self._controls.min_r_spin.value())
+        self._modes.setCurrentWidget(self._editor)
+
+    def _board_changed(self, design):
+        if self._board is not None:
+            self._board = (design, self._editor.diw_config())
+
+    def _slice_board(self, design, diw_cfg):
+        """Editor -> slicer: the outline becomes the Custom Outline part and
+        the ink is sliced on top of it."""
+        from cfrp_core.diw import hole_outlines
+        self._board = (design, diw_cfg)
+        self._controls.set_custom_outline(design.outline, hole_outlines(design), design.name)
+        self._modes.setCurrentIndex(0)
+        self._slice()
+
     def _on_finished(self, result):
         self._busy.setVisible(False)
         self._cancel_btn.setVisible(False)
-        self._results.update(result)
+        if hasattr(result, "diw"):
+            result = self._show_board(result)
+        else:
+            self._results.update(result)
         n = len(result.trajectory)
         v = result.validation["status"]
         self._status_lbl.setText(
             f"{n:,} points · {result.max_z:.2f} mm tall · {v}"
         )
+
+    def _show_board(self, board):
+        """Show a structural PCB result: fibre + ink in one view, merged
+        checks, combined G-code. Returns the fibre result with those merged."""
+        import dataclasses
+
+        from .toolpath_mesh import from_trajectory
+        fibre, diw = board.fibre, board.diw
+        rank = {"Pass": 0, "Warning": 1, "Fail": 2}
+        status = max(fibre.validation["status"], diw.validation["status"], key=rank.get)
+        msgs = [m for m in fibre.validation["messages"] if not m.startswith("✅")]
+        msgs += [f"DIW: {m}" for m in diw.validation["messages"] if not m.startswith("DRC passed")]
+        if not msgs:
+            msgs = ["✅ Fibre and DIW checks passed."]
+        merged = dataclasses.replace(fibre, validation={"status": status, "messages": msgs}, gcode=board.gcode)
+        st = diw.stats
+        rows = [("─" * 20, ""), ("DIW ink", ", ".join(f"{k} {v / 1000:.2f} m" for k, v in st["ink_length_mm"].items())),
+                ("DIW volume", ", ".join(f"{k} {v:.1f} mm³" for k, v in st["ink_volume_mm3"].items())),
+                ("DIW time", f"{st['print_time_s'] / 60:.1f} min, {st['starts']} ink starts"),
+                ("Board origin", f"X {board.offset[0]:.2f}  Y {board.offset[1]:.2f} mm")]
+        rows += [(f"R {t['name']}", f"{t['resistance_ohm'] * 1000:.1f} mΩ  ({t['length_mm']:.1f} mm)")
+                 for t in diw.validation["traces"]]
+        extra = from_trajectory(diw.trajectory, tool=1)
+        self._results.update(merged, extra=extra, extra_rows=rows)
+        return merged
 
     def _on_failed(self, msg: str):
         self._busy.setVisible(False)

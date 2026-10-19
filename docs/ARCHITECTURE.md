@@ -27,8 +27,15 @@ src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt import
   gcode/writer.py         compile_gcode (Marlin-style, M1995 UV)
   validation.py           validate_trajectory (spec §13)
   pipeline.py             slice_part -> SliceResult
+  capabilities.py         which settings / patterns apply to a setup, and why not
+  diw/                    DIW structural electronics: design (BoardDesign, footprints,
+                          sensors), config (DiwConfig), slicer, validation (DRC), gcode
+  board.py                slice_structural_board: fibre laminate + DIW on top
 app.py, ui/, viewer.py,   legacy Streamlit front end: collects inputs, calls
 presets.py                cfrp_core, renders. Removed in Phase 10.
+gui/                      PySide6 app: controls_panel (greyed settings), results_panel
+                          (issues, dashboard, G-code), viewer_gl + toolpath_mesh +
+                          range_slider (shaded tube viewer), pcb_editor (structural PCB)
 tests/                    pytest + hypothesis; tests/golden = characterization data
 ```
 
