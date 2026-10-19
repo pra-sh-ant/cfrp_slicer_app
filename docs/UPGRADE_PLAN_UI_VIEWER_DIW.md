@@ -17,6 +17,26 @@ fibre layers would mean cutting the fibre).
 
 ---
 
+## Status (2026-10-19)
+
+| Phase | State | Commit |
+|---|---|---|
+| 29 STL robustness | **done**: Pass 12 → 24, crossings 7970 → 771, curvature points 2.51 M → 1.28 M; Fill Solid coverage 61 % → 79 % | `062324b` |
+| 30 Option states + controls panel | **done**: `capabilities.py` + rebuilt panel (greyed rows/patterns with reasons, sections, units, tooltips, search) | `7299d7f` |
+| 30 remainder | **done**: toolbar (Slice, Auto-slice, Open STL, Save G-code, CSV, Calibration), issue list with click-to-layer, new theme | `0b99945` |
+| 31 3D viewer | **done**: shaded tubes in GPU buffers, range rendering, 8 colour modes, playback, picking, ortho, PNG export | `0b99945` |
+| 31 follow-ups | **left**: translucent STL mesh overlay, building the mesh in the worker thread for very large parts | — |
+| 32 Custom outline + DIW core | **left** | — |
+| 33 Structural PCB editor | **left** | — |
+
+Still open from Phase 29 (not defects, known limits): zigzag curvature
+warnings are inherent while Track Gap < 2·r_min (U-turn radius gap/2); the
+remaining 771 crossings are mostly ramps between layers on small shrinking
+slices (cone/pyramid) and multi-island bridges; steep ramps on cone/pyramid
+zigzags.
+
+---
+
 ## Phase 29: STL slicing robustness (core)
 
 Baseline: 25 test meshes × 5 infills × 2 island modes (250 runs).
