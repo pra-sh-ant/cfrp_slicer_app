@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPointF, Qt, Signal
+from PySide6.QtCore import QPointF, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QIcon, QPainter, QPixmap, QPolygonF
 from PySide6.QtWidgets import (
     QCheckBox,
@@ -161,6 +161,8 @@ class ControlsPanel(QWidget):
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self._scroll = scroll
+        self._problems: dict[str, tuple[str, str, str]] = {}    # key -> (label css, widget css, tooltip)
 
         inner = QWidget()
         inner.setSizePolicy(QSizePolicy.Ignored, QSizePolicy.Preferred)
@@ -177,6 +179,15 @@ class ControlsPanel(QWidget):
         self._vbox.addStretch()
         scroll.setWidget(inner)
 
+        # Settings undo: a snapshot of every widget once changes pause.
+        self._history: list[dict] = []
+        self._future: list[dict] = []
+        self._restoring = False
+        self._hist_timer = QTimer(self)
+        self._hist_timer.setSingleShot(True)
+        self._hist_timer.setInterval(600)
+        self._hist_timer.timeout.connect(self._record)
+
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(4)
@@ -184,6 +195,84 @@ class ControlsPanel(QWidget):
         outer.addWidget(scroll)
 
         self._update_shape_visibility()
+        self._last = self.snapshot()
+
+    # ------------------------------------------------------------------
+    # Settings undo / redo
+    # ------------------------------------------------------------------
+    def snapshot(self) -> dict:
+        """Every setting as its widget shows it (restore() puts it back)."""
+        snap = {}
+        for key, (_lbl, w, _sec) in self._rows.items():
+            if isinstance(w, QCheckBox):
+                snap[key] = w.isChecked()
+            elif isinstance(w, QComboBox):
+                snap[key] = w.currentText()
+            elif isinstance(w, QLineEdit):
+                snap[key] = w.text()
+            elif isinstance(w, (QSpinBox, QDoubleSpinBox)):
+                snap[key] = w.value()
+        snap["_custom"] = {k: list(v) for k, v in self._custom.items()}
+        return snap
+
+    def restore(self, snap: dict) -> None:
+        for key, (_lbl, w, _sec) in self._rows.items():
+            if key not in snap:
+                continue
+            w.blockSignals(True)
+            try:
+                if isinstance(w, QCheckBox):
+                    w.setChecked(bool(snap[key]))
+                elif isinstance(w, QComboBox):
+                    w.setCurrentText(str(snap[key]))
+                elif isinstance(w, QLineEdit):
+                    w.setText(str(snap[key]))
+                elif isinstance(w, (QSpinBox, QDoubleSpinBox)):
+                    w.setValue(snap[key])
+            finally:
+                w.blockSignals(False)
+        self._custom = {k: list(v) for k, v in snap.get("_custom", {}).items()}
+        self._restoring = True
+        try:
+            self._emit()
+        finally:
+            self._restoring = False
+
+    def _record(self):
+        cur = self.snapshot()
+        if cur != self._last:
+            self._history.append(self._last)
+            del self._history[:-100]
+            self._future.clear()
+        self._last = cur
+
+    def can_undo(self) -> bool:
+        return bool(self._history) or (self._hist_timer.isActive() and self.snapshot() != self._last)
+
+    def undo_settings(self) -> bool:
+        """Back to the settings before the last change. False if none."""
+        if self._hist_timer.isActive():
+            self._hist_timer.stop()
+            self._record()
+        if not self._history:
+            return False
+        self._future.append(self._last)
+        self._last = self._history.pop()
+        self.restore(self._last)
+        return True
+
+    def redo_settings(self) -> bool:
+        if not self._future:
+            return False
+        self._history.append(self._last)
+        self._last = self._future.pop()
+        self.restore(self._last)
+        return True
+
+    def known_keys(self) -> set[str]:
+        """Setting keys this version reads from a parameters file."""
+        return set(self.get_params()) | set(self._rows) | {
+            "custom_outline", "custom_holes", "bed_x", "bed_y", "z_max", "bed_margin", "stem_top"}
 
     # ------------------------------------------------------------------
     # Row registry
@@ -193,6 +282,50 @@ class ControlsPanel(QWidget):
         self._sections.append(sec)
         self._vbox.addWidget(sec)
         return sec
+
+    def mark_problems(self, message: str) -> list[str]:
+        """Outline in red the settings a slicing error names -- by their
+        label ("Track Gap must be greater than 0 mm") or by the field path
+        of a type error ("geometry.width_mm: ...") -- open their sections
+        and scroll to the first. Returns their keys. A longer label wins
+        over one inside it ("Layer Height" is not "Height")."""
+        import re
+
+        from cfrp_core.legacy import legacy_key
+        self.clear_problems()
+        text = str(message).lower()
+        spans, keys = [], []
+        labels = sorted(((lbl.text().strip(), key) for key, (lbl, _w, _s) in self._rows.items() if lbl.text().strip()),
+                        key=lambda t: -len(t[0]))
+        for label, key in labels:
+            for m in re.finditer(r"(?<![\w])" + re.escape(label.lower()) + r"(?![\w])", text):
+                if any(m.start() < b and a < m.end() for a, b in spans):
+                    continue
+                spans.append((m.start(), m.end()))
+                keys.append(key)
+                break
+        for path in re.findall(r"([A-Za-z_]+(?:\.[A-Za-z_]+)*)\s*:", str(message)):
+            key = legacy_key(path)
+            if key in self._rows and key not in keys:
+                keys.append(key)
+        for key in keys:
+            lbl, w, sec = self._rows[key]
+            self._problems[key] = (lbl.styleSheet(), w.styleSheet(), w.toolTip())
+            lbl.setStyleSheet("color: #f87171; font-weight: bold;")
+            w.setStyleSheet(w.styleSheet() + "border: 1px solid #f87171; border-radius: 3px;")
+            w.setToolTip(f"<b>Problem:</b> {message}<br><br>{w.toolTip()}")
+            sec.set_open(True)
+        if keys:
+            self._scroll.ensureWidgetVisible(self._rows[keys[0]][1], 0, 40)
+        return keys
+
+    def clear_problems(self):
+        for key, (lbl_css, w_css, tip) in self._problems.items():
+            lbl, w, _ = self._rows[key]
+            lbl.setStyleSheet(lbl_css)
+            w.setStyleSheet(w_css)
+            w.setToolTip(tip)
+        self._problems = {}
 
     def _add(self, sec, key, label, widget):
         lbl = QLabel(label)
@@ -334,6 +467,9 @@ class ControlsPanel(QWidget):
     # ------------------------------------------------------------------
     def _build_materials(self):
         sec = self._section("Material")
+        from .profiles_ui import ProfileRow
+        self.material_profile = ProfileRow("material", self.snapshot, self.load_params)
+        sec.form.addRow("Fibre / resin", self.material_profile)
         self.needle_spin = self._add(sec, "needle_dia", "Needle Dia", _spin(0.01, 5, 0.1, 0.8, 2, "mm"))
         self.lh_spin = self._add(sec, "layer_height", "Layer Height", _spin(0.01, 5, 0.05, 0.2, 2, "mm"))
         self.emult_spin = self._add(sec, "e_mult", "E-Multiplier", _spin(0.01, 10, 0.1, 1.6))
@@ -380,6 +516,9 @@ class ControlsPanel(QWidget):
         sec.set_open(False)
 
         sec = self._section("Machine")
+        from .profiles_ui import ProfileRow
+        self.machine_profile = ProfileRow("machine", self.snapshot, self.load_params)
+        sec.form.addRow("Profile", self.machine_profile)
         self.bed_x_spin = self._add(sec, "bed_x", "Bed Width (X)", _spin(10, 2000, 10, 180.0, 0, "mm"))
         self.bed_y_spin = self._add(sec, "bed_y", "Bed Depth (Y)", _spin(10, 2000, 10, 220.0, 0, "mm"))
         self.z_max_spin = self._add(sec, "z_max", "Max Height (Z)", _spin(1, 2000, 10, 200.0, 0, "mm"))
@@ -617,8 +756,10 @@ class ControlsPanel(QWidget):
         except ValueError:
             return [0.0]
 
-    def load_params(self, p: dict) -> None:
-        """Populate all widgets from a params dict (same format as get_params)."""
+    def load_params(self, p: dict) -> list[str]:
+        """Populate all widgets from a params dict (same format as get_params).
+        Returns the keys it did not use (from another version of the app),
+        sorted."""
         def _set(widget, key, cast=float):
             if key in p:
                 widget.blockSignals(True)
@@ -721,7 +862,10 @@ class ControlsPanel(QWidget):
         _set(self.travel_f_spin, "travel_f")
 
         self._emit()
+        return sorted(set(p) - self.known_keys())
 
     def _emit(self):
         self._apply_states()
+        if not self._restoring and hasattr(self, "_hist_timer"):
+            self._hist_timer.start()
         self.params_changed.emit()

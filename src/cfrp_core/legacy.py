@@ -74,6 +74,21 @@ _FIELD_MAP = {
 }
 
 
+_KEY_FOR = {(section, field): key for key, (section, field) in _FIELD_MAP.items()}
+
+
+def legacy_key(path: str) -> str | None:
+    """The flat (GUI) setting key for a config field path such as
+    'geometry.width_mm' or 'track_gap_mm' (as error messages name them),
+    or None."""
+    parts = [p for p in str(path).split(".") if p]
+    if not parts:
+        return None
+    if len(parts) == 1:
+        return _KEY_FOR.get((None, parts[0]))
+    return _KEY_FOR.get((parts[-2], parts[-1])) or _KEY_FOR.get((None, parts[-1]))
+
+
 def parse_layup(text: str) -> tuple[float, ...]:
     """Comma-separated angles, as the legacy sidebar parsed them: empty or
     unparseable input falls back to (0.0,)."""

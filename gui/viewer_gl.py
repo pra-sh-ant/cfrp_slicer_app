@@ -521,27 +521,36 @@ class ViewerGL(QWidget):
     # ------------------------------------------------------------------
     # Scene update
     # ------------------------------------------------------------------
+    def wants_core(self) -> bool:
+        """Display mode a prepared scene should be built for (fibre tow in a
+        resin coat)."""
+        return self.resin_chk.isChecked() and self.mode_cb.currentText() == "Feature"
+
     def update_scene(self, trajectory, target_shapes, max_z, bead_width=1.0, bead_height=0.2,
-                     r_min=3.0, extra=None, part_mesh=None):
+                     r_min=3.0, extra=None, part_mesh=None, prepared=None):
         """Show a slice result. `extra`: further ToolpathData (e.g. DIW)
         drawn after the fibre. `part_mesh`: (N, 3, 3) triangles of the part
-        for the see-through overlay (None = extrude the first outline)."""
+        for the see-through overlay (None = extrude the first outline).
+        `prepared`: a toolpath_mesh.Prepared built off the UI thread for
+        this trajectory (its meshes are used if the display mode still
+        matches)."""
         self._r_min = float(r_min)
         self._part_tris = part_mesh
         self._part_top = float(max_z or 0.0)
         self._reset_measure()
-        fibre = tm.from_trajectory(trajectory or [], bead_width, bead_height)
-        data = tm.concat([fibre, extra]) if extra is not None else fibre
         self._outlines = list(target_shapes or [])
+        self._prepared = prepared if prepared is not None and extra is None else None
+        if self._prepared is not None:
+            data = self._prepared.data
+        else:
+            fibre = tm.from_trajectory(trajectory or [], bead_width, bead_height)
+            data = tm.concat([fibre, extra]) if extra is not None else fibre
+            if len(data):
+                data = tm.drawable(data, MAX_DRAW_POINTS)
         if not len(data):
             self.clear()
             return
-        keep = tm.simplify(data)
-        tol = 1.0
-        while len(keep) > MAX_DRAW_POINTS and tol < 16:
-            tol *= 2
-            keep = tm.simplify(data, angle_deg=tol, max_len=1.5 * tol)
-        self._data = data = data.take(keep)
+        self._data = data
         self._layers = data.layer_ranges()
         self._layer_z = {lay: float(np.median(data.xyz[a:b, 2])) for lay, (a, b) in self._layers.items()}
         dist = np.r_[0.0, np.linalg.norm(np.diff(data.xyz, axis=0), axis=1)]
@@ -596,7 +605,10 @@ class ViewerGL(QWidget):
         # With the resin coat on, the coloured tube is the fibre tow inside
         # the resin bead; otherwise it is the whole bead.
         self._core_mode = self._resin_wanted()
-        if self._core_mode:
+        pre = getattr(self, "_prepared", None)
+        if pre is not None and pre.data is data and pre.core_mode == self._core_mode and pre.tube is not None:
+            self._mesh = pre.tube                     # built by the slicing thread
+        elif self._core_mode:
             self._mesh = tm.tube_mesh(data, sides=sides, width_scale=tm.FIBRE_CORE[0],
                                       height_scale=tm.FIBRE_CORE[1])
         else:
@@ -609,8 +621,11 @@ class ViewerGL(QWidget):
         # Resin coat: a slightly larger see-through tube round the fibre.
         if (data.tool == 0).any():
             import dataclasses
-            fibre_only = dataclasses.replace(data, breaks=data.breaks | (data.tool != 0))
-            resin_mesh = tm.tube_mesh(fibre_only, sides=sides, width_scale=1.0, height_scale=1.0)
+            if pre is not None and pre.data is data and pre.resin is not None:
+                resin_mesh = pre.resin
+            else:
+                fibre_only = dataclasses.replace(data, breaks=data.breaks | (data.tool != 0))
+                resin_mesh = tm.tube_mesh(fibre_only, sides=sides, width_scale=1.0, height_scale=1.0)
             col = np.tile(np.array(tm.RESIN, dtype=np.float32), (len(data), 1))
             col[data.tool != 0] = 0.0
             self._resin = ToolpathItem(alpha=0.33)

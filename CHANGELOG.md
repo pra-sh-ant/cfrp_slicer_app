@@ -5,6 +5,31 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 40 — usability)
+- **Projects** (`cfrp_core.project`, File > Open / Save Project, Ctrl+Shift+O / S):
+  one `.cfrpproj` file with the slicer settings (machine included), the PCB
+  design, the ink settings and the print mode. The STL is referenced relative to
+  the project when it lies beside it, so the folder can be moved or shared.
+  Projects open from Open Recent too.
+- **Named profiles** (`cfrp_core.profiles`): *Machine* (bed, G-code start),
+  *Fibre / resin* (needle, flow, density, tow weight, gap, bend radius, layer
+  height, speeds, pressure advance) and *Ink process* (every DIW setting); pick,
+  save as, delete, stored in `~/.cfrp_slicer/profiles` (`$CFRP_PROFILE_DIR`).
+  A profile only carries its own settings (a machine profile never changes the
+  part).
+- **Settings undo / redo** (Edit menu, Ctrl+Z / Ctrl+Y on the fibre tab; the PCB
+  editor keeps its own): changes are grouped once they pause for 0.6 s; loading a
+  file can be undone.
+- **Ignored settings are reported** when a parameters file or project from
+  another version has keys this one does not use (instead of dropping them
+  silently).
+- **The setting an error names is outlined in red** (label or field path; the
+  longer label wins, "Layer Height" is not "Height"), its section opened and
+  scrolled to; cleared by the next successful slice.
+- **Faster large parts**: the slicing thread also builds what the 3D view draws
+  (thinned data and tube meshes, `toolpath_mesh.prepare`); the window only uploads
+  them (300k points: ~0.7 s of mesh building moved off the UI thread).
+
 ### Added (Phase 39 — structural PCB: crossovers, current, spread, checks)
 - **Crossovers**: a wire on level 2 (`Trace.level`, editor *Crossover (level 2)*
   or the wire's *Level*) may cross another net's wire. The DIW slicer prints the

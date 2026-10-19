@@ -1,6 +1,11 @@
 """Background slicer worker (QThread) — keeps the UI responsive while
 slicing large parts. With `board` = (BoardDesign, DiwConfig) it slices the
 structural PCB (fibre laminate + DIW electronics) instead.
+
+With `view` = (max_points, core_mode) it also prepares what the 3D view
+draws (thinned data and tube meshes, toolpath_mesh.prepare) and attaches it
+to the result as `prepared_view`, so a large part does not freeze the
+window while its mesh is built.
 """
 from __future__ import annotations
 
@@ -14,12 +19,13 @@ class SlicerWorker(QThread):
     finished = Signal(object)   # SliceResult (or BoardResult) on success
     failed = Signal(str)        # error message on failure
 
-    def __init__(self, params: dict, layup: list[float], machine: MachineProfile, board=None):
+    def __init__(self, params: dict, layup: list[float], machine: MachineProfile, board=None, view=None):
         super().__init__()
         self._params = params
         self._layup = layup
         self._machine = machine
         self._board = board
+        self._view = view
         self._cancelled = False
 
     def cancel(self):
@@ -56,5 +62,19 @@ class SlicerWorker(QThread):
             if not self._cancelled:
                 self.failed.emit(f"Internal slicer error: {exc}")
         else:
+            if self._view is not None and self._board is None and not self._cancelled:
+                result.prepared_view = _prepare(result, *self._view)
             if not self._cancelled:
                 self.finished.emit(result)
+
+
+def _prepare(result, max_points, core_mode):
+    """The view's data for a fibre result (None if it cannot be built:
+    the viewer then builds it itself)."""
+    try:
+        from .toolpath_mesh import prepare
+        c = result.config
+        bead = min(float(c.material.needle_dia_mm), float(c.track_gap_mm))
+        return prepare(result.trajectory, bead, float(c.layer_height_mm), max_points, core_mode)
+    except Exception:
+        return None

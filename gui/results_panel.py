@@ -267,7 +267,8 @@ class ViewerTab(QWidget):
     def viewer(self):
         return self._viewer
 
-    def update_view(self, trajectory, target_shapes, max_z, config=None, extra=None, shift=(0.0, 0.0)):
+    def update_view(self, trajectory, target_shapes, max_z, config=None, extra=None, shift=(0.0, 0.0),
+                    prepared=None):
         kw = {}
         if config is not None:
             # The laid bead is about as wide as the needle (never wider than
@@ -278,7 +279,7 @@ class ViewerTab(QWidget):
             g = config.geometry
             if g.shape == "STL Import" and g.stl_path:
                 kw["part_mesh"] = _stl_triangles(g, shift)
-        self._viewer.update_scene(trajectory, target_shapes, max_z, extra=extra, **kw)
+        self._viewer.update_scene(trajectory, target_shapes, max_z, extra=extra, prepared=prepared, **kw)
 
     def show_layer(self, layer):
         self._viewer.show_layers(layer)
@@ -396,12 +397,12 @@ class ResultsPanel(QWidget):
         self._tabs.setCurrentWidget(self._viewer_tab)
         self._viewer_tab.show_layer(layer)
 
-    def update(self, result, extra=None, extra_rows=(), extra_notes=()):
+    def update(self, result, extra=None, extra_rows=(), extra_notes=(), prepared=None):
         self.banner.set_result(result.validation, result.constraint_notes,
                                tuple(result.info) + tuple(extra_notes))
         self._viewer_tab.update_view(result.trajectory, result.target_shapes, result.max_z,
                                      config=result.config, extra=extra,
-                                     shift=getattr(result, "bed_shift", (0.0, 0.0)))
+                                     shift=getattr(result, "bed_shift", (0.0, 0.0)), prepared=prepared)
         self._gcode_tab.set_gcode(result.gcode, result.config.layers, trajectory=result.trajectory)
         self._dash_tab.update_stats(
             result.trajectory, result.gcode,

@@ -135,6 +135,28 @@ def test_viewer_builds_ranges_and_modes(app):
     v.clear()
 
 
+def test_worker_prepares_the_view_off_the_ui_thread(app):
+    from cfrp_core.machine import DEFAULT_MACHINE
+    from gui.main_window import _DEFAULTS
+    from gui.slicer_worker import SlicerWorker
+    from gui.toolpath_mesh import Prepared
+    from gui.viewer_gl import MAX_DRAW_POINTS, ViewerGL
+    v = ViewerGL(DEFAULT_MACHINE)
+    got = []
+    w = SlicerWorker(dict(_DEFAULTS), [0.0], DEFAULT_MACHINE, view=(MAX_DRAW_POINTS, v.wants_core()))
+    w.finished.connect(got.append)
+    w.run()                                       # synchronously, for the test
+    res = got[0]
+    pre = res.prepared_view
+    assert isinstance(pre, Prepared) and pre.tube is not None and len(pre.data) <= len(res.trajectory)
+    v.update_scene(res.trajectory, res.target_shapes, res.max_z, prepared=pre)
+    assert v._data is pre.data
+    if v._view is not None:
+        assert v._mesh is pre.tube                # built by the worker, not again here
+        v.mode_cb.setCurrentText("Speed")         # another display mode builds its own
+        assert v._mesh is not pre.tube or not pre.core_mode
+
+
 # --- structural PCB editor (Phase 33) --------------------------------------------
 
 @pytest.fixture
@@ -343,3 +365,114 @@ def test_editor_crossover_wire_level_current_and_pin1(editor):
     cfg = editor.diw_config()
     assert cfg.bridge_layers == editor.d_bridge_n.value() and cfg.spread_factor == editor.d_spread.value()
     editor.level2_chk.setChecked(False)
+
+
+def test_failed_slice_marks_the_setting_it_names(panel):
+    keys = panel.mark_problems("Layer Height must be greater than 0 mm (got 0).")
+    assert keys == ["layer_height"]                       # not "height": the longer label wins
+    lbl, w, sec = panel._rows["layer_height"]
+    assert "f87171" in lbl.styleSheet() and "Problem:" in w.toolTip() and sec.is_open()
+    assert panel.mark_problems("Track Gap must be greater than 0 mm.\nMin Bend Radius cannot be negative.") == \
+        ["min_radius", "track_gap"]
+    assert "f87171" not in panel._rows["layer_height"][0].styleSheet()      # the earlier marks are cleared
+    assert panel.mark_problems("geometry.width_mm: Input should be a valid number") == ["width"]
+    panel.clear_problems()
+    assert "f87171" not in panel._rows["width"][1].styleSheet()
+    assert panel.mark_problems("Something else went wrong.") == []
+
+
+# --- Phase 40: settings undo, ignored keys, projects, profiles ------------------------
+
+@pytest.fixture
+def win(app, tmp_path, monkeypatch):
+    from PySide6.QtCore import QSettings
+
+    import gui.main_window as mw
+    monkeypatch.setattr(mw, "QSettings", lambda *a: QSettings(str(tmp_path / "settings.ini"), QSettings.IniFormat))
+    monkeypatch.setenv("CFRP_PROFILE_DIR", str(tmp_path / "profiles"))
+    w = mw.MainWindow()
+    w._quiet = True
+    w._act_auto.setChecked(False)
+    yield w
+    w._timer.stop()
+    w._retire_worker()
+    for r in w._retired:
+        r.wait(5000)
+
+
+def test_settings_undo_and_redo(panel):
+    gap0 = panel.gap_spin.value()
+    panel.gap_spin.setValue(gap0 + 0.3)
+    panel.layers_spin.setValue(4)
+    assert panel.undo_settings()                       # the pending change is recorded first
+    assert panel.gap_spin.value() == pytest.approx(gap0) and panel.layers_spin.value() == 1
+    assert panel.redo_settings()
+    assert panel.gap_spin.value() == pytest.approx(gap0 + 0.3) and panel.layers_spin.value() == 4
+    assert not panel.redo_settings()
+    assert panel.undo_settings() and not panel.undo_settings()
+
+
+def test_loading_reports_settings_this_version_does_not_use(panel):
+    ignored = panel.load_params({"track_gap": 1.4, "layers": 2, "warp_drive": True, "old_knob": 3})
+    assert ignored == ["old_knob", "warp_drive"]
+    assert panel.gap_spin.value() == pytest.approx(1.4)
+    assert panel.load_params(panel.get_params()) == []                   # what we write, we read
+
+
+def test_project_saves_and_opens_everything(win, tmp_path):
+    from cfrp_core.diw import DiwConfig, Trace
+    win._controls.gap_spin.setValue(1.5)
+    win._controls.bed_x_spin.setValue(300.0)
+    d = win._editor.design
+    win._editor.commit(d.model_copy(update=dict(traces=d.traces + (
+        Trace(points=((36, 22), (36, 34)), width_mm=1.0, net="X", level=2),))))
+    win._editor.load_diw_config(DiwConfig(layer_wait_s=9.0, spread_factor=1.2))
+    win._editor.set_print_mode("embedded")
+    path = win.save_project(str(tmp_path / "job"))
+    assert path.endswith(".cfrpproj")
+    design = win._editor.design
+    win._reset_params()
+    win._editor.new_design()
+    win._editor.load_diw_config(DiwConfig())
+    win._editor.set_print_mode("structural")
+    win._open_project(path)
+    assert win._controls.gap_spin.value() == pytest.approx(1.5)
+    assert win._controls.bed_x_spin.value() == pytest.approx(300.0)
+    assert win._editor.design == design
+    assert win._editor.diw_config() == DiwConfig(layer_wait_s=9.0, spread_factor=1.2)
+    assert win._editor.print_mode() == "embedded"
+    assert win._recent_paths()[0] == path
+
+
+def test_profiles_from_the_panel(win, tmp_path):
+    c = win._controls
+    c.bed_x_spin.setValue(250.0)
+    c.machine_profile.save("Big bed")
+    c.bed_x_spin.setValue(180.0)
+    c.gap_spin.setValue(1.3)
+    assert c.machine_profile.combo.findText("Big bed") > 0
+    c.machine_profile.load("Big bed")
+    assert c.bed_x_spin.value() == pytest.approx(250.0)
+    assert c.gap_spin.value() == pytest.approx(1.3)                       # a machine profile leaves the part alone
+    c.material_profile.save("CF 1k")
+    assert (tmp_path / "profiles" / "material" / "CF 1k.json").is_file()
+    ed = win._editor
+    from cfrp_core.diw import DiwConfig
+    ed.load_diw_config(DiwConfig(layer_wait_s=4.0))
+    ed.ink_profile.save("solvent silver")
+    ed.load_diw_config(DiwConfig())
+    ed.ink_profile.load("solvent silver")
+    assert ed.diw_config().layer_wait_s == 4.0
+
+
+def test_undo_from_the_window_follows_the_tab(win):
+    c = win._controls
+    gap0 = c.gap_spin.value()
+    c.gap_spin.setValue(gap0 + 0.2)
+    win._undo()
+    assert c.gap_spin.value() == pytest.approx(gap0)
+    win._modes.setCurrentWidget(win._editor)
+    n = len(win._editor.design.traces)
+    win._editor.new_design()
+    win._undo()                                          # the editor's own undo
+    assert len(win._editor.design.traces) == n

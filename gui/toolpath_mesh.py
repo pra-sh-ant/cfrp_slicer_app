@@ -187,6 +187,50 @@ def from_trajectory(trajectory, bead_width=1.0, bead_height=0.2, tool=0, layer_o
                         np.arange(n), width, height)
 
 
+@dataclass
+class Prepared:
+    """What the viewer draws, built off the UI thread: the drawable
+    (simplified) data and, for one display mode, its tube meshes."""
+    data: ToolpathData
+    core_mode: bool
+    sides: int
+    tube: TubeMesh | None = None
+    resin: TubeMesh | None = None
+
+
+def drawable(data: ToolpathData, max_points: int) -> ToolpathData:
+    """Data thinned for drawing: collinear runs merged, then coarser angle
+    tolerances until it fits `max_points`."""
+    keep = simplify(data)
+    tol = 1.0
+    while len(keep) > max_points and tol < 16:
+        tol *= 2
+        keep = simplify(data, angle_deg=tol, max_len=1.5 * tol)
+    return data.take(keep)
+
+
+def prepare(trajectory, bead_width, bead_height, max_points, core_mode, extra=None) -> Prepared:
+    """from_trajectory + drawable + the tube meshes for one display mode
+    (`core_mode`: the fibre tow inside a resin coat). Pure numpy, so the
+    slicing thread can do it while the window stays responsive."""
+    import dataclasses
+    fibre = from_trajectory(trajectory or [], bead_width, bead_height)
+    data = concat([fibre, extra]) if extra is not None else fibre
+    if not len(data):
+        return Prepared(data, core_mode, 0)
+    data = drawable(data, max_points)
+    sides = sides_for(len(data))
+    if core_mode:
+        tube = tube_mesh(data, sides=sides, width_scale=FIBRE_CORE[0], height_scale=FIBRE_CORE[1])
+    else:
+        tube = tube_mesh(data, sides=sides, width_scale=0.95, height_scale=0.95)
+    resin = None
+    if (data.tool == 0).any():
+        fibre_only = dataclasses.replace(data, breaks=data.breaks | (data.tool != 0))
+        resin = tube_mesh(fibre_only, sides=sides, width_scale=1.0, height_scale=1.0)
+    return Prepared(data, core_mode, sides, tube, resin)
+
+
 def concat(parts) -> ToolpathData:
     parts = [p for p in parts if p is not None and len(p)]
     if not parts:

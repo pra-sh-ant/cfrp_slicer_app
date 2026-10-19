@@ -784,6 +784,10 @@ class PcbEditor(QWidget):
             lambda n: n != "(keep)" and self.apply_ink_preset(n))
         self.d_diel_preset.currentTextChanged.connect(
             lambda n: n != "(keep)" and self.apply_ink_preset(None, n))
+        from .profiles_ui import ProfileRow
+        self.ink_profile = ProfileRow("ink", lambda: self.diw_config().model_dump(),
+                                      lambda v: self.load_diw_config(DiwConfig.model_validate(v)))
+        f.addRow(QLabel("Ink profile"), self.ink_profile)
         rows = (("Ink preset", self.d_ink_preset, "ink_preset"),
                 ("Insulation preset", self.d_diel_preset, "diel_preset"),("Needle", self.d_nozzle, "nozzle"), ("Line width", self.d_lw, "line_width"),
                 ("Layer height", self.d_lh, "layer_height"), ("Ink layers", self.d_cond, "conductor_layers"),
@@ -1579,6 +1583,52 @@ class PcbEditor(QWidget):
     def print_mode(self) -> str:
         cb = self.adv_mode_cb if getattr(self, "advanced", False) and hasattr(self, "adv_mode_cb") else self.mode_cb
         return cb.currentData()
+
+    def set_print_mode(self, mode: str) -> None:
+        i = self.mode_cb.findData(mode)
+        if i >= 0:
+            self.mode_cb.setCurrentIndex(i)           # the Advanced box follows
+
+    def load_diw_config(self, cfg: DiwConfig) -> None:
+        """Show `cfg` in the Ink settings (the inverse of diw_config)."""
+        def put(w, value):
+            w.blockSignals(True)
+            try:
+                if isinstance(w, QCheckBox):
+                    w.setChecked(bool(value))
+                elif isinstance(w, QComboBox):
+                    w.setCurrentText(str(value))
+                elif isinstance(w, QLineEdit):
+                    w.setText(str(value))
+                else:
+                    w.setValue(value)
+            finally:
+                w.blockSignals(False)
+        ox, oy, oz = cfg.tool_offset
+        for w, value in ((self.d_nozzle, cfg.nozzle_mm), (self.d_lw, cfg.line_width_mm),
+                         (self.d_lh, cfg.layer_height_mm), (self.d_cond, cfg.conductor_layers),
+                         (self.d_diel_on, cfg.dielectric), (self.d_diel, cfg.dielectric_layers),
+                         (self.d_margin, cfg.dielectric_margin_mm), (self.d_enc, cfg.encapsulate),
+                         (self.d_enc_n, cfg.encapsulation_layers), (self.d_clear, cfg.clearance_mm),
+                         (self.d_edge, cfg.edge_clearance_mm), (self.d_vc, cfg.speed_conductor_mm_s),
+                         (self.d_vd, cfg.speed_dielectric_mm_s), (self.d_vt, cfg.travel_speed_mm_s),
+                         (self.d_hop, cfg.z_hop_mm), (self.d_mode, cfg.dispense), (self.d_on, cfg.dispense_on),
+                         (self.d_off, cfg.dispense_off), (self.d_on_ms, cfg.on_delay_ms),
+                         (self.d_off_ms, cfg.off_delay_ms), (self.d_epm, cfg.e_per_mm3),
+                         (self.d_tool, cfg.tool_select), (self.d_ox, ox), (self.d_oy, oy), (self.d_oz, oz),
+                         (self.d_pause, cfg.pause_before), (self.d_rho, f"{cfg.resistivity_ohm_mm:g}"),
+                         (self.d_cure, cfg.cured_thickness_ratio), (self.d_carbon, cfg.substrate_conductive),
+                         (self.d_surface, cfg.surface_z_mm), (self.d_early, cfg.stop_early_mm),
+                         (self.d_prime, cfg.prime_e), (self.d_retract, cfg.retract_e),
+                         (self.d_uv, cfg.uv_cure_between_layers), (self.d_uv_s, cfg.uv_cure_s),
+                         (self.d_uv_on, cfg.uv_cure_on), (self.d_uv_off, cfg.uv_cure_off),
+                         (self.d_embed, cfg.embed_after_layer), (self.d_spread, cfg.spread_factor),
+                         (self.d_overlap, cfg.min_insulation_overlap_mm), (self.d_jmax, cfg.max_current_density_a_mm2),
+                         (self.d_wait, cfg.layer_wait_s), (self.d_bridge_n, cfg.bridge_layers),
+                         (self.d_bridge_m, cfg.bridge_margin_mm)):
+            put(w, value)
+        self._diw_states()
+        self._run_drc()
 
     def _request_slice(self):
         self.slice_requested.emit(self.design, self.diw_config(), self.print_mode())

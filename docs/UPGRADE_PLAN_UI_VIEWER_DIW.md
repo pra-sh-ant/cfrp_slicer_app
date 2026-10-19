@@ -85,11 +85,11 @@ fibre layers would mean cutting the fibre).
 | 21 | Typed trajectory | done (Phase 38): `TrajectoryPoint`, `check_trajectory` |
 | 22 | Hypothesis property tests | done (Phase 38) |
 | 23 | Audits in CI | done (Phase 38) |
-| 24 | Speed: viewer mesh in the worker thread | open |
-| 25 | Settings undo, "ignored keys" on load | open |
-| 26 | One project file (.cfrpproj) | open |
-| 27 | Named profiles (machine, fibre/resin, ink) | open |
-| 28 | Highlight the invalid field | open |
+| 24 | Speed: viewer mesh in the worker thread | done (Phase 40) |
+| 25 | Settings undo, "ignored keys" on load | done (Phase 40) |
+| 26 | One project file (.cfrpproj) | done (Phase 40) |
+| 27 | Named profiles (machine, fibre/resin, ink) | done (Phase 40) |
+| 28 | Highlight the invalid field | done (Phase 40) |
 
 ### Other known limits
 - Fermat spiral on holed outlines still stops at the first hole (caution shown) -- item 8.

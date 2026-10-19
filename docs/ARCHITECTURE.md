@@ -28,6 +28,8 @@ src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt import
     revolve.py            build_revolve_shell (helical shells, spiral Z)
   trajectory.py           TrajectoryPoint (the point dict's keys) + check_trajectory
   hints.py                fix_hint: plain-language fix for each check message
+  project.py              .cfrpproj: settings + PCB design + ink settings + print mode
+  profiles.py             named machine / fibre-resin / ink profiles (user folder)
   specialty.py            Mushroom overhang test (lru-cached, copies returned)
   gcode/writer.py         compile_gcode (Marlin-style, M1995 UV)
   validation.py           validate_trajectory (spec §13)

@@ -96,6 +96,12 @@ class MainWindow(QMainWindow):
         # --- menu bar -------------------------------------------------------
         mb = self.menuBar()
         file_menu = mb.addMenu("File")
+        act_open_proj = file_menu.addAction("Open Project…")
+        act_open_proj.setShortcut(QKeySequence("Ctrl+Shift+O"))
+        act_open_proj.setToolTip("Settings, PCB design, ink settings and print mode in one .cfrpproj file")
+        act_save_proj = file_menu.addAction("Save Project…")
+        act_save_proj.setShortcut(QKeySequence("Ctrl+Shift+S"))
+        file_menu.addSeparator()
         act_save = file_menu.addAction("Save Parameters…")
         act_save.setShortcut(QKeySequence("Ctrl+S"))
         act_load = file_menu.addAction("Load Parameters…")
@@ -115,6 +121,21 @@ class MainWindow(QMainWindow):
 
         act_save.triggered.connect(self._save_params)
         act_load.triggered.connect(self._load_params)
+        act_open_proj.triggered.connect(self._open_project)
+        act_save_proj.triggered.connect(self._save_project)
+
+        edit_menu = mb.addMenu("Edit")
+        self._act_undo = edit_menu.addAction("Undo Settings Change\tCtrl+Z")
+        self._act_undo.triggered.connect(self._undo)
+        self._act_redo = edit_menu.addAction("Redo Settings Change\tCtrl+Y")
+        self._act_redo.triggered.connect(self._redo)
+        # On the fibre tab only (the PCB editor has its own Ctrl+Z / Ctrl+Y;
+        # text boxes keep their own undo while they have the focus).
+        for keys, slot in ((QKeySequence.Undo, self._undo), (QKeySequence.Redo, self._redo),
+                           (QKeySequence("Ctrl+Y"), self._redo)):
+            sc = QShortcut(keys, splitter)
+            sc.setContext(Qt.WidgetWithChildrenShortcut)
+            sc.activated.connect(slot)
         act_reset.triggered.connect(self._reset_params)
         act_slice.triggered.connect(self._slice)
         act_quit.triggered.connect(self.close)
@@ -235,7 +256,10 @@ class MainWindow(QMainWindow):
         if machine != self._machine:
             self._machine = machine
             self._results.viewer.set_machine(machine)
-        self._worker = SlicerWorker(params, layup, self._machine, board=board)
+        from .viewer_gl import MAX_DRAW_POINTS
+        viewer = self._results.viewer
+        view = (MAX_DRAW_POINTS, viewer.wants_core()) if hasattr(viewer, "wants_core") else None
+        self._worker = SlicerWorker(params, layup, self._machine, board=board, view=view)
         self._worker.finished.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
         self._worker.start()
@@ -292,6 +316,7 @@ class MainWindow(QMainWindow):
     def _on_finished(self, result):
         self._busy.setVisible(False)
         self._cancel_btn.setVisible(False)
+        self._controls.clear_problems()
         ink = 0
         if hasattr(result, "diw"):
             ink = len(result.diw.trajectory) if result.diw is not None else 0
@@ -299,7 +324,7 @@ class MainWindow(QMainWindow):
             result = self._show_board(result)
             top = max(top, result.max_z)
         else:
-            self._results.update(result)
+            self._results.update(result, prepared=getattr(result, "prepared_view", None))
             top = result.max_z
         self._last_result = result
         if not hasattr(result, "diw") and result.config.geometry.shape != "Custom Outline":
@@ -366,7 +391,9 @@ class MainWindow(QMainWindow):
         self._busy.setVisible(False)
         self._cancel_btn.setVisible(False)
         self._results.set_error(msg)
-        self._status_lbl.setText(f"Failed: {msg[:80]}")
+        marked = self._controls.mark_problems(msg)
+        hint = f" (see the red setting{'s' if len(marked) > 1 else ''})" if marked else ""
+        self._status_lbl.setText(f"Failed: {msg[:80]}{hint}")
 
     def _generate_calibration(self):
         """Write the fibre calibration coupons and the ink flow coupon."""
@@ -426,14 +453,94 @@ class MainWindow(QMainWindow):
         self._load_from_path(path)
 
     def _load_from_path(self, path: str):
+        if str(path).lower().endswith(".cfrpproj"):
+            self._open_project(path)
+            return
         try:
             params = json.loads(pathlib.Path(path).read_text(encoding="utf-8"))
         except Exception as exc:
             QMessageBox.critical(self, "Load failed", str(exc))
             return
-        self._controls.load_params(params)
+        ignored = self._controls.load_params(params)
         self._push_recent(path)
         self._status_lbl.setText(f"Loaded: {pathlib.Path(path).name}")
+        self._report_ignored(ignored, path)
+
+    def _report_ignored(self, ignored, path):
+        """Say which settings of a file this version did not use (it was
+        saved by another version), instead of dropping them silently."""
+        if not ignored:
+            return
+        shown = ", ".join(ignored[:12]) + (f" and {len(ignored) - 12} more" if len(ignored) > 12 else "")
+        self._status_lbl.setText(f"Loaded {pathlib.Path(path).name}: {len(ignored)} setting(s) ignored")
+        if not getattr(self, "_quiet", False):
+            QMessageBox.information(
+                self, "Some settings were not used",
+                f"{len(ignored)} setting(s) in {pathlib.Path(path).name} are not used by this version and "
+                f"were ignored:\n\n{shown}")
+
+    # ------------------------------------------------------------------
+    # Projects: settings + PCB design + ink settings + print mode
+    # ------------------------------------------------------------------
+    def _project_params(self) -> dict:
+        params = self._controls.get_params()
+        params["layup_seq"] = self._controls.layup_edit.text()
+        m = self._controls.get_machine()
+        params.update(bed_x=m.bed_x_mm, bed_y=m.bed_y_mm, z_max=m.z_max_mm, bed_margin=m.margin_mm)
+        return params
+
+    def save_project(self, path: str):
+        from cfrp_core.project import SUFFIX, save_project
+        if not str(path).lower().endswith(SUFFIX):
+            path = str(path) + SUFFIX
+        save_project(path, self._project_params(), self._editor.design, self._editor.diw_config(),
+                     self._editor.print_mode(), app=self.windowTitle())
+        self._push_recent(path)
+        self._status_lbl.setText(f"Project saved: {pathlib.Path(path).name}")
+        return path
+
+    def _save_project(self):
+        path, _ = QFileDialog.getSaveFileName(self, "Save Project", "part.cfrpproj",
+                                              "CFRP projects (*.cfrpproj);;All files (*)")
+        if path:
+            self.save_project(path)
+
+    def _open_project(self, path=None):
+        from cfrp_core.project import load_project
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Open Project", "",
+                                                  "CFRP projects (*.cfrpproj);;All files (*)")
+            if not path:
+                return
+        try:
+            proj = load_project(path)
+        except ValueError as exc:
+            QMessageBox.critical(self, "Open failed", str(exc))
+            return
+        ignored = list(proj["ignored"]) + self._controls.load_params(proj["params"])
+        if proj["board"] is not None:
+            self._editor.commit(proj["board"])
+            self._editor.fit()
+        if proj["diw"] is not None:
+            self._editor.load_diw_config(proj["diw"])
+        self._editor.set_print_mode(proj["print_mode"])
+        if proj["params"].get("shape") == "Custom Outline" and proj["board"] is not None:
+            self._board = (proj["board"], self._editor.diw_config(), self._editor.print_mode())
+        self._push_recent(path)
+        self._status_lbl.setText(f"Project opened: {pathlib.Path(path).name}")
+        self._report_ignored(ignored, path)
+
+    def _undo(self):
+        if self._modes.currentWidget() is self._editor:
+            self._editor.undo()
+        elif self._controls.undo_settings():
+            self._status_lbl.setText("Undid the last settings change.")
+
+    def _redo(self):
+        if self._modes.currentWidget() is self._editor:
+            self._editor.redo()
+        elif self._controls.redo_settings():
+            self._status_lbl.setText("Redid the settings change.")
 
     def _reset_params(self):
         self._controls.load_params(dict(_DEFAULTS))
