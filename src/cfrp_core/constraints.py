@@ -62,7 +62,8 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
 
     # Flat parts: Archimedean rings / the Corner-Step rectangle need an exact
     # track count; cap it to what fits instead of failing every layer.
-    if (shape not in SPECIALTY_SHAPES and shape != "STL Import"
+    # (With Fill Solid the layer builder lays as many as fit itself.)
+    if (shape not in SPECIALTY_SHAPES and shape != "STL Import" and not config.fill_solid
             and config.infill_type in (ARCHIMEDEAN, CORNER_STEP)):
         base = base_polygon(config.geometry, track_gap, min_radius)
         fit = max_track_count(base, track_gap, min_radius, config.infill_type,

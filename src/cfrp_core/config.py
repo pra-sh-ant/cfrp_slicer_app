@@ -270,6 +270,9 @@ class ProcessConfig(_Frozen):
     # Round revolve shells: rotate each layer's seam by this much (0 = all
     # seams on one vertical line, as before). E.g. 137.5 spreads them evenly.
     seam_stagger_deg: float = 0.0
+    # Flat parts and STL slices: lay as many spiral tracks as fit instead of
+    # tracks_per_layer (zigzags always fill; revolve walls keep their count).
+    fill_solid: bool = False
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")

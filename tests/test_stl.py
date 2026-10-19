@@ -257,3 +257,86 @@ def test_walls_thinner_than_a_track_are_reported(tmp_path):
                                     sections=96)
     with pytest.raises(ValueError, match="thinner than one"):
         _slice(_stl(tmp_path, "vase", vase))
+
+
+# --- Phase 29: robust STL slicing ---------------------------------------------
+
+def test_repaired_offset_ring_keeps_counter_clockwise_winding():
+    """Clipper's invalid-ring repair (buffer(0)) returned the ring clockwise;
+    the spiral blended it into its counter-clockwise neighbours as a teardrop
+    loop across the other rings (2 of 75 layers of a sliced cylinder)."""
+    from cfrp_core.geometry._common import _clipper_to_polys
+    s = 1000
+    bow_tie = [(0, 0), (40 * s, 0), (40 * s, 40 * s), (0, 40 * s), (0, 20 * s),
+               (300, 20 * s + 300), (300, 20 * s - 300), (0, 20 * s + 10)]
+    (ring,) = _clipper_to_polys([bow_tie])
+    assert ring.is_valid and ring.exterior.is_ccw
+
+
+def test_sliced_cylinder_spiral_never_crosses_itself(tmp_path):
+    trimesh = pytest.importorskip("trimesh")
+    res = _slice(_stl(tmp_path, "cyl", trimesh.creation.cylinder(radius=25, height=30, sections=96)),
+                 tracks_per_layer=7)
+    assert not any("crosses itself" in m for m in res.validation["messages"])
+    assert not any(m.startswith("Curvature") for m in res.validation["messages"])
+
+
+BOLTED_PLATE = box(0, 0, 60, 30).difference(Point(15, 15).buffer(3.5, 32)).difference(
+    Point(45, 15).buffer(3.5, 32))
+
+
+@pytest.mark.parametrize("angle", [0.0, 45.0, -45.0, 90.0])
+def test_zigzag_around_two_bolt_holes_has_no_crossings(angle):
+    """Runs were chained greedily and connectors only checked against laid
+    fibre, so they cut through the run they led into (14 crossings at 45
+    deg); one long run could also wrap round a hole and box others in."""
+    from cfrp_core.geometry._common import count_crossings
+    from cfrp_core.geometry.serpentine import oriented_serpentine
+    path = oriented_serpentine(BOLTED_PLATE, angle, 1.2, 3.0)
+    assert count_crossings(path) == 0
+    line = LineString(path)
+    assert line.difference(BOLTED_PLATE.buffer(0.6)).length < 1e-6     # never over a hole
+    # (line ends stay r_min inside the outline and the holes: the 3 mm band
+    # alone is ~30 % of this plate, so 66-75 % is all a zigzag covers here)
+    assert line.buffer(0.6).intersection(BOLTED_PLATE).area / BOLTED_PLATE.area > 0.6
+
+
+def test_thin_tube_walls_get_rings_instead_of_zigzag_stubs(tmp_path):
+    """A 5 mm wall cannot hold a zigzag's U-turns at r_min 3: it became stubs
+    across the wall (45k curvature points, ~550 crossings)."""
+    trimesh = pytest.importorskip("trimesh")
+    tube = trimesh.creation.annulus(r_min=20, r_max=25, height=6, sections=96)
+    res = _slice(_stl(tmp_path, "tube", tube), infill_type="Oriented Serpentine")
+    assert any("too narrow for the zigzag" in n for n in res.info)
+    assert not any("crosses itself" in m for m in res.validation["messages"])
+
+
+def test_fermat_on_single_track_walls_falls_back_to_rings(tmp_path):
+    trimesh = pytest.importorskip("trimesh")
+    vase = trimesh.creation.annulus(r_min=20, r_max=22, height=4, sections=96)
+    res = _slice(_stl(tmp_path, "vase", vase), infill_type="Fermat Spiral (Connected Double Spiral)")
+    assert any("Fermat spiral's two tracks" in n for n in res.info)
+    assert res.trajectory
+
+
+def test_fill_solid_fills_a_solid_slice(tmp_path):
+    trimesh = pytest.importorskip("trimesh")
+    path = _stl(tmp_path, "puck", trimesh.creation.cylinder(radius=20, height=2, sections=96))
+    capped = _slice(path, tracks_per_layer=3)
+    filled = _slice(path, tracks_per_layer=3, fill_solid=True)
+    assert filled.stats["coverage"] > capped.stats["coverage"] + 0.3
+    assert filled.stats["coverage"] > 0.85
+    assert any("Fill Solid" in m for m in capped.validation["messages"])     # the hint
+
+
+@pytest.mark.parametrize("infill", ["Archimedean (Concentric Spiral)", "Corner-Step Spiral"])
+def test_fill_solid_on_a_flat_part_lays_every_ring_that_fits(infill):
+    from cfrp_core.geometry.laminate import max_track_count
+    from cfrp_core.geometry.outlines import base_polygon
+    cfg = base_2d_config(width=60.0, height=30.0, tracks_per_layer=2, infill_type=infill, layers=1)
+    few = slice_part(from_legacy_dict(cfg))
+    full = slice_part(from_legacy_dict(dict(cfg, fill_solid=True)))
+    fit = max_track_count(base_polygon(full.config.geometry, 1.2, 2.0), 1.2, 2.0, infill, False)
+    assert fit > 2
+    assert full.stats["fiber_length_mm"] > few.stats["fiber_length_mm"] * 1.5
+    assert not any("reduced" in n for n in full.constraint_notes)

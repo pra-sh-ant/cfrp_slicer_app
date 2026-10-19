@@ -20,12 +20,12 @@ from .laminate import laminate_layer
 from .mesh_slicer import load_stl, mesh_bounds, slice_mesh
 from .outlines import base_polygon, printable_boundary
 from .revolve import revolve_cross_section, revolve_radius_profile
-from .serpentine import oriented_serpentine
+from .serpentine import oriented_serpentine, zigzag_fits
 
 __all__ = [
     "arc_along_ring", "archimedean_path", "audit_min_radius", "base_polygon", "blend_chain", "check_gap_radius",
     "corner_step_path", "dedupe_path", "enforce_min_radius", "fermat_spiral_path", "fillet",
     "hole_keepouts", "inset_components", "laminate_layer", "largest_polygon", "load_stl",
     "mesh_bounds", "oriented_serpentine", "printable_boundary", "resample_closed_ring",
-    "revolve_cross_section", "revolve_radius_profile", "slice_mesh",
+    "revolve_cross_section", "revolve_radius_profile", "slice_mesh", "zigzag_fits",
 ]

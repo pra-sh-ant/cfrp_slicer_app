@@ -7,6 +7,7 @@ import numpy as np
 import pyclipper
 import shapely
 from shapely.geometry import Point, Polygon
+from shapely.geometry.polygon import orient
 
 _SCALE = 1000
 
@@ -28,6 +29,11 @@ def _clipper_to_polys(tree):
             poly = largest_polygon(poly.buffer(0))
             if poly.is_empty:
                 continue
+            # buffer(0) returns the ring clockwise, Clipper counter-clockwise.
+            # Spirals pair ring points along each ring's own direction, so one
+            # reversed ring blended into its neighbour drew a teardrop loop
+            # across the other rings (sliced cylinder, 2 layers of 75).
+            poly = orient(poly, sign=1.0)
         polys.append(poly)
     return polys
 
@@ -237,6 +243,33 @@ def blend_chain(rings, samples: int):
     path = [(float(r[0]), float(r[1])) for r in path_arr]
     path.append((float(arr[-1, 0, 0]), float(arr[-1, 0, 1])))
     return path
+
+
+# Two tows of width w meeting at angle a share w / sin(a) of length: ~3.5 w
+# at 20 deg (a crossing), ~11 w at 5 deg (side-by-side overlap, e.g. a
+# helical connector lapping its own ring at a slightly higher Z).
+CROSSING_MIN_ANGLE_DEG = 20.0
+
+
+def count_crossings(coords, min_angle_deg=CROSSING_MIN_ANGLE_DEG):
+    """Pairs of non-adjacent segments that properly cross at more than
+    `min_angle_deg`. Touching, retracing or near-parallel overlap at a seam
+    (numerically an X at ~0 deg) is not a crossing; tow laid on tow is
+    measured by the coverage metric instead. One bulk STRtree query."""
+    pts = np.asarray(coords, dtype=np.float64)
+    if pts.ndim != 2 or len(pts) < 4:
+        return 0
+    pts = pts[:, :2]
+    segs = shapely.linestrings(np.stack([pts[:-1], pts[1:]], axis=1))
+    i, j = shapely.STRtree(segs).query(segs, predicate='crosses')
+    keep = j > i + 1
+    if not keep.any():
+        return 0
+    i, j = i[keep], j[keep]
+    d = np.diff(pts, axis=0)
+    d /= np.maximum(np.linalg.norm(d, axis=1), 1e-12)[:, None]
+    cos = np.abs(np.einsum('ij,ij->i', d[i], d[j]))
+    return int(np.count_nonzero(cos < math.cos(math.radians(min_angle_deg))))
 
 
 def _circumradii(pts_arr):

@@ -63,6 +63,7 @@ _FIELD_MAP = {
     "seam_trim_length": (None, "seam_trim_mm"),
     "anchor_length": (None, "anchor_length_mm"),
     "seam_stagger": (None, "seam_stagger_deg"),
+    "fill_solid": (None, "fill_solid"),
 }
 
 

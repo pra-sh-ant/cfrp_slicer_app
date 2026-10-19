@@ -102,11 +102,16 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
 
     stats = _compute_stats(trajectory, cfg, target_shapes)
     if g.shape == "STL Import" and stats.get("worst_coverage", 1.0) < 0.5:
+        if cfg.fill_solid:
+            cause = ("even with Fill Solid: parts of the slices are narrower than the bend radius "
+                     "allows. Reduce Min Bend Radius or Track Gap to reach them.")
+        else:
+            cause = (f"Tracks Per Layer ({cfg.tracks_per_layer}) limits each slice to that many "
+                     f"rings. Turn on Fill Solid (or raise Tracks Per Layer) to fill the model's "
+                     f"solid areas.")
         part_warnings.append(
             f"Only {stats['worst_coverage'] * 100:.0f}% of layer {stats['worst_layer']} is covered "
-            f"by fibre ({stats['coverage'] * 100:.0f}% overall): Tracks Per Layer "
-            f"({cfg.tracks_per_layer}) limits each slice to that many rings. Raise it to fill "
-            f"the model's solid areas."
+            f"by fibre ({stats['coverage'] * 100:.0f}% overall): {cause}"
         )
     validation = _with_part_warnings(validation, part_warnings)
 

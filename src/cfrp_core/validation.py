@@ -4,12 +4,11 @@ from __future__ import annotations
 import math
 
 import numpy as np
-from shapely import STRtree
 from shapely.geometry import LineString
 
 from .config import ProcessConfig
 from .geometry import dedupe_path
-from .geometry._common import local_bend_radii
+from .geometry._common import count_crossings, local_bend_radii
 from .machine import DEFAULT_MACHINE, MachineProfile, check_bounds
 
 
@@ -28,29 +27,9 @@ def _z_chunks(pts3, z_tol):
         yield chunk
 
 
-# Two tows of width w meeting at angle a share w / sin(a) of length: ~3.5 w
-# at 20 deg (a crossing), ~11 w at 5 deg (side-by-side overlap, e.g. a
-# helical connector lapping its own ring at a slightly higher Z).
-_CROSSING_MIN_ANGLE_DEG = 20.0
-
-
-def _count_crossings(coords):
-    """Pairs of non-adjacent segments that properly cross at more than
-    _CROSSING_MIN_ANGLE_DEG. Touching, retracing or near-parallel overlap at
-    a seam (numerically an X at ~0 deg) is not a crossing; tow laid on tow is
-    measured by the coverage metric instead."""
-    pts = np.asarray(coords, dtype=np.float64)
-    d = np.diff(pts, axis=0)
-    d /= np.maximum(np.linalg.norm(d, axis=1), 1e-12)[:, None]
-    cos_min = math.cos(math.radians(_CROSSING_MIN_ANGLE_DEG))
-    segs = [LineString(coords[i:i + 2]) for i in range(len(coords) - 1)]
-    tree = STRtree(segs)
-    count = 0
-    for i, seg in enumerate(segs):
-        for j in tree.query(seg, predicate='crosses'):
-            if j > i + 1 and abs(float(d[i] @ d[j])) < cos_min:
-                count += 1
-    return count
+# Crossing counter shared with the zigzag generator (it picks the cleaner of
+# two decompositions); see geometry._common.count_crossings.
+_count_crossings = count_crossings
 
 
 def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> dict:

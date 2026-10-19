@@ -5,11 +5,13 @@ layer loops (spec §7–§8).
 A trajectory is a list of point dicts:
     x, y, z (mm), dist (mm from the previous point), v (mm/s),
     e_mult (extrusion factor), layer, layer_start, is_transition,
-    pump_floored, z_layer, cure_dwell (not every point has every key).
+    pump_floored, z_layer, cure_dwell, is_bridge, is_anchor (not every point
+    has every key).
 """
 from __future__ import annotations
 
 import math
+from collections import Counter
 from dataclasses import dataclass
 from functools import lru_cache
 
@@ -19,8 +21,10 @@ from shapely.geometry import LineString, Point
 from shapely.ops import nearest_points, unary_union
 
 from . import geometry as geo
-from .config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT, ProcessConfig
+from .config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT, ORIENTED_SERPENTINE, ProcessConfig
 from .geometry._common import enforce_min_radius
+from .geometry.corner_step import _is_rectangle
+from .geometry.laminate import _ring_from, _wall_seam, max_track_count
 from .geometry.mesh_slicer import islands as mesh_islands
 from .geometry.mesh_slicer import load_stl, slice_mesh_regions
 from .kinematics import calculate_trajectory
@@ -196,6 +200,13 @@ def add_arc_lead_in_anchor(raw_path, anchor_length, cx, cy, step=0.75):
         ay = cy + r * math.sin(angle)
         anchor_pts.append((ax, ay))
     return anchor_pts + list(raw_path)
+
+
+def _mark_anchor(points, n):
+    """Flag the first n planned points as the lead-in anchor (`is_anchor`;
+    the viewer colours them, nothing else reads it)."""
+    for pt in points[:n]:
+        pt['is_anchor'] = True
 
 
 def plan_layer(raw_path, layer_z, layer_num, kin: KinematicsParams):
@@ -507,6 +518,7 @@ def build_revolve_shell(config: ProcessConfig):
     target_shapes = []
     max_z = z0
     anchored = False
+    anchor_n = 0
     fermat_last_pt = None
 
     for i in range(num_layers):
@@ -560,10 +572,12 @@ def build_revolve_shell(config: ProcessConfig):
             continue
 
         if not anchored:
+            n_before = len(raw_path)
             if shape_type == 'round':
                 raw_path = add_arc_lead_in_anchor(raw_path, float(config.anchor_length_mm), cx, cy)
             else:
                 raw_path = add_lead_in_anchor(raw_path, float(config.anchor_length_mm))
+            anchor_n = len(raw_path) - n_before
             anchored = True
 
         layers_raw.append((i + 1, layer_z, enforce_min_radius(raw_path, min_rad)))
@@ -628,6 +642,7 @@ def build_revolve_shell(config: ProcessConfig):
         pt['layer_start'] = False
     for s in starts:
         trajectory[s]['layer_start'] = True
+    _mark_anchor(trajectory, anchor_n)
     return trajectory, target_shapes, max_z
 
 def build_flat_laminate(config: ProcessConfig):
@@ -648,6 +663,10 @@ def build_flat_laminate(config: ProcessConfig):
     layer_height = max(float(config.layer_height_mm), 0.05)
     min_run = _ramp_min_run(layer_height, config.transition_angle_deg)
 
+    tracks = config.tracks_per_layer
+    if config.fill_solid:
+        tracks = _fill_track_count(geo.base_polygon(g, gap, r_min), config, config.infill_type)
+
     for i in range(config.layers):
         layer_z = config.z_offset_mm + (i * layer_height)
         current_angle = layup_sequence[i % len(layup_sequence)]
@@ -658,7 +677,7 @@ def build_flat_laminate(config: ProcessConfig):
 
             printable = geo.printable_boundary(base_poly, gap, r_min)
             raw_path = geo.laminate_layer(
-                base_poly, gap, r_min, config.infill_type, config.tracks_per_layer,
+                base_poly, gap, r_min, config.infill_type, tracks,
                 g.include_boundary, current_angle, layer_idx=i, last_pt=last_pt,
                 last_dir=last_dir,
             )
@@ -666,11 +685,15 @@ def build_flat_laminate(config: ProcessConfig):
         except ValueError as exc:
             raise ValueError(f"Layer {i + 1}: {exc}") from exc
 
+        anchor_n = 0
         if i == 0:
+            n_before = len(raw_path)
             raw_path = add_lead_in_anchor(raw_path, float(config.anchor_length_mm))
+            anchor_n = len(raw_path) - n_before
 
         raw_path = enforce_min_radius(raw_path, r_min)
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
+        _mark_anchor(layer_trajectory, anchor_n)
         append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run)
 
         if layer_trajectory:
@@ -681,19 +704,57 @@ def build_flat_laminate(config: ProcessConfig):
 
 
 _SPIRAL_INFILLS = (ARCHIMEDEAN, FERMAT, CORNER_STEP)
+_ZIGZAGS = (ORIENTED_SERPENTINE, DIAGONAL_45)
+_POLY_FILL_TRACKS = 100000   # Corner-Step on a polygon stops by itself when rings run out
 
 
-def _island_path(island, config: ProcessConfig, angle, layer_idx, cursor):
+def _fill_track_count(poly, config: ProcessConfig, pattern):
+    """Track count for Fill Solid: None (as many as fit) for the spirals that
+    stop by themselves; the exact fit for the analytic Corner-Step rectangle
+    (0 if none); zigzags fill regardless."""
+    if pattern == CORNER_STEP:
+        if _is_rectangle(poly):
+            return max_track_count(poly, config.track_gap_mm, config.min_radius_mm, CORNER_STEP,
+                                   config.geometry.include_boundary) or 0
+        return _POLY_FILL_TRACKS
+    if pattern in (ARCHIMEDEAN, FERMAT):
+        return None
+    return config.tracks_per_layer
+
+
+def _ring_loop(island, gap, r_min, cursor):
+    """One closed lap of an island's wall centreline, from the point nearest
+    `cursor` back to it: the fill for an island too thin for a Fermat
+    spiral's two tracks (it enters and leaves at the same port)."""
+    wall = geo.printable_boundary(island, gap, r_min)
+    if wall.is_empty:
+        return []
+    wall = geo.largest_polygon(wall)
+    if wall.geom_type != 'Polygon':
+        return []
+    return _ring_from(wall, _wall_seam(wall, cursor))
+
+
+def _island_path(island, config: ProcessConfig, angle, layer_idx, cursor, fallbacks=None):
     """Path for one island of a multi-island slice that enters AND leaves on
     the island's perimeter, so the connector to the next island never
     crosses track already laid. Spiral infills use the Fermat double spiral
     (in and back out); line infills use the serpentine, run from whichever
-    end is nearer the cursor."""
+    end is nearer the cursor. An island too narrow for the zigzag's U-turns
+    gets the Fermat spiral, one too thin for that one lap of its wall (both
+    counted in `fallbacks`)."""
     gap, r_min = config.track_gap_mm, config.min_radius_mm
-    if config.infill_type in _SPIRAL_INFILLS:
-        return geo.fermat_spiral_path(
-            island, gap, r_min, track_count=config.tracks_per_layer, entry_hint=cursor,
-        )
+    zigzag = config.infill_type in _ZIGZAGS and geo.zigzag_fits(island, gap, r_min)
+    if not zigzag:
+        tracks = None if config.fill_solid else config.tracks_per_layer
+        path = geo.fermat_spiral_path(island, gap, r_min, track_count=tracks, entry_hint=cursor)
+        if not path:
+            path = _ring_loop(island, gap, r_min, cursor)
+            if path and fallbacks is not None:
+                fallbacks['lap'] += 1
+        elif config.infill_type in _ZIGZAGS and fallbacks is not None:
+            fallbacks['zigzag'] += 1
+        return path
     if config.infill_type == DIAGONAL_45:
         angle = 45.0 if layer_idx % 2 == 0 else -45.0
     path = geo.oriented_serpentine(island, angle, gap, r_min)
@@ -738,7 +799,7 @@ def _straight(p0, p1, step=_CONNECTOR_STEP_MM):
     return [(p0[0] + (p1[0] - p0[0]) * k / n, p0[1] + (p1[1] - p0[1]) * k / n) for k in range(1, n + 1)]
 
 
-def _multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_pt):
+def _multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_pt, fallbacks=None):
     """One stroke over every island: nearest island first, each filled from
     a port on its perimeter, joined by straight connectors (fibre bridges)
     densified to the usual point spacing so bridges can be flagged."""
@@ -757,7 +818,7 @@ def _multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_p
     path = [last_pt] if last_pt is not None else []
     while True:
         remaining.remove(island)
-        sub = _island_path(island, config, angle, layer_idx, cursor)
+        sub = _island_path(island, config, angle, layer_idx, cursor, fallbacks)
         if sub:
             if path:
                 path.extend(_straight(path[-1], sub[0]))
@@ -776,35 +837,69 @@ def _multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_p
     return geo.dedupe_path(path)
 
 
-def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, last_dir=None):
+def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, last_dir=None,
+                    fallbacks=None):
     """2D path for one sliced layer. A lone island goes through the normal
-    flat-laminate generator; an Archimedean or Corner-Step track count that
-    does not fit falls back to as many rings as fit instead of dropping the
-    layer."""
+    flat-laminate generator. Where the chosen pattern cannot work on this
+    slice it falls back instead of dropping the layer (each counted in
+    `fallbacks`): a zigzag on walls too thin for its U-turns, a Fermat
+    spiral with no room for its two tracks, or Corner-Step with no ring
+    left, all become Archimedean rings; an Archimedean or Corner-Step track
+    count that does not fit becomes as many rings as fit."""
+    if fallbacks is None:
+        fallbacks = Counter()
     if len(islands) > 1:
-        return _multi_island_layer(islands, config, angle, layer_idx, last_pt)
+        return _multi_island_layer(islands, config, angle, layer_idx, last_pt, fallbacks)
     poly = islands[0]
     gap, r_min = config.track_gap_mm, config.min_radius_mm
+    pattern = config.infill_type
+    if pattern in _ZIGZAGS and not geo.zigzag_fits(poly, gap, r_min):
+        pattern = ARCHIMEDEAN
+        fallbacks['zigzag'] += 1
+    tracks = (_fill_track_count(poly, config, pattern) if config.fill_solid
+              else config.tracks_per_layer)
 
-    def attempt(tracks):
+    def attempt(kind, count):
         return geo.laminate_layer(
-            poly, gap, r_min, config.infill_type, tracks, config.geometry.include_boundary,
+            poly, gap, r_min, kind, count, config.geometry.include_boundary,
             angle, layer_idx=layer_idx, last_pt=last_pt, last_dir=last_dir,
         )
 
-    try:
-        return attempt(config.tracks_per_layer)
-    except ValueError:
-        if config.infill_type == ARCHIMEDEAN:
-            return attempt(None)
-        if config.infill_type != CORNER_STEP:
-            raise
-    for tracks in range(int(config.tracks_per_layer) - 1, 0, -1):
+    if pattern == ARCHIMEDEAN:
         try:
-            return attempt(tracks)
+            return attempt(ARCHIMEDEAN, tracks)
         except ValueError:
-            continue
-    raise ValueError("no Corner-Step track count fits this slice")
+            return attempt(ARCHIMEDEAN, None)
+    if pattern == FERMAT:
+        try:
+            path = attempt(FERMAT, tracks)
+        except ValueError:
+            path = []
+        if len(path) > 2:
+            return path
+        fallbacks['fermat'] += 1
+        return attempt(ARCHIMEDEAN, None)
+    if pattern == CORNER_STEP:
+        for count in range(int(tracks or 0), 0, -1):
+            try:
+                path = attempt(CORNER_STEP, count)
+            except ValueError:
+                continue
+            if path:
+                return path
+        fallbacks['corner'] += 1
+        return attempt(ARCHIMEDEAN, None)
+    return attempt(pattern, tracks)
+
+
+_FALLBACK_NOTES = {
+    'zigzag': "{n} slice(s) or island(s) are too narrow for the zigzag's U-turns (walls under "
+              "{w:.1f} mm) and were filled with concentric rings instead.",
+    'fermat': "{n} slice(s) have no room for the Fermat spiral's two tracks and were filled "
+              "with Archimedean rings instead.",
+    'corner': "{n} slice(s) fit no Corner-Step ring and were filled with Archimedean rings instead.",
+    'lap': "{n} island(s) too thin for a spiral got one lap of their wall.",
+}
 
 
 def _flag_bridges(layer_trajectory, region, tol, skip=0):
@@ -904,6 +999,7 @@ def build_stl_laminate(config: ProcessConfig):
     multi = g.stl_islands == "all"
     min_run = _ramp_min_run(layer_height, config.transition_angle_deg)
     thin_slices = 0
+    fallbacks = Counter()
 
     for i, (z_print, region) in enumerate(slices):
         layer_z = z_print
@@ -921,7 +1017,7 @@ def build_stl_laminate(config: ProcessConfig):
         target_shapes.append((layer_z, printable, i + 1))
 
         try:
-            raw_path = _stl_layer_path(islands, config, current_angle, i, last_pt, last_dir)
+            raw_path = _stl_layer_path(islands, config, current_angle, i, last_pt, last_dir, fallbacks)
         except ValueError:
             continue
         if not raw_path:
@@ -935,6 +1031,7 @@ def build_stl_laminate(config: ProcessConfig):
 
         raw_path = enforce_min_radius(raw_path, r_min)
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
+        _mark_anchor(layer_trajectory, anchor_n)
         if len(islands) > 1:
             _flag_bridges(layer_trajectory, unary_union(islands), gap, skip=anchor_n + 1)
         append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run)
@@ -961,4 +1058,6 @@ def build_stl_laminate(config: ProcessConfig):
             f"{thin_slices} slice(s) have walls thinner than one {gap:g} mm track: the tow there is "
             f"wider than the wall (or the wall is skipped). Thicken the walls or reduce Track Gap."
         )
+    for kind, n in sorted(fallbacks.items()):
+        info.append(_FALLBACK_NOTES[kind].format(n=n, w=2.0 * max(r_min, gap) + gap))
     return trajectory, target_shapes, max_z, warnings, info
