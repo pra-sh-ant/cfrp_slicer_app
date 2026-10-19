@@ -44,10 +44,28 @@ The 3D view then shows the fibre (grey core in amber resin) and the ink
 
 ## Advanced mode
 
-Everything in Easy, plus: free board outlines (rectangle, rounded, any
-polygon), single pads of any size, areas (filled ink, extra insulation, or
-no-ink zones), any footprint at any angle, named nets, a grid setting, custom
-sensor dimensions, and the full ink process (needle, line width, layer
-counts, speeds, valve commands and delays or syringe E-steps, tool command and
-head offset, resistivity, surface height). Hover over any setting to see what
-it does.
+The left panel is grouped:
+
+- **Tools**: Select / move, Square board, Rounded board, Free-shape board,
+  Hole, Wire, Pad, Zone, Part. The highlighted button is the active tool; the
+  line under the canvas says what to do next.
+- **New item settings**: grid, wire width, net name (empty = automatic), hole
+  diameter, pad size and shape, zone kind (filled ink / extra insulation / no
+  ink), which part and at what angle, and its name.
+- **Sensors**: strain gauge, interdigitated electrodes and coil with your own
+  dimensions.
+- **Selection**: rotate 90° either way, delete.
+- **Print**: what to print, and Slice board.
+
+On the right, *Checks* lists problems and each wire's resistance, *How to*
+repeats these steps, and *Ink settings* holds the full ink process (needle,
+line width, layer counts, speeds, valve commands and delays or syringe
+E-steps, tool command and head offset, resistivity, surface height). Hover
+over any setting to see what it does.
+
+## What the slicer guarantees
+
+- Ink is never printed off the board or over a hole, even if you place a wire
+  there (the checker tells you how much was left out and why).
+- With insulation on, every bit of conductive ink sits on insulation.
+- The fibre steers round every hole; no fibre crosses a hole.

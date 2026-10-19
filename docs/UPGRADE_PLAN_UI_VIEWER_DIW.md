@@ -32,6 +32,30 @@ fibre layers would mean cutting the fibre).
 
 | 34 Audit + first layer + modes | **done**: solid first layer (choosable pattern, coverage target), print modes (structural / fibre / electronics), STL repair + machine + all DIW settings exposed, plain-language help everywhere, fibre/resin/transition/end colours; full audit clean | (this commit) |
 
+| 35 Easy/Advanced editor | **done**: easy 6-step mode, drag-drop parts, rotate, true bead width | `1694613` |
+| 36 Deep PCB audit + Advanced panel | **done**: ink clipped to the board, insulation under all ink, 200 random boards clean; grouped Advanced panel, tabs, fixed widths | (this commit) |
+
+### Suggested upgrades (prioritised)
+1. **Vertex editing**: drag outline corners and wire bends; insert/delete a bend.
+2. **Multi-select and copy/paste** (rubber-band selection, Ctrl+C/V, align/distribute).
+3. **Auto-router** for wires (grid A* around pads/holes with clearance), plus
+   "connect these pads" ratsnest lines from net names.
+4. **Netlist / schematic import** (KiCad netlist or simple CSV) to place parts and
+   show which pads must connect; **Gerber/DXF import** of outlines and copper.
+5. **Embedded electronics between fibre layers**: plan a deliberate fibre cut and
+   restart (the one-stroke rule is per segment), so traces can sit inside the
+   laminate; electrical vias through the laminate.
+6. **Ink material presets** (silver, carbon, liquid metal, UV dielectric) with
+   resistivity, bead width, speeds and cure; UV cure step between DIW layers.
+7. **Start/stop flow compensation** for DIW (pre-pressure and retract distances)
+   measured with a calibration coupon, like the fibre's pressure advance.
+8. **Fibre steering around holes** with reinforcing loops (tailored fibre
+   placement) and Fermat spirals that handle holes.
+9. **Viewer**: translucent board/STL overlay, section view, measure tool,
+   build the mesh in the worker thread for very large parts.
+10. **Print simulation report** (PDF/HTML): time, materials, resistances, DRC,
+    coverage per layer, for sharing with a team.
+
 ### What is left (next candidates)
 - Fermat spiral on holed outlines (it still stops at the first hole; caution shown).
 - Ramp seam on holed zigzag layers can cut the entry detour (1 crossing on the test board).

@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QGraphicsScene,
     QGraphicsView,
+    QGridLayout,
     QGroupBox,
     QHBoxLayout,
     QLabel,
@@ -42,9 +43,11 @@ from PySide6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSizePolicy,
     QSpinBox,
     QSplitter,
     QStackedWidget,
+    QTabWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -79,9 +82,9 @@ _MIME = "application/x-spcb-part"
 
 TOOLS = (
     ("select", "Select / move", "Click something to select it, drag to move it, R to rotate, Delete to remove"),
-    ("rect", "Board ▭", "Board outline: drag a rectangle"),
-    ("rrect", "Board ▢", "Board outline: drag a rounded rectangle"),
-    ("polygon", "Board ⬠", "Board outline: click the corners, double-click to finish"),
+    ("rect", "Square board", "Board outline: drag a rectangle"),
+    ("rrect", "Rounded board", "Board outline: drag a rectangle with rounded corners (best for fibre)"),
+    ("polygon", "Free-shape board", "Board outline: click the corners, double-click to finish"),
     ("hole", "Hole", "Mounting hole: click where it goes"),
     ("trace", "Wire", "Wire: click from pad to pad, double-click to finish"),
     ("pad", "Pad", "Single pad: click where it goes"),
@@ -258,7 +261,7 @@ def _spin(lo, hi, val, step=0.1, dec=2, suffix=" mm"):
 
 
 def _step(n, title):
-    box = QGroupBox(f"{n}  {title}".replace("&", "&&"))
+    box = QGroupBox((f"{n}  {title}" if n != "" else title).replace("&", "&&"))
     box.setObjectName("step")
     lay = QVBoxLayout(box)
     lay.setSpacing(4)
@@ -302,15 +305,19 @@ class PcbEditor(QWidget):
         self._mode_btns = QButtonGroup(self)
         for label, adv in (("Easy", False), ("Advanced", True)):
             b = QToolButton()
+            b.setObjectName("segLeft" if not adv else "segRight")
             b.setText(label)
             b.setCheckable(True)
+            b.setMinimumHeight(28)
+            b.setMinimumWidth(84)
             b.setChecked(not adv)
             b.setToolTip("Easy: step by step with simple choices.  Advanced: every tool and setting."
                          if not adv else "Every drawing tool, net names and the full DIW process settings.")
             b.clicked.connect(lambda _=False, a=adv: self.set_advanced(a))
             self._mode_btns.addButton(b)
             top.addWidget(b)
-        top.addSpacing(12)
+        top.setSpacing(4)
+        top.addSpacing(16)
         for label, cb, tip in (("New", self.new_design, "Start an empty board"),
                                ("Example", self.load_example, "Load an example board (LED + strain gauge)"),
                                ("Open…", self.open_design, "Open a saved board (.spcb.json)"),
@@ -332,9 +339,9 @@ class PcbEditor(QWidget):
         self.left.addWidget(self._build_advanced())
         left_scroll = QScrollArea()
         left_scroll.setWidgetResizable(True)
+        left_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         left_scroll.setWidget(self.left)
-        left_scroll.setMinimumWidth(250)
-        left_scroll.setMaximumWidth(300)
+        left_scroll.setMinimumWidth(270)
 
         self.hint = QLabel(HINTS["select"])
         self.hint.setObjectName("hint")
@@ -347,42 +354,51 @@ class PcbEditor(QWidget):
         mid = QWidget()
         mid.setLayout(centre)
 
-        # ---- right: selection, checks, guide / DIW settings ----------------------------
-        right = QVBoxLayout()
+        # ---- right: selected item on top, then tabs (checks / ink / how to) -----
         self.prop_box = QGroupBox("Selected")
         self.prop_form = QFormLayout(self.prop_box)
-        right.addWidget(self.prop_box)
-        drc_box = QGroupBox("Checks")
-        dl = QVBoxLayout(drc_box)
+        checks = QWidget()
+        dl = QVBoxLayout(checks)
+        dl.setContentsMargins(4, 4, 4, 4)
         self.drc_status = QLabel("")
         self.drc_status.setWordWrap(True)
         dl.addWidget(self.drc_status)
         self.drc_list = QListWidget()
         self.drc_list.setWordWrap(True)
         self.drc_list.setObjectName("issues")
-        dl.addWidget(self.drc_list)
-        right.addWidget(drc_box, 1)
+        dl.addWidget(self.drc_list, 1)
         self.guide = QLabel(GUIDE)
         self.guide.setWordWrap(True)
         self.guide.setTextFormat(Qt.RichText)
-        self.guide_box = QGroupBox("How to")
-        QVBoxLayout(self.guide_box).addWidget(self.guide)
-        right.addWidget(self.guide_box)
-        self.diw_box = self._build_diw_box()
-        right.addWidget(self.diw_box)
-        rw = QWidget()
-        rw.setLayout(right)
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setWidget(rw)
-        scroll.setMinimumWidth(300)
-        scroll.setMaximumWidth(390)
+        self.guide.setAlignment(Qt.AlignTop)
+        self.guide_box = QScrollArea()
+        self.guide_box.setWidgetResizable(True)
+        self.guide_box.setWidget(self.guide)
+        self.diw_box = QScrollArea()
+        self.diw_box.setWidgetResizable(True)
+        self.diw_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.diw_box.setWidget(self._build_diw_box())
+        self.side_tabs = QTabWidget()
+        self.side_tabs.addTab(checks, "Checks")
+        self.side_tabs.addTab(self.guide_box, "How to")
+        self.side_tabs.addTab(self.diw_box, "Ink settings")
+        right_w = QWidget()
+        right = QVBoxLayout(right_w)
+        right.setContentsMargins(0, 0, 0, 0)
+        right.addWidget(self.prop_box)
+        right.addWidget(self.side_tabs, 1)
+        right_w.setMinimumWidth(300)
 
         split = QSplitter(Qt.Horizontal)
+        split.setChildrenCollapsible(False)
         split.addWidget(left_scroll)
         split.addWidget(mid)
-        split.addWidget(scroll)
+        split.addWidget(right_w)
+        split.setStretchFactor(0, 0)
         split.setStretchFactor(1, 1)
+        split.setStretchFactor(2, 0)
+        split.setSizes([300, 900, 360])
+        self.split = split
         lay = QHBoxLayout(self)
         lay.setContentsMargins(2, 2, 2, 2)
         lay.addWidget(split)
@@ -511,22 +527,34 @@ class PcbEditor(QWidget):
     # ------------------------------------------------------------------
     def _build_advanced(self):
         w = QWidget()
-        tools = QVBoxLayout(w)
-        tools.setSpacing(3)
+        v = QVBoxLayout(w)
+        v.setSpacing(6)
+        box, lay = _step("", "Tools")
+        grid = QGridLayout()
+        grid.setSpacing(4)
         self._tool_btns = QButtonGroup(self)
         self._tool_btns.setExclusive(True)
-        for key, label, tip in TOOLS:
+        for k, (key, label, tip) in enumerate(TOOLS):
             b = QToolButton()
+            b.setObjectName("tool")
             b.setText(label)
             b.setToolTip(tip)
             b.setCheckable(True)
-            b.setMinimumWidth(110)
+            b.setMinimumHeight(30)
+            b.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             b.setChecked(key == "select")
-            b.clicked.connect(lambda _=False, k=key: self.set_tool(k))
+            b.clicked.connect(lambda _=False, kk=key: self.set_tool(kk))
             self._tool_btns.addButton(b)
-            tools.addWidget(b)
-        tools.addSpacing(8)
+            if key == "select":
+                grid.addWidget(b, 0, 0, 1, 2)
+            else:
+                grid.addWidget(b, 1 + (k - 1) // 2, (k - 1) % 2)
+        lay.addLayout(grid)
+        v.addWidget(box)
+
+        box, lay = _step("", "New item settings")
         form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         self.grid_spin = _spin(0.1, 10, 1.0, 0.1, 2)
         self.grid_spin.setToolTip("Everything snaps to this grid")
         self.grid_spin.valueChanged.connect(self._set_grid)
@@ -562,37 +590,57 @@ class PcbEditor(QWidget):
         self.fp_ref = QLineEdit("U1")
         self.fp_ref.setToolTip("Name of the next part (counts up)")
         form.addRow("Part name", self.fp_ref)
-        tools.addLayout(form)
-        tools.addSpacing(6)
-        for label, cb in (("Strain gauge…", self._add_meander), ("Interdigitated…", self._add_ide),
-                          ("Spiral coil…", self._add_coil)):
+        lay.addLayout(form)
+        v.addWidget(box)
+
+        box, lay = _step("", "Sensors")
+        grid = QGridLayout()
+        for k, (label, cb, tip) in enumerate((
+                ("Strain gauge…", self._add_meander, "Zigzag wire whose resistance changes when the board bends"),
+                ("Electrodes…", self._add_ide, "Interlocking combs: touch / humidity / strain sensing"),
+                ("Coil…", self._add_coil, "Flat spiral: NFC antenna, inductor or heater"))):
             b = QPushButton(label)
+            b.setToolTip(tip)
             b.clicked.connect(cb)
-            tools.addWidget(b)
+            grid.addWidget(b, k // 2, k % 2)
+        lay.addLayout(grid)
+        v.addWidget(box)
+
+        box, lay = _step("", "Selection")
         row = QHBoxLayout()
-        for label, cb in (("⟲ 90°", lambda: self.rotate_selected(90)), ("⟳ 90°", lambda: self.rotate_selected(-90)),
-                          ("Delete", self.delete_selected)):
+        for label, cb, tip in (("⟲ 90°", lambda: self.rotate_selected(90), "Rotate (R)"),
+                               ("⟳ 90°", lambda: self.rotate_selected(-90), "Rotate back (Shift+R)"),
+                               ("Delete", self.delete_selected, "Remove (Delete)")):
             b = QPushButton(label)
+            b.setToolTip(tip)
             b.clicked.connect(cb)
             row.addWidget(b)
-        tools.addLayout(row)
+        lay.addLayout(row)
+        v.addWidget(box)
+
+        box, lay = _step("", "Print")
         self.adv_mode_cb = QComboBox()
         for label, key in MODES:
             self.adv_mode_cb.addItem(label, key)
         self.adv_mode_cb.setToolTip(DIW_HELP["print_mode"])
-        tools.addWidget(self.adv_mode_cb)
+        lay.addWidget(self.adv_mode_cb)
         b = QPushButton("Slice board  ▶")
         b.setObjectName("primary")
+        b.setMinimumHeight(32)
         b.clicked.connect(self._request_slice)
-        tools.addWidget(b)
-        tools.addStretch()
+        lay.addWidget(b)
+        v.addWidget(box)
+        v.addStretch()
         return w
 
     def set_advanced(self, on: bool):
         self.advanced = bool(on)
         self.left.setCurrentIndex(1 if on else 0)
+        self.side_tabs.setTabVisible(2, on)          # Ink settings: advanced only
+        self.side_tabs.setTabVisible(1, True)
         self.diw_box.setVisible(on)
-        self.guide_box.setVisible(not on)
+        if not on and self.side_tabs.currentIndex() == 2:
+            self.side_tabs.setCurrentIndex(0)
         for b, adv in zip(self._mode_btns.buttons(), (False, True), strict=False):
             b.setChecked(adv == self.advanced)
         if hasattr(self, "adv_mode_cb"):
@@ -604,8 +652,9 @@ class PcbEditor(QWidget):
     # DIW settings (advanced)
     # ------------------------------------------------------------------
     def _build_diw_box(self):
-        box = QGroupBox("DIW process (ink)")
+        box = QWidget()
         f = QFormLayout(box)
+        f.setFieldGrowthPolicy(QFormLayout.AllNonFixedFieldsGrow)
         d = DiwConfig()
         self.d_nozzle = _spin(0.05, 3, d.nozzle_mm, 0.01, 2)
         self.d_lw = _spin(0.05, 5, d.line_width_mm, 0.05, 2)

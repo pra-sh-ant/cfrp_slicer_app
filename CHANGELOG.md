@@ -5,6 +5,25 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Fixed (Phase 36 — deep PCB / structural audit, usable Advanced panel)
+- New `tools/pcb_audit.py`: random boards (outline, holes, every palette part,
+  wires between random pads, moves and rotations) sliced in all three print
+  modes, checking invariants. It found, now fixed:
+  - **ink printed off the board** (174 points) and **over holes** (16) when a part
+    or wire was placed too near an edge/hole: conductor paths are now clipped to
+    the board minus holes (whole bead inside) and the checks say how much ink
+    was left out;
+  - **conductive ink off the insulation** near edges (288 points): the dielectric
+    was trimmed further back than the ink; it now reaches as far as any ink.
+  After the fixes 200 random boards x 3 modes: no invariant broken (also checked:
+  shorts always reported, no fibre over a hole, ink above the fibre, ink on/off
+  balanced, ink on the laminate's placement).
+- Advanced editor panel rebuilt: grouped (Tools, New item settings, Sensors,
+  Selection, Print), tools as a two-column grid of real buttons with the active
+  one highlighted, board tools named in words; Easy/Advanced as a segmented
+  switch; right side as tabs (Checks / How to / Ink settings) under the selected
+  item instead of one long scroll; panel widths fixed (no dead gap).
+
 ### Changed / Fixed (Phase 35 — easy PCB editor, drag/drop/rotate, true bead width)
 - PCB editor has **Easy** (default) and **Advanced** modes. Easy is six numbered
   steps in plain words: board size + Make board, 4 corner holes, a parts list to

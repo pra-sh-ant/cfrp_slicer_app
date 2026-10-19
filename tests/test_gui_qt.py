@@ -234,7 +234,7 @@ def test_every_setting_has_plain_help(panel):
 
 def test_easy_mode_drop_rotate_move_and_wire(editor):
     from PySide6.QtCore import Qt
-    assert not editor.advanced and editor.diw_box.isHidden() and not editor.guide_box.isHidden()
+    assert not editor.advanced and not editor.side_tabs.isTabVisible(2) and editor.side_tabs.isTabVisible(1)
     editor.new_design()
     editor.e_w.setValue(70)
     editor.e_h.setValue(45)
@@ -258,4 +258,5 @@ def test_easy_mode_drop_rotate_move_and_wire(editor):
     editor._finish()
     assert editor.design.traces[-1].net == "N1" and editor.design.traces[-1].width_mm == 1.0
     editor.set_advanced(True)
-    assert not editor.diw_box.isHidden() and editor.guide_box.isHidden()
+    assert editor.side_tabs.isTabVisible(2)
+    assert sum(b.isChecked() for b in editor._tool_btns.buttons()) == 1

@@ -239,13 +239,20 @@ def plan_layers(design: BoardDesign, cfg: DiwConfig):
     cond = unary_union([e["geom"] for e in elems]) if elems else Polygon()
     area = ink_area(design, cfg)
     board = board_polygon(design)
-    regions = {}
+    # Where a whole bead fits: the board minus holes, shrunk by half a bead.
+    # Nothing is printed outside it, even for a design that fails the DRC
+    # (ink past the edge or over a hole hangs in the air and drips).
+    printable = board.buffer(-lw / 2.0, join_style=2)
+    regions = {"printable": printable}
     layers: list[DiwLayer] = []
     k = 0
+    clipped = [0.0]
     if cfg.dielectric and cfg.dielectric_layers and not cond.is_empty:
         extra = [Polygon(z.points).buffer(0) for z in design.zones if z.kind == "dielectric"]
-        diel = unary_union([cond.buffer(cfg.dielectric_margin_mm, join_style=1), *extra]).intersection(
-            board.buffer(-min(cfg.edge_clearance_mm, cfg.dielectric_margin_mm) * 0.5))
+        # Insulation reaches as far as any conductor can (the same printable
+        # area), so no conductive ink touches the carbon (it was trimmed back
+        # further than the ink near edges: 288 uninsulated points in the audit).
+        diel = unary_union([cond.buffer(cfg.dielectric_margin_mm, join_style=1), *extra]).intersection(printable)
         regions["dielectric"] = diel
         for i in range(cfg.dielectric_layers):
             angle = 0.0 if i % 2 == 0 else 90.0
@@ -259,7 +266,7 @@ def plan_layers(design: BoardDesign, cfg: DiwConfig):
                 paths += trace_paths(design.traces[e["index"]], lw)
             else:
                 paths += concentric(e["geom"], lw)
-        layers.append(DiwLayer(k, "conductor", paths))
+        layers.append(DiwLayer(k, "conductor", _clip(paths, printable, lw, clipped)))
         k += 1
     if cfg.encapsulate and cfg.encapsulation_layers and not cond.is_empty:
         pads = unary_union([pad_shape(p).buffer(0.3) for p in design.pads]) if design.pads else Polygon()
@@ -268,7 +275,27 @@ def plan_layers(design: BoardDesign, cfg: DiwConfig):
         for i in range(cfg.encapsulation_layers):
             layers.append(DiwLayer(k, "encapsulation", raster(enc, lw, 45.0 if i % 2 == 0 else -45.0)))
             k += 1
+    regions["clipped_mm"] = clipped[0]
     return layers, regions
+
+
+def _clip(paths, region, lw, clipped):
+    """Paths cut to `region`; pieces shorter than a bead are dropped.
+    Adds the length removed (once per layer stack) to clipped[0]."""
+    out = []
+    for coords, closed in paths:
+        line = LineString(coords)
+        if region.covers(line):
+            out.append((coords, closed))
+            continue
+        inside = line.intersection(region)
+        kept = 0.0
+        for g in getattr(inside, 'geoms', [inside]):
+            if g.geom_type == 'LineString' and g.length > lw:
+                out.append((list(g.coords), False))
+                kept += g.length
+        clipped[0] += max(0.0, line.length - kept)
+    return out
 
 
 def build_trajectory(layers, cfg: DiwConfig, z_base=0.0, offset=(0.0, 0.0), layer_offset=0):
@@ -334,6 +361,12 @@ def slice_diw(design: BoardDesign, cfg: DiwConfig, z_base=0.0, offset=(0.0, 0.0)
     layers, regions = plan_layers(design, cfg)
     traj = build_trajectory(layers, cfg, z_base, offset, layer_offset)
     validation = drc(design, cfg)
+    cut = regions.pop("clipped_mm", 0.0) / max(cfg.conductor_layers, 1)
+    if cut > 0.05:
+        validation = dict(validation, messages=[f"{cut:.1f} mm of conductive ink was left out: it lies off the "
+                                                f"board or over a hole. Move those wires or pads inward."]
+                          + [m for m in validation["messages"] if not m.startswith("DRC passed")],
+                          status="Fail" if validation["status"] == "Fail" else "Warning")
     return DiwResult(traj, layers, compile_diw_gcode(traj, cfg, design.name), validation,
                      diw_stats(traj, cfg), regions)
 

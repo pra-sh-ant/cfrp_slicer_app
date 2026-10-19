@@ -212,3 +212,21 @@ def test_easy_board_and_corner_holes():
     assert len(d.holes) == 4 and (d.holes[0].x, d.holes[0].y) == (5.0, 5.0)
     from shapely.geometry import Polygon
     assert Polygon(d.outline).area < 80 * 50 and Polygon(d.outline).exterior.is_ccw
+
+
+def test_ink_never_leaves_the_board_and_always_sits_on_insulation():
+    """A wire run past the edge and across a hole: the DRC fails it, but the
+    slicer still must not print ink in the air, and every conductor point
+    must lie on the dielectric (audit: 174 points off the board, 288 off the
+    insulation)."""
+    from shapely.geometry import Point, Polygon
+    d = BoardDesign(holes=(Hole(x=30, y=20, d_mm=4.0),),
+                    traces=(Trace(points=((10, 20), (70, 20)), width_mm=1.0, net="A"),
+                            Trace(points=((5, 2), (55, 2)), width_mm=1.0, net="B")))
+    r = slice_diw(d, DiwConfig())
+    board = Polygon(d.outline).buffer(1e-6)
+    hole = Point(30, 20).buffer(2.0)
+    diel = r.regions["dielectric"].buffer(0.05)
+    ink = [Point(p["x"], p["y"]) for p in r.trajectory if p["extruding"] and p["feature"] == "conductor"]
+    assert ink and all(board.contains(q) and not hole.contains(q) and diel.contains(q) for q in ink)
+    assert any("was left out" in m for m in r.validation["messages"])

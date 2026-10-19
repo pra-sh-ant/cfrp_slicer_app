@@ -45,6 +45,15 @@ QTabBar::tab { background: #1c1c2c; border: 1px solid #2e2e46; padding: 5px 14px
                border-top-left-radius: 4px; border-top-right-radius: 4px; }
 QTabBar::tab:selected { background: #26263e; color: #e4e6ff; border-bottom: 2px solid %(accent)s; }
 
+QToolButton#tool { background: #22243a; border: 1px solid #3a3d5c; border-radius: 5px; color: #d6daf4;
+                   padding: 4px 6px; }
+QToolButton#tool:hover { background: #2c2f4c; }
+QToolButton#tool:checked { background: #34508f; border-color: #5b8def; color: white; font-weight: bold; }
+QToolButton#segLeft, QToolButton#segRight { background: #22243a; border: 1px solid #3a3d5c; color: #c8cdee;
+                                            padding: 4px 14px; }
+QToolButton#segLeft { border-top-left-radius: 6px; border-bottom-left-radius: 6px; }
+QToolButton#segRight { border-top-right-radius: 6px; border-bottom-right-radius: 6px; }
+QToolButton#segLeft:checked, QToolButton#segRight:checked { background: #5b8def; color: white; font-weight: bold; }
 QGroupBox#step { border: 1px solid #2e3350; border-radius: 6px; margin-top: 14px; padding: 6px 6px 6px 6px;
                  font-weight: bold; color: #b9c2f0; }
 QGroupBox#step::title { subcontrol-origin: margin; left: 8px; top: 2px; }
