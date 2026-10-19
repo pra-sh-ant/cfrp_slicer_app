@@ -5,6 +5,26 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added / Fixed (Phase 32a — Custom Outline shape, rings that bend round holes)
+- Shape **Custom Outline** (`geometry.custom_outline`, `custom_holes`, mm, placed at
+  Start X/Y): any outline with holes, e.g. a structural PCB from the editor; sliced
+  like the flat laminates. Too-small or degenerate outlines raise plain errors.
+- **Holes stopped spirals at the first hole**: a 60 x 40 board with four corner
+  bolt holes got one Archimedean ring (17 % coverage). New `notched_rings`: each
+  ring is the shell inset minus a keep-out per hole that grows one gap per ring
+  once reached, so rings bend round holes one gap apart (fibre steered round
+  bolt holes). Archimedean uses them (joined by lane changes) when holes would
+  stop it early (annuli keep the blended spiral); the track cap counts them.
+  Board: 17 % -> 55 % (7 tracks), 88 % with Fill Solid, no fibre over a hole.
+- **Corner-Step ran over holes**: an outline with holes was taken for a rectangle
+  and got the analytic rectangle path (13 mm of fibre across bolt holes). Holed
+  outlines now use the polygon path with notched rings.
+- Zigzag layer entry on holed outlines is routed off the holes (straight only if
+  that stays on the part and crosses nothing).
+- Fermat on a custom outline with holes carries a caution in the pattern list.
+
+Goldens unchanged.
+
 ### Added (Phase 31 — 3D viewer; Phase 30 remainder — toolbar, issues, theme)
 - Viewer rebuilt (`gui/viewer_gl.py`, `gui/toolpath_mesh.py`, `gui/range_slider.py`):
   toolpaths as shaded tubes with the bead's elliptical cross-section in GPU

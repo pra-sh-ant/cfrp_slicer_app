@@ -13,6 +13,7 @@ from ._common import (
     hole_keepouts,
     inset_components,
     largest_polygon,
+    notched_rings,
 )
 from .archimedean import archimedean_path
 from .corner_step import _is_rectangle, corner_step_path
@@ -81,6 +82,17 @@ def _entry_route(entry_from, path, corridor):
         return []
     line = LineString(path)
     straight = LineString([entry_from, path[0]])
+    if len(corridor.interiors):
+        # Holes: the straight jump may span one; route like the zigzag's own
+        # run connectors (straight or along any margin ring, both ways).
+        if not straight.crosses(line) and corridor.buffer(1e-6).covers(straight):
+            return []
+        from .serpentine import _margin_rings, _routes
+        options = _routes(tuple(entry_from), path[0], corridor.buffer(1e-6), _margin_rings(corridor, 0.0),
+                          reach=1e9)
+        best = min(options, key=lambda r: (_crossing_count(LineString([entry_from] + r), line),
+                                           LineString([entry_from] + r).length))
+        return best[:-1]
     if not straight.crosses(line):
         return []
     route = arc_along_ring(corridor, entry_from, path[0])
@@ -128,6 +140,9 @@ def max_track_count(base_poly, track_gap, min_radius, infill_type, include_bound
         while count < 1000 and inset_components(bounds, inset, min_radius, holes, gap / 2.0):
             count += 1
             inset += gap
+        if holes:
+            # archimedean_path bends rings round the holes when they stop it
+            count = max(count, len(notched_rings(bounds, gap, min_radius)))
         return count
     if infill_type == CORNER_STEP and _is_rectangle(base_poly):
         x0, y0, x1, y1 = base_poly.bounds

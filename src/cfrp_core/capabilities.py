@@ -94,7 +94,11 @@ def infill_states(p: dict) -> dict[str, OptionState]:
             else:
                 states[name] = _off("Z shells are concentric rings only (Archimedean or Fermat).")
             continue
-        if name in (FERMAT, *ZIGZAGS) and caution:
+        if name == FERMAT and shape == CUSTOM and p.get("custom_holes"):
+            states[name] = OptionState(True, "The Fermat spiral stops at the first hole, leaving most of a "
+                                             "holed outline empty; Archimedean and Corner-Step bend their "
+                                             "rings round holes. " + caution, caution=True)
+        elif name in (FERMAT, *ZIGZAGS) and caution:
             states[name] = OptionState(True, caution, caution=True)
         else:
             states[name] = ON

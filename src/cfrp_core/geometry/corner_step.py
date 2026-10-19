@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import math
 
-from ._common import check_gap_radius, dedupe_path, fillet, largest_polygon, resample_closed_ring
+from ._common import check_gap_radius, dedupe_path, fillet, largest_polygon, notched_rings, resample_closed_ring
 
 _ARC_PTS = 32
 _RING_PTS = 256
@@ -25,6 +25,10 @@ _RING_PTS = 256
 # ---------------------------------------------------------------------------
 
 def _is_rectangle(poly):
+    # A rectangle with holes is not one: the analytic path would run over
+    # them (13 mm of fibre across the bolt holes of a 60 x 40 board).
+    if getattr(poly, 'interiors', None) and len(poly.interiors):
+        return False
     x0, y0, x1, y1 = poly.bounds
     W = x1 - x0
     H = y1 - y0
@@ -208,6 +212,12 @@ def _resample_cw(coords, n_pts):
 
 def _poly_path(base_poly, gap, r, N, outward=False, seam_hint=None):
     rings: list[list[tuple[float, float]]] = []
+    if base_poly.geom_type == 'Polygon' and len(base_poly.interiors):
+        # Holes: rings that wrap round them (notched_rings), same stitching.
+        for ring_poly in notched_rings(base_poly, gap, r, max_rings=N):
+            n_pts = max(_RING_PTS, int(math.ceil(ring_poly.exterior.length / 0.5)))
+            rings.append(_resample_cw(list(ring_poly.exterior.coords), n_pts))
+        return _stitch_rings(rings, gap, r, outward, seam_hint)
     for k in range(N):
         offset = gap / 2.0 + k * gap
         shrunk = base_poly.buffer(-offset, join_style=1)
@@ -224,6 +234,12 @@ def _poly_path(base_poly, gap, r, N, outward=False, seam_hint=None):
         coords = _resample_cw(list(filleted.exterior.coords), n_pts)
         rings.append(coords)
 
+    return _stitch_rings(rings, gap, r, outward, seam_hint)
+
+
+def _stitch_rings(rings, gap, r, outward=False, seam_hint=None):
+    """Closed rings (outermost first) joined into one stroke by lane changes
+    on one seam."""
     if not rings:
         return []
 

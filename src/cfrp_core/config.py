@@ -27,7 +27,7 @@ ShapeName = Literal[
     "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
     "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)",
     "Conical Dome (Z)", "3D Overhang (Mushroom)",
-    "STL Import",
+    "STL Import", "Custom Outline",
 ]
 SHAPES: tuple[str, ...] = ShapeName.__args__
 
@@ -127,6 +127,10 @@ class GeometryConfig(_Frozen):
     # Multiply the mesh by this on import: 25.4 for a model saved in inches,
     # 10 for cm, 1000 for metres.
     stl_scale: float = 1.0
+    # "Custom Outline": the part outline and holes (mm, placed at start_x/y),
+    # e.g. a structural PCB drawn in the editor.
+    custom_outline: tuple[tuple[float, float], ...] = ()
+    custom_holes: tuple[tuple[tuple[float, float], ...], ...] = ()
 
     @field_validator("stl_scale")
     @classmethod
@@ -342,7 +346,21 @@ class ProcessConfig(_Frozen):
             _require(self.anchor_length_mm, "Lead-in Anchor Length", strict=False, unit=" mm")
             _require(self.seam_trim_mm, "Seam Trim Length", strict=False, unit=" mm")
 
-        if g.shape not in SPECIALTY_SHAPES and g.shape != "STL Import":
+        if g.shape == "Custom Outline":
+            from shapely.geometry import Polygon
+            if len(g.custom_outline) < 3:
+                raise ValueError("Custom Outline needs an outline of at least 3 points (draw one in the "
+                                 "Structural PCB editor).")
+            poly = Polygon(g.custom_outline, [h for h in g.custom_holes if len(h) >= 3]).buffer(0)
+            if poly.is_empty or poly.area <= 0:
+                raise ValueError("The custom outline encloses no area.")
+            minx, miny, maxx, maxy = poly.bounds
+            if self.min_radius_mm * 2.0 + self.track_gap_mm >= min(maxx - minx, maxy - miny):
+                raise ValueError(
+                    "The custom outline is too narrow for two bend radii plus one track gap. "
+                    "Reduce Min Bend Radius or Track Gap, or enlarge the outline."
+                )
+        elif g.shape not in SPECIALTY_SHAPES and g.shape != "STL Import":
             width, height = float(g.width_mm), float(g.height_mm)
             if width <= 0 or height <= 0:
                 raise ValueError("2D geometry width and height must be greater than 0 mm.")

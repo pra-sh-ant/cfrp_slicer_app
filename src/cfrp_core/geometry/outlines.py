@@ -5,9 +5,10 @@ import math
 
 from shapely.affinity import translate
 from shapely.geometry import Point, Polygon
+from shapely.geometry.polygon import orient
 
 from ..config import GeometryConfig
-from ._common import fillet
+from ._common import fillet, largest_polygon
 
 
 def base_polygon(geometry: GeometryConfig, track_gap, min_radius):
@@ -23,6 +24,9 @@ def base_polygon(geometry: GeometryConfig, track_gap, min_radius):
         poly = Polygon([(cx + r * math.cos(math.radians(60 * i)), cy + r * math.sin(math.radians(60 * i))) for i in range(6)])
     elif shape == "Circle":
         poly = Point(w / 2.0, h / 2.0).buffer(w / 2.0)
+    elif shape == "Custom Outline":
+        holes = [hole for hole in geometry.custom_holes if len(hole) >= 3]
+        poly = orient(largest_polygon(Polygon(geometry.custom_outline, holes).buffer(0)), 1.0)
     else:
         poly = Polygon()
 

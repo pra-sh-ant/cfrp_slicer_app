@@ -28,6 +28,8 @@ _FIELD_MAP = {
     "stl_closing_radius": ("geometry", "stl_closing_radius_mm"),
     "stl_scale": ("geometry", "stl_scale"),
     "stl_stitch": ("geometry", "stl_stitch_mm"),
+    "custom_outline": ("geometry", "custom_outline"),
+    "custom_holes": ("geometry", "custom_holes"),
     # material
     "needle_dia": ("material", "needle_dia_mm"),
     "e_mult": ("material", "e_multiplier"),

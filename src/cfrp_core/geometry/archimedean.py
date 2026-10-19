@@ -10,6 +10,7 @@ from ._common import (
     hole_keepouts,
     inset_components,
     largest_polygon,
+    notched_rings,
     resample_closed_ring,
     resample_polar_ring,
 )
@@ -61,6 +62,27 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
             break
         ring_polys.append(max(comps, key=lambda g: g.area))
         current_inset += track_gap
+
+    if holes and (target_count is None or len(ring_polys) < target_count):
+        # A hole stopped the rings early (inset_components ends the spiral at
+        # the first ring that would come near one). Rings that bend round
+        # the holes cover the part instead; they differ in shape ring to
+        # ring, so they are joined by lane changes on one seam rather than
+        # blended. Annuli, whose bore is reached by every ring at once, gain
+        # nothing and keep the blended spiral.
+        from .corner_step import _RING_PTS, _resample_cw, _stitch_rings
+        notched = notched_rings(base_poly, track_gap, min_radius, max_rings=target_count)
+        if len(notched) > len(ring_polys) + 1:
+            if target_count is not None and len(notched) < target_count:
+                raise ValueError(
+                    f"Requested {target_count} tracks, but only {len(notched)} fit with "
+                    f"a {track_gap:.2f} mm gap and {min_radius:.2f} mm bend radius."
+                )
+            rings = [_resample_cw(list(p.exterior.coords), max(_RING_PTS, int(math.ceil(p.exterior.length / 0.5))))
+                     for p in notched]
+            hint = seam_hint if start_from_inside else outer_start
+            return dedupe_path(_stitch_rings(rings, track_gap, min_radius, outward=start_from_inside,
+                                             seam_hint=hint)), base_poly
 
     if not ring_polys:
         return [], base_poly

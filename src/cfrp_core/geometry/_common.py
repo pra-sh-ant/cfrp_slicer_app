@@ -130,6 +130,56 @@ def inset_components(poly, inset, min_radius, holes=(), clearance=0.0, area_eps=
     return comps
 
 
+def notched_rings(poly, gap, min_radius, max_rings=None):
+    """Concentric ring polygons for a part WITH HOLES that wrap around the
+    holes instead of stopping at the first one.
+
+    Ring k is the outer shell inset by gap/2 + k*gap, minus a keep-out per
+    hole: gap/2 around the hole until a ring first reaches it (ring k_h),
+    then growing one gap per ring, gap/2 + (k - k_h)*gap. So once a ring
+    meets a hole the following rings bend round it one gap apart (a notch
+    that deepens ring by ring), like fibre steered round a bolt hole, and
+    the area round the hole is filled. Each ring is filleted to
+    min_radius; the largest piece is kept. Returns simple polygons
+    (exteriors), outermost first. (inset_components stops the whole
+    spiral at the first hole: a 60 x 40 board with four corner holes got
+    one ring, 17 % coverage.)"""
+    shell = Polygon(poly.exterior)
+    holes = hole_keepouts(poly)
+    first_touch = [None] * len(holes)
+    rings, k = [], 0
+    while max_rings is None or len(rings) < max_rings:
+        inset = _offset_polygon(shell, -(gap / 2.0 + k * gap))
+        if not inset:
+            break
+        inset = max(inset, key=lambda g: g.area)
+        region = inset
+        for i, hole in enumerate(holes):
+            if first_touch[i] is None and inset.exterior.distance(hole) <= gap / 2.0 + 1e-6:
+                first_touch[i] = k
+            grow = 0 if first_touch[i] is None else k - first_touch[i]
+            region = region.difference(hole.buffer(gap / 2.0 + grow * gap, quad_segs=16))
+        if region.is_empty:
+            break
+        region = largest_polygon(region)
+        rounded = fillet(Polygon(region.exterior), min_radius) if min_radius > 0 else region
+        if rounded.is_empty or rounded.area < 1.0:
+            break
+        rounded = largest_polygon(rounded)
+        # the fillet grows back over the keep-outs it rounded; cut them again
+        for i, hole in enumerate(holes):
+            if first_touch[i] is not None:
+                rounded = rounded.difference(hole.buffer(gap / 2.0 + (k - first_touch[i]) * gap, quad_segs=16))
+        if rounded.is_empty:
+            break
+        rounded = orient(Polygon(largest_polygon(rounded).exterior), 1.0)
+        if rounded.area < 1.0:
+            break
+        rings.append(rounded)
+        k += 1
+    return rings
+
+
 _ARC_STEP_MM = 0.75   # sample spacing when tracing along a ring boundary
 
 
