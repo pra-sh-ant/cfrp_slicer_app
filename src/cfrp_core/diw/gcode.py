@@ -17,6 +17,8 @@ def compile_diw_gcode(trajectory, cfg: DiwConfig, name="board", standalone=True)
         f"; Layers          : dielectric {cfg.dielectric_layers if cfg.dielectric else 0}, "
         f"conductor {cfg.conductor_layers}, encapsulation {cfg.encapsulation_layers if cfg.encapsulate else 0}",
         f"; Dispense        : {cfg.dispense}",
+        *([f"; Bead spread     : x{cfg.spread_factor:g} (printed {cfg.bead_mm:g} mm)"] if cfg.spread_factor != 1.0
+          else []),
         "; ==========================================",
     ]
     if standalone:
@@ -49,6 +51,8 @@ def compile_diw_gcode(trajectory, cfg: DiwConfig, name="board", standalone=True)
                 if layer is not None and p['layer'] != layer and cfg.uv_cure_between_layers:
                     out += [f"{cfg.uv_cure_on} ; UV cure", f"G4 P{int(cfg.uv_cure_s * 1000)}",
                             f"{cfg.uv_cure_off}"]
+                if layer is not None and p['layer'] != layer and cfg.layer_wait_s > 0:
+                    out.append(f"G4 P{int(round(cfg.layer_wait_s * 1000))} ; let the ink layer dry")
                 out.append(f"; LAYER {p['layer']} {p['feature']}")
                 layer, feature = p['layer'], p['feature']
             if not flowing:

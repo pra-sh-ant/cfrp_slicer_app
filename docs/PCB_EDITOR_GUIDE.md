@@ -84,15 +84,49 @@ The left panel is grouped:
 - **Selection**: rotate 90° either way, delete.
 - **Print**: what to print, and Slice board.
 
-On the right, *Checks* lists problems and each wire's resistance, *How to*
-repeats these steps, and *Ink settings* holds the full ink process (needle,
-line width, layer counts, speeds, valve commands and delays or syringe
-E-steps, tool command and head offset, resistivity, surface height). Hover
-over any setting to see what it does.
+On the right, *Checks* lists problems and each wire's resistance and how much
+current it can carry, *How to* repeats these steps, and *Ink settings* holds
+the full ink process (needle, line width and how much it spreads, layer counts,
+speeds, valve commands and delays or syringe E-steps, drying wait between
+layers, tool command and head offset, resistivity, current limit, surface
+height, crossover insulation). Hover over any setting to see what it does.
+
+### Crossing wires (crossovers)
+
+Two different signals cannot touch, but one wire can jump over another:
+
+1. Tick **Crossover (level 2)** under *New item settings* before drawing the
+   wire (or select a wire and set *Level* to 2).
+2. Draw it across the other wire. The editor shows it in pink, with a green
+   patch where it crosses: that patch is insulation printed between the two.
+3. A level-2 wire still connects to its own net where it touches it (its pads,
+   its own wires). It may **not** cross another net's pad, because the pad
+   must stay bare for the part; the checks say so in red.
+
+*Auto-route* uses a crossover by itself when a connection has no way round.
+The printer lays the lower wires, then the insulating patches, then the
+level-2 wires, which climb gently over each patch and come back down after it.
+
+### Current, parts and drying
+
+- Select a wire and give it a **Current** (A): the checks warn if it would
+  overheat and say how wide it should be. *Voltage drop* shows what it costs.
+- A small orange dot marks **pin 1** of every part. A two-pin part whose pins
+  are on the same signal is flagged: it is shorted out (usually rotated or
+  wired wrong).
+- Solvent inks: set **Dry between layers** so each ink layer dries before the
+  next goes on (UV inks: use UV cure instead).
+- If your lines come out wider than drawn, measure one and set **Bead spread**
+  (printed width / line width): spacing, edges and checks then use the real
+  width.
 
 ## What the slicer guarantees
 
 - Ink is never printed off the board or over a hole, even if you place a wire
   there (the checker tells you how much was left out and why).
-- With insulation on, every bit of conductive ink sits on insulation.
+- With insulation on, every bit of conductive ink sits on insulation, and the
+  checks warn where it comes closer to the insulation's edge than *Ink inside
+  insulation*.
+- Nothing is printed below ink that is already there (crossover wires climb
+  over their insulation).
 - The fibre steers round every hole; no fibre crosses a hole.

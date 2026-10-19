@@ -55,10 +55,26 @@ class DiwConfig(BaseModel):
     # Embedded electronics: print them after this fibre layer, then lay the
     # remaining fibre layers on top (0 = on top of the whole laminate).
     embed_after_layer: int = 0
+    # The bead wets out after it is laid: printed width = line width x this
+    # (1 = no spread). Fills are inset so the spread edge lands on the drawn
+    # edge; checks use the spread width.
+    spread_factor: float = 1.0
+    # Conductive ink must stay this far inside the insulation's edge (ink
+    # that spreads past it touches the carbon fibre).
+    min_insulation_overlap_mm: float = 0.5
+    # Current a cured trace may carry per mm² of cross-section (sets each
+    # wire's current capacity; ~20 A/mm² keeps printed silver warm, not hot).
+    max_current_density_a_mm2: float = 20.0
+    # Wait after each ink layer (solvent inks drying), seconds.
+    layer_wait_s: float = 0.0
+    # Crossovers: a level-2 wire crossing a level-1 wire of another net is
+    # insulated by this many dielectric layers, reaching this far past it.
+    bridge_layers: int = 2
+    bridge_margin_mm: float = 0.6
 
     @field_validator("nozzle_mm", "line_width_mm", "layer_height_mm", "speed_conductor_mm_s",
                      "speed_dielectric_mm_s", "travel_speed_mm_s", "resistivity_ohm_mm",
-                     "cured_thickness_ratio", "e_per_mm3")
+                     "cured_thickness_ratio", "e_per_mm3", "max_current_density_a_mm2")
     @classmethod
     def _positive(cls, v, info):
         if not v > 0:
@@ -74,12 +90,31 @@ class DiwConfig(BaseModel):
 
     @field_validator("z_hop_mm", "dielectric_margin_mm", "clearance_mm", "edge_clearance_mm", "surface_z_mm",
                      "on_delay_ms", "off_delay_ms", "stop_early_mm", "prime_e", "retract_e", "uv_cure_s",
-                     "embed_after_layer")
+                     "embed_after_layer", "min_insulation_overlap_mm", "layer_wait_s", "bridge_margin_mm")
     @classmethod
     def _non_negative(cls, v, info):
         if v < 0:
             raise ValueError(f"DIW {info.field_name.replace('_', ' ')} cannot be negative.")
         return v
+
+    @field_validator("spread_factor")
+    @classmethod
+    def _spread(cls, v):
+        if not 1.0 <= v <= 3.0:
+            raise ValueError(f"DIW bead spread must be between 1 and 3 (got {v:g}).")
+        return v
+
+    @field_validator("bridge_layers")
+    @classmethod
+    def _bridge(cls, v):
+        if v < 1:
+            raise ValueError("A crossover bridge needs at least one insulation layer.")
+        return v
+
+    @property
+    def bead_mm(self) -> float:
+        """Printed bead width after it spreads."""
+        return self.line_width_mm * self.spread_factor
 
 
 def build_diw_config(data: dict | None = None) -> DiwConfig:

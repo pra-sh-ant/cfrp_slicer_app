@@ -172,4 +172,15 @@ DIW_HELP = {
     "uv_off": "Printer command that switches the UV light off.",
     "embed_after": "Embedded mode: after which fibre layer the electronics are printed (the rest of the "
                    "layers go on top). 'middle' = half way.",
+    "spread_factor": "How much wider a line gets after it is laid, as the ink flows out (1 = not at all). "
+                     "Measure a printed line and divide by Line width. Lines are then spaced and kept "
+                     "inside the edges by the spread width, and the checks use it.",
+    "min_insulation_overlap": "How far conductive ink must stay inside the insulation's edge. Ink that "
+                              "spreads past the edge touches the carbon fibre and shorts through it.",
+    "max_current_density": "How much current each mm² of cured ink may carry before it gets too warm. "
+                           "Sets every wire's 'carries up to' figure; give a wire a Current to check it.",
+    "layer_wait": "Pause after each ink layer so solvent inks dry before the next layer goes on top "
+                  "(0 = no pause). UV inks use UV cure instead.",
+    "bridge_layers": "Insulation layers printed where a crossover (level-2) wire crosses another net.",
+    "bridge_margin": "How far the crossover insulation reaches past the crossing on every side.",
 }

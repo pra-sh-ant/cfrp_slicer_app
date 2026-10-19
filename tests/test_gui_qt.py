@@ -319,3 +319,27 @@ def test_editor_auto_route_import_and_presets(editor, tmp_path):
     editor.mode_cb.setCurrentIndex(3)
     editor.set_advanced(False)
     assert editor.print_mode() == "embedded"
+
+
+def test_editor_crossover_wire_level_current_and_pin1(editor):
+    from PySide6.QtCore import Qt
+    editor.set_advanced(True)
+    editor.set_tool("trace")
+    editor.net_edit.setText("OTHER")
+    editor.level2_chk.setChecked(True)
+    editor._press(36, 24, Qt.LeftButton)
+    editor._press(36, 34, Qt.LeftButton)          # crosses the LED wire, now on level 2
+    editor._finish()
+    assert editor.design.traces[-1].level == 2
+    assert not any(m.startswith("Short") for m in editor.last_drc["messages"])
+    assert any("crossover" in n for n in editor.last_drc["notes"])
+    assert editor.d_bridge_n.isEnabled()
+    # the wire's properties: level and a current to check
+    editor._sel = ("trace", len(editor.design.traces) - 1)
+    editor._show_props()
+    labels = [editor.prop_form.itemAt(i, editor.prop_form.ItemRole.LabelRole) for i in range(editor.prop_form.rowCount())]
+    names = {w.widget().text() for w in labels if w is not None and w.widget() is not None}
+    assert {"Level", "Current", "Carries up to"} <= names
+    cfg = editor.diw_config()
+    assert cfg.bridge_layers == editor.d_bridge_n.value() and cfg.spread_factor == editor.d_spread.value()
+    editor.level2_chk.setChecked(False)

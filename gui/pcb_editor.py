@@ -74,7 +74,7 @@ from cfrp_core.diw import (
     spiral_coil,
 )
 from cfrp_core.diw import edit as ed
-from cfrp_core.diw.design import pad_shape, trace_shape
+from cfrp_core.diw.design import crossovers, pad_shape, trace_shape
 from cfrp_core.diw.presets import DIELECTRIC_PRESETS, INK_PRESETS, apply_preset
 from cfrp_core.diw.router import ratsnest as ed_ratsnest
 
@@ -129,6 +129,7 @@ _COL = {
     "zone_dielectric": QColor(76, 200, 150, 70), "zone_keepout": QColor(240, 90, 90, 60),
     "sel": QColor("#5b8def"), "draft": QColor("#f5b942"), "grid": QColor(255, 255, 255, 18),
     "grid10": QColor(255, 255, 255, 38), "label": QColor("#9aa3c8"),
+    "trace2": QColor("#e7a7ff"), "bridge": QColor(76, 200, 150, 150), "pin1": QColor("#ff7a59"),
 }
 
 WIDTHS = (("Thin (0.6 mm)", 0.6), ("Normal (1.0 mm)", 1.0), ("Wide - power (2.0 mm)", 2.0))
@@ -601,6 +602,11 @@ class PcbEditor(QWidget):
         self.width_spin = _spin(0.2, 20, 0.8)
         self.width_spin.setToolTip("Width of new wires")
         form.addRow("Wire width", self.width_spin)
+        self.level2_chk = QCheckBox("Crossover (level 2)")
+        self.level2_chk.setToolTip("New wires go on level 2: they may cross other nets' wires, which get a "
+                                   "printed insulating bridge where they cross. They join their own net where "
+                                   "they touch it. Never over another net's pad.")
+        form.addRow("", self.level2_chk)
         self.net_edit = QLineEdit()
         self.net_edit.setPlaceholderText("auto")
         self.net_edit.setToolTip("Signal name for new wires and pads. Empty = take it from the pad the wire "
@@ -690,7 +696,8 @@ class PcbEditor(QWidget):
         self.left.setCurrentIndex(1 if on else 0)
         self.side_tabs.setTabVisible(2, on)          # Ink settings: advanced only
         self.side_tabs.setTabVisible(1, True)
-        self.diw_box.setVisible(on)
+        # (the tab shows / hides its page: forcing the page visible drew it
+        # over whichever tab was open)
         if not on and self.side_tabs.currentIndex() == 2:
             self.side_tabs.setCurrentIndex(0)
         for b, adv in zip(self._mode_btns.buttons(), (False, True), strict=False):
@@ -761,6 +768,14 @@ class PcbEditor(QWidget):
         self.d_embed = QSpinBox()
         self.d_embed.setRange(0, 500)
         self.d_embed.setSpecialValueText("middle")
+        self.d_spread = _spin(1.0, 3.0, d.spread_factor, 0.05, 2, " x")
+        self.d_overlap = _spin(0, 5, d.min_insulation_overlap_mm, 0.05, 2)
+        self.d_jmax = _spin(0.1, 500, d.max_current_density_a_mm2, 1, 1, " A/mm²")
+        self.d_wait = _spin(0, 600, d.layer_wait_s, 1, 0, " s")
+        self.d_bridge_n = QSpinBox()
+        self.d_bridge_n.setRange(1, 10)
+        self.d_bridge_n.setValue(d.bridge_layers)
+        self.d_bridge_m = _spin(0, 5, d.bridge_margin_mm, 0.05, 2)
         self.d_ink_preset = QComboBox()
         self.d_ink_preset.addItems(["(keep)"] + list(INK_PRESETS))
         self.d_diel_preset = QComboBox()
@@ -789,7 +804,13 @@ class PcbEditor(QWidget):
                 ("Close valve early", self.d_early, "stop_early"), ("Prime at start", self.d_prime, "prime_e"),
                 ("Retract at end", self.d_retract, "retract_e"), ("", self.d_uv, "uv_cure"),
                 ("UV cure time", self.d_uv_s, "uv_cure_s"), ("UV on command", self.d_uv_on, "uv_on"),
-                ("UV off command", self.d_uv_off, "uv_off"), ("Embed after layer", self.d_embed, "embed_after"))
+                ("UV off command", self.d_uv_off, "uv_off"), ("Embed after layer", self.d_embed, "embed_after"),
+                ("Bead spread", self.d_spread, "spread_factor"),
+                ("Ink inside insulation", self.d_overlap, "min_insulation_overlap"),
+                ("Max current density", self.d_jmax, "max_current_density"),
+                ("Dry between layers", self.d_wait, "layer_wait"),
+                ("Crossover layers", self.d_bridge_n, "bridge_layers"),
+                ("Crossover overlap", self.d_bridge_m, "bridge_margin"))
         self._diw_tips = {}
         for label, w, key in rows:
             tip = DIW_HELP.get(key, "")
@@ -827,7 +848,12 @@ class PcbEditor(QWidget):
                  (self.d_uv_s, self.d_uv.isChecked(), "UV cure between layers is off."),
                  (self.d_uv_on, self.d_uv.isChecked(), "UV cure between layers is off."),
                  (self.d_uv_off, self.d_uv.isChecked(), "UV cure between layers is off."),
-                 (self.d_embed, self.print_mode() == "embedded", "Only for the Embedded print mode."))
+                 (self.d_embed, self.print_mode() == "embedded", "Only for the Embedded print mode."),
+                 (self.d_overlap, self.d_diel_on.isChecked(), "Insulation is off."),
+                 (self.d_bridge_n, any(t.level == 2 for t in self.design.traces),
+                  "No crossover wires (level 2) on this board."),
+                 (self.d_bridge_m, any(t.level == 2 for t in self.design.traces),
+                  "No crossover wires (level 2) on this board."))
         for w, on, why in rules:
             w.setEnabled(on)
             tip = self._diw_tips.get(w, "")
@@ -857,7 +883,10 @@ class PcbEditor(QWidget):
             prime_e=self.d_prime.value(), retract_e=self.d_retract.value(),
             uv_cure_between_layers=self.d_uv.isChecked(), uv_cure_s=self.d_uv_s.value(),
             uv_cure_on=self.d_uv_on.text(), uv_cure_off=self.d_uv_off.text(),
-            embed_after_layer=self.d_embed.value())
+            embed_after_layer=self.d_embed.value(), spread_factor=self.d_spread.value(),
+            min_insulation_overlap_mm=self.d_overlap.value(), max_current_density_a_mm2=self.d_jmax.value(),
+            layer_wait_s=self.d_wait.value(), bridge_layers=self.d_bridge_n.value(),
+            bridge_margin_mm=self.d_bridge_m.value())
 
     # ------------------------------------------------------------------
     # Editing
@@ -874,6 +903,7 @@ class PcbEditor(QWidget):
         self.design = design
         self._preview = None
         self.redraw()
+        self._diw_states()                          # e.g. crossover settings follow level-2 wires
         self.design_changed.emit(design)
 
     def undo(self):
@@ -883,6 +913,7 @@ class PcbEditor(QWidget):
             self._sel = None
             self.redraw()
             self._show_props()
+            self._diw_states()
             self.design_changed.emit(self.design)
 
     def redo(self):
@@ -892,6 +923,7 @@ class PcbEditor(QWidget):
             self._sel = None
             self.redraw()
             self._show_props()
+            self._diw_states()
             self.design_changed.emit(self.design)
 
     def set_tool(self, key):
@@ -1096,7 +1128,8 @@ class PcbEditor(QWidget):
             net = self.net_edit.text().strip()
             if not net:
                 d, net = ed.auto_net(d, pts)
-            tr = Trace(points=tuple(pts), width_mm=self._wire_width(), net=net)
+            level = 2 if getattr(self, "level2_chk", None) is not None and self.level2_chk.isChecked() else 1
+            tr = Trace(points=tuple(pts), width_mm=self._wire_width(), net=net, level=level)
             self.commit(d.model_copy(update=dict(traces=d.traces + (tr,))))
         elif self._tool == "zone" and len(pts) >= 3:
             z = Zone(points=tuple(pts), kind=self.zone_kind.currentText(), net=self.net_edit.text().strip())
@@ -1142,6 +1175,9 @@ class PcbEditor(QWidget):
         d, rep = auto_route(self.design, self.diw_config(), width=self._wire_width())
         self.commit(d)
         msg = f"Auto-route: {len(d.traces) - before} wire(s) drawn."
+        if rep.get("crossovers"):
+            msg += (f" {rep['crossovers']} of them cross another net on level 2 (an insulating bridge is "
+                    f"printed under the crossing).")
         if rep["failed"]:
             msg += f" Could not reach: {', '.join(rep['failed'])} (blocked; move parts or route by hand)."
         elif not ed_ratsnest(d):
@@ -1231,6 +1267,23 @@ class PcbEditor(QWidget):
             r = drc(self.design, self.diw_config())["traces"][key]
             self.prop_form.addRow("Length", QLabel(f"{r['length_mm']:.1f} mm"))
             self.prop_form.addRow("Resistance", QLabel(f"about {_ohms(r['resistance_ohm'])}"))
+            self.prop_form.addRow("Carries up to", QLabel(f"about {r['capacity_a']:.2g} A"))
+            if self.advanced:
+                lvl = QComboBox()
+                lvl.addItems(["1 (on the insulation)", "2 (crossover)"])
+                lvl.setCurrentIndex(item.level - 1)
+                lvl.setToolTip("Level 2 may cross other nets' wires over a printed insulating bridge.")
+                lvl.currentIndexChanged.connect(lambda i: setter("level", int)(i + 1))
+                self.prop_form.addRow("Level", lvl)
+                cur = _spin(0, 100, float(item.current_a), 0.1, 2, " A")
+                cur.setSpecialValueText("not checked")
+                cur.setToolTip("Current this wire must carry: the check warns if it would overheat.")
+                cur.setKeyboardTracking(False)
+                cur.valueChanged.connect(setter("current_a"))
+                self.prop_form.addRow("Current", cur)
+                if item.current_a > 0:
+                    self.prop_form.addRow("Voltage drop", QLabel(f"{r['drop_v'] * 1000:.0f} mV, "
+                                                                 f"{r['power_w'] * 1000:.0f} mW"))
         elif kind == "pad":
             num("w_mm", "Width", 0.05, 50)
             num("h_mm", "Height", 0.05, 50)
@@ -1257,7 +1310,13 @@ class PcbEditor(QWidget):
             path.closeSubpath()
             self.scene.addPath(path, QPen(_COL[f"zone_{z.kind}"].lighter(150), 0), QBrush(_COL[f"zone_{z.kind}"]))
         for t in d.traces:
-            self._add_geom(trace_shape(t), _COL["trace"])
+            if t.level == 1:
+                self._add_geom(trace_shape(t), _COL["trace"])
+        for c in crossovers(d):
+            self._add_geom(c["geom"], _COL["bridge"])
+        for t in d.traces:
+            if t.level == 2:
+                self._add_geom(trace_shape(t), _COL["trace2"], QPen(_COL["trace2"].darker(140), 0.08))
         for p in d.pads:
             self._add_geom(pad_shape(p), _COL["pad"])
         for h in d.holes:
@@ -1270,6 +1329,16 @@ class PcbEditor(QWidget):
             if ref:
                 refs.setdefault(ref, []).append(p)
         for ref, pads in refs.items():
+            first = next((p for p in pads if p.name.endswith(".1")), None)
+            if first is not None and len(pads) > 1:
+                # pin 1: a dot just outside the pad, away from the part's middle
+                mx, my = sum(p.x for p in pads) / len(pads), sum(p.y for p in pads) / len(pads)
+                vx, vy = first.x - mx, first.y - my
+                n = math.hypot(vx, vy) or 1.0
+                r = 0.35
+                off = max(first.w_mm, first.h_mm) / 2 + 0.6
+                cx, cy = first.x + vx / n * off, first.y + vy / n * off
+                self.scene.addEllipse(QRectF(cx - r, cy - r, 2 * r, 2 * r), QPen(Qt.NoPen), QBrush(_COL["pin1"]))
             x = max(p.x for p in pads)
             y = max(p.y for p in pads)
             t = self.scene.addSimpleText(ref)
@@ -1353,8 +1422,13 @@ class PcbEditor(QWidget):
             it = QListWidgetItem("• " + m)
             it.setForeground(QColor(color))
             self.drc_list.addItem(it)
+        for n in res.get("notes", ()):
+            it = QListWidgetItem("ℹ " + n)
+            it.setForeground(QColor("#93c5fd"))
+            self.drc_list.addItem(it)
         for t in res["traces"]:
-            it = QListWidgetItem(f"ℹ {t['name']}: {t['length_mm']:.1f} mm long, about {_ohms(t['resistance_ohm'])}")
+            it = QListWidgetItem(f"ℹ {t['name']}: {t['length_mm']:.1f} mm long, about {_ohms(t['resistance_ohm'])}, "
+                                 f"up to {t['capacity_a']:.2g} A" + (" (level 2)" if t.get("level") == 2 else ""))
             it.setForeground(QColor("#93c5fd"))
             self.drc_list.addItem(it)
 

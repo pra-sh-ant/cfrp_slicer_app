@@ -6,6 +6,9 @@ the shortest links that would join the islands (a minimum spanning tree over
 nearest points). `auto_route` draws a wire for each link with A* on a grid
 (8 directions, a penalty per bend), keeping a clearance from other nets,
 holes and the board edge; a routed wire is an obstacle for the next nets.
+A link with no way through on level 1 is routed on level 2 (a crossover):
+there only other nets' pads and level-2 wires block it, and an insulating
+bridge is printed wherever it crosses another net's level-1 wire.
 """
 from __future__ import annotations
 
@@ -18,11 +21,11 @@ from shapely.geometry import LineString, Point, Polygon
 from shapely.ops import nearest_points, unary_union
 
 from .config import DiwConfig
-from .design import BoardDesign, Trace, conductors, hole_shape
+from .design import BoardDesign, Trace, conductors, hole_shape, joined
 
 
 def _islands(elems):
-    """Connected groups (lists of element indices) of touching elements."""
+    """Connected groups (lists of element indices) of joined elements."""
     parent = list(range(len(elems)))
 
     def find(i):
@@ -33,7 +36,7 @@ def _islands(elems):
 
     for i in range(len(elems)):
         for j in range(i + 1, len(elems)):
-            if elems[i]["geom"].intersects(elems[j]["geom"]):
+            if joined(elems[i], elems[j]):
                 parent[find(i)] = find(j)
     groups = {}
     for i in range(len(elems)):
@@ -84,14 +87,17 @@ def _anchor(design, net, pt):
 
 
 def route_link(design: BoardDesign, cfg: DiwConfig, net: str, a, b, width=None, step=0.5,
-               bend_cost=1.5, max_cells=400_000):
+               bend_cost=1.5, max_cells=400_000, level=1):
     """Points of a wire from a to b (A* on a `step` grid) avoiding other
-    nets, holes and the edge, or None if there is no way through."""
+    nets, holes and the edge, or None if there is no way through. On level
+    2 only other nets' pads and level-2 wires are in the way (it crosses
+    their level-1 wires over bridges)."""
     width = width or max(cfg.line_width_mm * 1.6, 0.8)
     keep = width / 2.0 + cfg.clearance_mm
     board = Polygon(design.outline).buffer(0).buffer(-(cfg.edge_clearance_mm + width / 2.0), join_style=2)
     blocks = [hole_shape(h).buffer(cfg.edge_clearance_mm + width / 2.0) for h in design.holes]
-    blocks += [e["geom"].buffer(keep) for e in conductors(design) if e["net"] != net]
+    blocks += [e["geom"].buffer(keep) for e in conductors(design)
+               if e["net"] != net and (level == 1 or e["kind"] == "pad" or e.get("level", 1) == 2)]
     for z in design.zones:
         if z.kind == "keepout":
             blocks.append(Polygon(z.points).buffer(width / 2.0))
@@ -174,11 +180,12 @@ def _simplify(pts):
     return out
 
 
-def auto_route(design: BoardDesign, cfg: DiwConfig | None = None, width=None):
-    """Route every unrouted link (shortest first). Returns (design, report)
-    where report = {"routed": n, "failed": [net, ...]}."""
+def auto_route(design: BoardDesign, cfg: DiwConfig | None = None, width=None, crossovers_allowed=True):
+    """Route every unrouted link (shortest first), on level 2 (a crossover)
+    where level 1 has no way through. Returns (design, report) where
+    report = {"routed": n, "crossovers": n, "failed": [net, ...]}."""
     cfg = cfg or DiwConfig()
-    routed, failed = 0, []
+    routed, crossed, failed = 0, 0, []
     for _ in range(200):
         links = ratsnest(design)
         if not links:
@@ -187,17 +194,23 @@ def auto_route(design: BoardDesign, cfg: DiwConfig | None = None, width=None):
         for link in links:
             net = link["net"]
             a, b = _anchor(design, net, link["a"]), _anchor(design, net, link["b"])
+            level = 1
             pts = route_link(design, cfg, net, a, b, width)
+            if (pts is None or len(pts) < 2) and crossovers_allowed:
+                level = 2
+                pts = route_link(design, cfg, net, a, b, width, level=2)
             if pts is None or len(pts) < 2 or LineString(pts).length < 1e-6:
                 if net not in failed:
                     failed.append(net)
                 continue
             w = width or max(cfg.line_width_mm * 1.6, 0.8)
+            name = f"{net} (routed)" if level == 1 else f"{net} (routed, crossover)"
             design = design.model_copy(update=dict(traces=design.traces + (
-                Trace(points=tuple(pts), width_mm=w, net=net, name=f"{net} (routed)"),)))
+                Trace(points=tuple(pts), width_mm=w, net=net, name=name, level=level),)))
             routed += 1
+            crossed += level == 2
             progress = True
             break                            # recompute: the new wire changes the islands
         if not progress:
             break
-    return design, {"routed": routed, "failed": failed}
+    return design, {"routed": routed, "crossovers": crossed, "failed": failed}

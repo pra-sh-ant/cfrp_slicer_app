@@ -73,12 +73,12 @@ fibre layers would mean cutting the fibre).
 | 9 | Multi-piece slices in one stroke with flagged bridges | open |
 | 10 | Mesh-problem markers in the 3D view | open |
 | 11 | Adaptive layer height for STL | open |
-| 12 | Ink over an insulation edge rule | open |
-| 13 | Crossovers (bridges / wire levels) and vias | open |
-| 14 | Current capacity per trace | open |
-| 15 | Part orientation checks, pin-1 marker | open |
-| 16 | Ink drying wait and ordering | open |
-| 17 | Bead spread factor | open |
+| 12 | Ink over an insulation edge rule | done (Phase 39) |
+| 13 | Crossovers (bridges / wire levels) and vias | done (Phase 39): level-2 wires, bridges, conformal Z, router fallback; vias = pad windows (embedded mode) |
+| 14 | Current capacity per trace | done (Phase 39) |
+| 15 | Part orientation checks, pin-1 marker | done (Phase 39): shorted 2-pin parts, pin-1 dot |
+| 16 | Ink drying wait and ordering | done (Phase 39): drying wait; time includes waits |
+| 17 | Bead spread factor | done (Phase 39) |
 | 18 | Split layers.py | done (Phase 38) |
 | 19 | No private cross-module imports | done (Phase 38) |
 | 20 | Retire Streamlit | done (Phase 38): `legacy/streamlit/` |

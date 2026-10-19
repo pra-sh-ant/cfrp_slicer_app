@@ -29,7 +29,7 @@ def test_ratsnest_lists_unconnected_pads_of_a_net():
 
 def test_auto_route_connects_everything_cleanly():
     d, rep = auto_route(_pads_board())
-    assert rep == {"routed": 2, "failed": []}
+    assert rep == {"routed": 2, "crossovers": 0, "failed": []}
     assert not ratsnest(d)
     assert drc(d, DiwConfig())["status"] == "Pass"
     hole = Point(35, 25).buffer(4)
@@ -41,8 +41,14 @@ def test_auto_route_reports_what_cannot_be_reached():
                     traces=(ed.meander(30, 1, 0.1, 0.0, 1, width=0.6, net="B"),))
     wall = ed.Trace(points=((30, 1.5), (30, 38.5)), width_mm=2.0, net="B")
     d = d.model_copy(update=dict(traces=(wall,)))
-    _, rep = auto_route(d)
+    _, rep = auto_route(d, crossovers_allowed=False)
     assert rep["failed"] == ["A"]
+    # with crossovers (the default) A goes over B's wall on a bridge
+    routed, rep = auto_route(d)
+    assert rep == {"routed": 1, "crossovers": 1, "failed": []}
+    res = drc(routed, DiwConfig())
+    assert not any(m.startswith("Short") for m in res["messages"])
+    assert any("crossover" in n for n in res["notes"])
 
 
 def test_dxf_round_trip_and_netlist(tmp_path):

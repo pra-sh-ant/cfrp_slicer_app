@@ -84,12 +84,19 @@ def html_report(fibre=None, board=None, image_png: bytes | None = None, title="P
         parts.append(f"<h2>Electronics (DIW) <span class='{diw.validation['status'].lower()}'>"
                      f"{diw.validation['status']}</span></h2><table>{_rows(rows)}</table>")
         parts.append(_issues(diw.validation))
+        if diw.validation.get("notes"):
+            parts.append("<ul>" + "".join(f"<li>{html.escape(n)}</li>" for n in diw.validation["notes"]) + "</ul>")
         if diw.validation.get("traces"):
-            tr = "".join(f"<tr><td>{html.escape(t['name'])}</td><td>{html.escape(t['net'])}</td>"
-                         f"<td>{t['length_mm']:.1f}</td><td>{t['width_mm']:g}</td>"
-                         f"<td>{t['resistance_ohm'] * 1000:.1f}</td></tr>" for t in diw.validation["traces"])
+            def wire_row(t):
+                need = f"{t['current_a']:g}" if t.get("current_a") else "-"
+                return (f"<tr><td>{html.escape(t['name'])}</td><td>{html.escape(t['net'])}</td>"
+                        f"<td>{t['length_mm']:.1f}</td><td>{t['width_mm']:g}</td><td>{t.get('level', 1)}</td>"
+                        f"<td>{t['resistance_ohm'] * 1000:.1f}</td><td>{t.get('capacity_a', 0):.2g}</td>"
+                        f"<td>{need}</td></tr>")
+            tr = "".join(wire_row(t) for t in diw.validation["traces"])
             parts.append("<h3>Wires</h3><table class='grid'><tr><th>Wire</th><th>Net</th><th>Length mm</th>"
-                         f"<th>Width mm</th><th>R mΩ</th></tr>{tr}</table>")
+                         f"<th>Width mm</th><th>Level</th><th>R mΩ</th><th>Carries up to A</th>"
+                         f"<th>Must carry A</th></tr>{tr}</table>")
     when = datetime.datetime.now().strftime("%Y-%m-%d %H:%M")
     return f"""<!doctype html><html><head><meta charset="utf-8"><title>{html.escape(title)}</title>
 <style>

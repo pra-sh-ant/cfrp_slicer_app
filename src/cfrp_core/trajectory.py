@@ -28,7 +28,7 @@ class TrajectoryPoint(TypedDict):
     is_anchor: NotRequired[bool]      # lead-in anchor
     comment: NotRequired[str]         # G-code comment (calibration coupons)
     # DIW points:
-    feature: NotRequired[str]         # dielectric | conductor | encapsulation | travel
+    feature: NotRequired[str]         # dielectric | conductor | crossover | encapsulation | travel
     extruding: NotRequired[bool]
     width: NotRequired[float]
     height: NotRequired[float]
@@ -38,7 +38,7 @@ REQUIRED = ("x", "y", "z", "dist", "v")
 KNOWN = set(TrajectoryPoint.__annotations__)
 _NUMERIC = {"x", "y", "z", "dist", "v", "e_mult", "z_layer", "width", "height"}
 _BOOL = {"layer_start", "is_transition", "pump_floored", "cure_dwell", "is_bridge", "is_anchor", "extruding"}
-DIW_FEATURES = {"dielectric", "conductor", "encapsulation", "travel"}
+DIW_FEATURES = {"dielectric", "conductor", "crossover", "encapsulation", "travel"}
 
 
 def check_trajectory(points, limit=20) -> list[str]:

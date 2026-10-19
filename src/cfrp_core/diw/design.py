@@ -24,11 +24,17 @@ class _M(BaseModel):
 
 
 class Trace(_M):
-    """Conductive track along a polyline, `width_mm` wide, round ends."""
+    """Conductive track along a polyline, `width_mm` wide, round ends.
+    `level` 2 = printed after level 1 and allowed to cross other nets'
+    level-1 wires over an insulating bridge (a crossover); it joins level-1
+    pads and wires of its own net where it touches them. `current_a`: the
+    current it must carry (0 = not checked)."""
     points: tuple[Pt, ...]
     width_mm: float = 0.8
     net: str = ""
     name: str = ""
+    level: int = 1
+    current_a: float = 0.0
 
     @field_validator("points")
     @classmethod
@@ -42,6 +48,20 @@ class Trace(_M):
     def _w(cls, v):
         if not v > 0:
             raise ValueError("Trace width must be greater than 0 mm.")
+        return v
+
+    @field_validator("level")
+    @classmethod
+    def _level(cls, v):
+        if v not in (1, 2):
+            raise ValueError("A wire's level is 1 (on the insulation) or 2 (crossover).")
+        return v
+
+    @field_validator("current_a")
+    @classmethod
+    def _current(cls, v):
+        if v < 0:
+            raise ValueError("A wire's current cannot be negative.")
         return v
 
     def length(self) -> float:
@@ -122,16 +142,46 @@ def trace_shape(t: Trace):
 
 
 def conductors(design: BoardDesign) -> list[dict]:
-    """Every conductive element: {kind, index, net, name, geom}."""
+    """Every conductive element: {kind, index, net, name, geom, level}."""
     out = []
     for i, t in enumerate(design.traces):
-        out.append(dict(kind="trace", index=i, net=t.net, name=t.name or f"trace {i + 1}", geom=trace_shape(t)))
+        out.append(dict(kind="trace", index=i, net=t.net, name=t.name or f"trace {i + 1}", geom=trace_shape(t),
+                        level=t.level))
     for i, p in enumerate(design.pads):
-        out.append(dict(kind="pad", index=i, net=p.net, name=p.name or f"pad {i + 1}", geom=pad_shape(p)))
+        out.append(dict(kind="pad", index=i, net=p.net, name=p.name or f"pad {i + 1}", geom=pad_shape(p),
+                        level=1))
     for i, z in enumerate(design.zones):
         if z.kind == "conductor":
             out.append(dict(kind="zone", index=i, net=z.net, name=f"zone {i + 1}",
-                            geom=Polygon(z.points).buffer(0)))
+                            geom=Polygon(z.points).buffer(0), level=1))
+    return out
+
+
+def joined(a: dict, b: dict) -> bool:
+    """Do two conductive elements connect? Touching on the same level, or a
+    level-2 wire touching its own net's level-1 element. A level-2 wire over
+    another net's level-1 element is insulated by a bridge."""
+    if not a["geom"].intersects(b["geom"]):
+        return False
+    return a.get("level", 1) == b.get("level", 1) or (bool(a["net"]) and a["net"] == b["net"])
+
+
+def crossovers(design: BoardDesign, margin: float = 0.6) -> list[dict]:
+    """Where a level-2 wire crosses another net's level-1 element:
+    [{wire, under, geom}] with geom the bridge to print (the crossing grown
+    by `margin`)."""
+    elems = conductors(design)
+    out = []
+    for a in elems:
+        if a.get("level", 1) != 2:
+            continue
+        for b in elems:
+            if b.get("level", 1) != 1 or (a["net"] and a["net"] == b["net"]):
+                continue
+            if a["geom"].intersects(b["geom"]):
+                hit = a["geom"].intersection(b["geom"])
+                if not hit.is_empty and hit.area > 1e-6:
+                    out.append(dict(wire=a["name"], under=b["name"], geom=hit.buffer(margin, quad_segs=8)))
     return out
 
 
@@ -260,6 +310,6 @@ def translated(design: BoardDesign, dx: float, dy: float) -> BoardDesign:
 
 __all__ = [
     "FOOTPRINTS", "BoardDesign", "Hole", "Pad", "Trace", "Zone", "board_polygon", "conductor_union",
-    "conductors", "example_board", "footprint", "hole_outlines", "interdigitated", "load_design",
-    "meander", "pad_shape", "save_design", "spiral_coil", "trace_shape", "translated",
+    "conductors", "crossovers", "example_board", "footprint", "hole_outlines", "interdigitated", "joined",
+    "load_design", "meander", "pad_shape", "save_design", "spiral_coil", "trace_shape", "translated",
 ]

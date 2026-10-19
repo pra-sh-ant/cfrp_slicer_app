@@ -49,6 +49,7 @@ FEATURES = (
     ("conductor", "Conductive ink", (0.86, 0.87, 0.92)),
     ("dielectric", "Dielectric ink", (0.30, 0.80, 0.62)),
     ("encapsulation", "Encapsulation", (0.52, 0.62, 0.78)),
+    ("crossover", "Crossover insulation", (0.62, 0.92, 0.55)),
     ("travel", "Travel (no flow)", (0.42, 0.42, 0.52)),
     ("end", "End of path", (0.98, 0.20, 0.55)),
 )

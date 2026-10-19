@@ -12,7 +12,8 @@ mode and checks invariants that must always hold:
     already reported an edge/hole error), never over a hole
   * with the dielectric on, every conductor point lies on the dielectric
   * ink on/off commands balance; extrusion only between them
-  * DIW starts above the fibre top and Z never drops inside a DIW layer
+  * DIW starts above the fibre top and never prints below ink already laid
+    (level-2 crossover wires climb over their bridges)
   * the DIW board offset equals the fibre's (ink lands on the laminate)
   * fibre status is not Fail; validation messages are collected
 
@@ -21,7 +22,7 @@ Prints a summary of every invariant that failed and every message seen.
 import random
 import sys
 import traceback
-from collections import Counter
+from collections import Counter, defaultdict
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
@@ -130,7 +131,22 @@ def check(d, cfg, proc, problems, messages):
         diel = translate(diel, ox, oy).buffer(0.05) if diel is not None and not diel.is_empty else None
         flowing = 0
         top_fibre = max((p["z"] for p in r.fibre.trajectory), default=None) if r.fibre else None
-        last_z = {}
+        # Never print below ink already there (within 0.45 bead: beads that
+        # overlap more would collide). Level-2 wires climb over bridges and
+        # come down after them, so Z may fall within a layer.
+        cell = 0.45 * cfg.bead_mm
+        laid = defaultdict(list)
+        run = 0                                  # extrusion run: a wire may come down along itself
+        for p in traj:
+            if not p["extruding"]:
+                run += 1
+                continue
+            i, j = int(p["x"] // cell), int(p["y"] // cell)
+            under = max((zz for di in (-1, 0, 1) for dj in (-1, 0, 1) for xx, yy, zz, rr in laid[i + di, j + dj]
+                         if rr != run and (xx - p["x"]) ** 2 + (yy - p["y"]) ** 2 < cell * cell), default=-1e9)
+            if p["z"] < under - 1e-6:
+                problems["ink printed below ink already there"] += 1
+            laid[i, j].append((p["x"], p["y"], p["z"], run))
         for p in traj:
             if not p["extruding"]:
                 continue
@@ -145,9 +161,6 @@ def check(d, cfg, proc, problems, messages):
                 problems["conductor not on dielectric"] += 1
             if top_fibre is not None and p["z"] <= top_fibre + 1e-6:
                 problems["ink below fibre top"] += 1
-            if p["z"] < last_z.get(p["layer"], -1e9) - 1e-9:
-                problems["z drops in a DIW layer"] += 1
-            last_z[p["layer"]] = p["z"]
         g = r.gcode
         if g.count("ink on") != g.count("ink off"):
             problems["ink on/off unbalanced"] += 1
@@ -172,16 +185,18 @@ def main():
     rng = random.Random(7)
     problems, messages = Counter(), Counter()
     cfgs = [DiwConfig(), DiwConfig(encapsulate=True, conductor_layers=2), DiwConfig(dispense="volumetric"),
-            DiwConfig(dielectric=False, substrate_conductive=False)]
+            DiwConfig(dielectric=False, substrate_conductive=False),
+            DiwConfig(spread_factor=1.3, layer_wait_s=5.0, bridge_layers=3)]
     procs = [ProcessConfig(), ProcessConfig(infill_type="Corner-Step Spiral", fill_solid=True, layers=2),
              ProcessConfig(infill_type="Oriented Serpentine", layers=2, layup_deg=(0.0, 90.0), first_layer_solid=True)]
     from cfrp_core.diw.router import auto_route, ratsnest
-    routed = failed = 0
+    routed = failed = crossed = 0
     for k in range(n):
         d = random_design(rng)
         if k % 2:
             d, rep = auto_route(d, cfgs[k % len(cfgs)])
             routed += rep["routed"]
+            crossed += rep.get("crossovers", 0)
             failed += len(rep["failed"])
             if not rep["failed"] and ratsnest(d):
                 problems["router left connections without reporting"] += 1
@@ -189,7 +204,8 @@ def main():
             check(d, cfgs[k % len(cfgs)], procs[k % len(procs)], problems, messages)
         except Exception:
             problems["audit crash: " + traceback.format_exc().splitlines()[-1][:90]] += 1
-    print(f"designs {n}, wires auto-routed {routed}, nets the router could not reach {failed}")
+    print(f"designs {n}, wires auto-routed {routed} ({crossed} as level-2 crossovers), "
+          f"nets the router could not reach {failed}")
     print("PROBLEMS:", dict(problems) if problems else "none")
     print("messages:")
     for m, c in messages.most_common(40):

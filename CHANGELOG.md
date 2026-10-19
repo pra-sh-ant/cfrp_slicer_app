@@ -5,6 +5,37 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 39 — structural PCB: crossovers, current, spread, checks)
+- **Crossovers**: a wire on level 2 (`Trace.level`, editor *Crossover (level 2)*
+  or the wire's *Level*) may cross another net's wire. The DIW slicer prints the
+  level-1 ink, then an insulating bridge over each crossing (`bridge_layers`,
+  `bridge_margin_mm`, feature `crossover`), then the level-2 wires with
+  **conformal Z**: each point one layer above what lies under it, climbs started
+  early enough to stay under 30°. A level-2 wire joins its own net where it
+  touches it; crossing another net's pad is an error (the pad must stay bare).
+  *Auto-route* falls back to a crossover when level 1 has no way through.
+- **Current capacity** (`max_current_density_a_mm2`, default 20 A/mm²): every
+  wire's "carries up to"; a wire with a `current_a` above it is reported with the
+  width it needs; voltage drop and power shown in the editor.
+- **Bead spread** (`spread_factor`): fills, raster spacing and edge insets use the
+  spread bead, and so do the width and clearance checks.
+- **Insulation edge rule** (`min_insulation_overlap_mm`, default 0.5): ink closer
+  than that to the insulation's edge is reported (it would touch the carbon).
+- **Shorted two-pin parts**: a part whose two pads are on one net is reported;
+  pin 1 of every part is marked in the editor.
+- **Drying wait** between ink layers (`layer_wait_s`, G4); print time now
+  includes drying and UV cure waits.
+- `tools/pcb_audit.py` checks that no ink is printed below ink already laid
+  (replacing "Z never drops inside a layer", which crossovers now do on purpose)
+  and audits a spread / drying / 3-layer-bridge configuration; 80 random boards
+  (4 crossovers routed): no problem.
+
+### Fixed (Phase 39)
+- Editor: the *Ink settings* page was forced visible in Advanced mode and drew
+  over the *Checks* tab.
+- `pyproject.toml` did not list `pyclipper`, which the core imports (a wheel
+  install failed on import); `trimesh` is now the `stl` extra.
+
 ### Added (Phase 38 — robustness, multi-layer planning, code health)
 - **Solid bottom / top layers** (`solid_bottom_layers`, `solid_top_layers`, GUI
   *Pattern & Layers*, default off): that many layers at the bottom and top are
