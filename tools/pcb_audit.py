@@ -31,7 +31,7 @@ from shapely.geometry import Point, Polygon  # noqa: E402
 
 from cfrp_core import ProcessConfig  # noqa: E402
 from cfrp_core.board import slice_structural_board  # noqa: E402
-from cfrp_core.diw import DiwConfig, Trace, drc  # noqa: E402
+from cfrp_core.diw import DiwConfig, DiwLayerSpec, Trace, drc  # noqa: E402
 from cfrp_core.diw import edit as ed  # noqa: E402
 from cfrp_core.diw.design import BoardDesign, conductors, hole_shape  # noqa: E402
 from cfrp_core.diw.slicer import ink_area  # noqa: E402
@@ -186,7 +186,13 @@ def main():
     problems, messages = Counter(), Counter()
     cfgs = [DiwConfig(), DiwConfig(encapsulate=True, conductor_layers=2), DiwConfig(dispense="volumetric"),
             DiwConfig(dielectric=False, substrate_conductive=False),
-            DiwConfig(spread_factor=1.3, layer_wait_s=5.0, bridge_layers=3)]
+            DiwConfig(spread_factor=1.3, layer_wait_s=5.0, bridge_layers=3),
+            DiwConfig(insulation_coverage="board"),
+            DiwConfig(stack=(DiwLayerSpec(kind="dielectric", covers="board", angle_deg=30.0),
+                             DiwLayerSpec(kind="dielectric", fill="concentric", height_mm=0.15),
+                             DiwLayerSpec(kind="conductor", level=1, height_mm=0.3),
+                             DiwLayerSpec(kind="conductor", level=2),
+                             DiwLayerSpec(kind="encapsulation", covers="board", cure=True)))]
     procs = [ProcessConfig(), ProcessConfig(infill_type="Corner-Step Spiral", fill_solid=True, layers=2),
              ProcessConfig(infill_type="Oriented Serpentine", layers=2, layup_deg=(0.0, 90.0), first_layer_solid=True)]
     from cfrp_core.diw.router import auto_route, ratsnest

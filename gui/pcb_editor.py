@@ -402,10 +402,14 @@ class PcbEditor(QWidget):
         self.diw_box.setWidgetResizable(True)
         self.diw_box.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.diw_box.setWidget(self._build_diw_box())
+        from .layer_stack_ui import LayerStackTable
+        self.layers_tab = LayerStackTable()
+        self.layers_tab.changed.connect(self._layers_changed)
         self.side_tabs = QTabWidget()
         self.side_tabs.addTab(checks, "Checks")
         self.side_tabs.addTab(self.guide_box, "How to")
         self.side_tabs.addTab(self.diw_box, "Ink settings")
+        self.side_tabs.addTab(self.layers_tab, "Layers")
         right_w = QWidget()
         right = QVBoxLayout(right_w)
         right.setContentsMargins(0, 0, 0, 0)
@@ -776,6 +780,9 @@ class PcbEditor(QWidget):
         self.d_bridge_n.setRange(1, 10)
         self.d_bridge_n.setValue(d.bridge_layers)
         self.d_bridge_m = _spin(0, 5, d.bridge_margin_mm, 0.05, 2)
+        self.d_covers = QComboBox()
+        self.d_covers.addItem("under the wires", "wires")
+        self.d_covers.addItem("whole board", "board")
         self.d_ink_preset = QComboBox()
         self.d_ink_preset.addItems(["(keep)"] + list(INK_PRESETS))
         self.d_diel_preset = QComboBox()
@@ -792,6 +799,7 @@ class PcbEditor(QWidget):
                 ("Insulation preset", self.d_diel_preset, "diel_preset"),("Needle", self.d_nozzle, "nozzle"), ("Line width", self.d_lw, "line_width"),
                 ("Layer height", self.d_lh, "layer_height"), ("Ink layers", self.d_cond, "conductor_layers"),
                 ("", self.d_diel_on, "dielectric"), ("Insulation layers", self.d_diel, "dielectric_layers"),
+                ("Insulation covers", self.d_covers, "insulation_coverage"),
                 ("Insulation margin", self.d_margin, "dielectric_margin"), ("", self.d_enc, "encapsulate"),
                 ("Cover layers", self.d_enc_n, "encapsulation_layers"),
                 ("Wire spacing", self.d_clear, "clearance"), ("Edge spacing", self.d_edge, "edge_clearance"),
@@ -843,6 +851,7 @@ class PcbEditor(QWidget):
                  (self.d_epm, not pneu, "Only for volumetric dispensing."),
                  (self.d_diel, self.d_diel_on.isChecked(), "Insulation is off."),
                  (self.d_margin, self.d_diel_on.isChecked(), "Insulation is off."),
+                 (self.d_covers, self.d_diel_on.isChecked(), "Insulation is off."),
                  (self.d_enc_n, self.d_enc.isChecked(), "Covering is off."),
                  (self.d_surface, self.print_mode() == "electronics",
                   "Only for Electronics only: otherwise the ink goes on the fibre board's top."),
@@ -890,7 +899,9 @@ class PcbEditor(QWidget):
             embed_after_layer=self.d_embed.value(), spread_factor=self.d_spread.value(),
             min_insulation_overlap_mm=self.d_overlap.value(), max_current_density_a_mm2=self.d_jmax.value(),
             layer_wait_s=self.d_wait.value(), bridge_layers=self.d_bridge_n.value(),
-            bridge_margin_mm=self.d_bridge_m.value())
+            bridge_margin_mm=self.d_bridge_m.value(), insulation_coverage=self.d_covers.currentData(),
+            stack=(self.layers_tab.stack() if getattr(self, "layers_tab", None) is not None
+                   and self.layers_tab.custom() else ()))
 
     # ------------------------------------------------------------------
     # Editing
@@ -1405,9 +1416,23 @@ class PcbEditor(QWidget):
         b = Polygon(self.design.outline).bounds
         self.canvas.fitInView(QRectF(b[0] - 5, b[1] - 5, b[2] - b[0] + 10, b[3] - b[1] + 10), Qt.KeepAspectRatio)
 
+    def _layers_changed(self):
+        if not self.layers_tab.custom():
+            self._show_auto_layers()
+        self._run_drc()
+
+    def _show_auto_layers(self):
+        """The automatic stack (from the counts), greyed, in the Layers tab."""
+        from cfrp_core.diw import default_stack
+        cfg = self.diw_config()
+        self.layers_tab.set_stack(default_stack(cfg, level2=any(t.level == 2 for t in self.design.traces)),
+                                  custom=False)
+
     def _run_drc(self, *_):
         if not hasattr(self, "drc_list"):
             return
+        if hasattr(self, "layers_tab") and not self.layers_tab.custom():
+            self._show_auto_layers()
         res = drc(self.design, self.diw_config())
         self.last_drc = res
         self.drc_list.clear()
@@ -1627,6 +1652,13 @@ class PcbEditor(QWidget):
                          (self.d_wait, cfg.layer_wait_s), (self.d_bridge_n, cfg.bridge_layers),
                          (self.d_bridge_m, cfg.bridge_margin_mm)):
             put(w, value)
+        self.d_covers.blockSignals(True)
+        self.d_covers.setCurrentIndex(max(self.d_covers.findData(cfg.insulation_coverage), 0))
+        self.d_covers.blockSignals(False)
+        if cfg.stack:
+            self.layers_tab.set_stack(cfg.stack, custom=True)
+        else:
+            self.layers_tab.set_stack((), custom=False)
         self._diw_states()
         self._run_drc()
 

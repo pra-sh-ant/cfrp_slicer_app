@@ -8,7 +8,7 @@ import numpy as np
 import shapely
 from shapely import STRtree
 from shapely.affinity import rotate
-from shapely.geometry import LineString, MultiLineString, Point
+from shapely.geometry import LineString, MultiLineString, Point, Polygon
 
 from ._common import check_gap_radius, count_crossings
 
@@ -101,14 +101,43 @@ def _boustrophedon_runs(scan, region, cells=False):
     return [r for r in runs if r]
 
 
-def _zigzag(lines, direction):
+def _level_ends(lines, direction, keep=0.5):
+    """Line coordinates in traversal order with both ends of every turn cut
+    back level to the shorter line's end (keeping at least `keep` mm of
+    each line). Turns then sit inside the part even where an edge is
+    slanted: extending the shorter line instead, as tight turns do, pushes a
+    wide turn past the outline."""
+    out = []
+    for line in lines:
+        c = [tuple(q) for q in line.coords]
+        out.append(c if direction == 1 else c[::-1])
+        direction *= -1
+    for i in range(len(out) - 1):
+        a, b = out[i], out[i + 1]
+        right = a[-1][0] > a[0][0]                 # line i runs +x: the turn is on the right
+        level = min(a[-1][0], b[0][0]) if right else max(a[-1][0], b[0][0])
+        lo_a = a[0][0] + keep if right else a[0][0] - keep
+        lo_b = b[-1][0] + keep if right else b[-1][0] - keep
+        xa = max(level, lo_a) if right else min(level, lo_a)
+        xb = max(level, lo_b) if right else min(level, lo_b)
+        out[i] = a[:-1] + [(xa, a[-1][1])]
+        out[i + 1] = [(xb, b[0][1])] + b[1:]
+    return out
+
+
+def _zigzag(lines, direction, level=False):
     """One serpentine over consecutive `lines`, first line run along +x
-    (direction 1) or -x, joined by _uturn."""
+    (direction 1) or -x, joined by _uturn. `level`: cut each turn's line
+    ends back level first (_level_ends; for widely spaced lines)."""
     path = []
+    ordered = _level_ends(lines, direction) if level else None
     for i, line in enumerate(lines):
-        coords = list(line.coords)
-        if direction == -1:
-            coords.reverse()
+        if ordered is not None:
+            coords = list(ordered[i])
+        else:
+            coords = list(line.coords)
+            if direction == -1:
+                coords.reverse()
         if i > 0 and path:
             # The previous line ran along -direction (direction flips per line).
             path.extend(_uturn(np.array(path[-1]), np.array(coords[0]), (-direction, 0.0)))
@@ -286,7 +315,7 @@ def _order_runs(n_runs, cost, first, first_variants):
     return order[::-1]
 
 
-def _join_runs(runs, poly, gap, start_from_end, min_rad=0.0):
+def _join_runs(runs, poly, gap, start_from_end, min_rad=0.0, level=False):
     """Zigzag each run and chain them into one stroke.
 
     Every connector from the end of one run (4 ways round) to the start of
@@ -302,7 +331,7 @@ def _join_runs(runs, poly, gap, start_from_end, min_rad=0.0):
         options = []
         for lines in (r, r[::-1]):
             for d in (1, -1):
-                options.append(_zigzag(lines, d))
+                options.append(_zigzag(lines, d, level))
         variants.append(options)
     geoms = [[LineString(v) if len(v) > 1 else None for v in vs] for vs in variants]
     # A run whose way round is not fixed yet: both U-turn sides.
@@ -368,7 +397,20 @@ def zigzag_fits(poly, gap, min_rad, share=0.5):
     return core.buffer(e, join_style=1).intersection(poly).area >= share * poly.area
 
 
-def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
+def _wide_safe(poly, pitch, gap):
+    """Where widely spaced line ends may lie: pitch/2 + gap/2 inside the
+    outer edges, pitch + gap/2 clear of holes."""
+    parts = []
+    for g in getattr(poly, 'geoms', [poly]):
+        if g.geom_type != 'Polygon' or g.is_empty:
+            continue
+        outer = Polygon(g.exterior).buffer(-(pitch / 2.0 + gap / 2.0), join_style=1)
+        holes = [Polygon(r).buffer(pitch + gap / 2.0, join_style=1) for r in g.interiors]
+        parts.append(outer.difference(shapely.union_all(holes)) if holes else outer)
+    return shapely.union_all(parts) if parts else Polygon()
+
+
+def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False, spacing=None, offset=0.0):
     """Scan-line zigzag at `angle` degrees inside `poly`.
 
     Rotate by -angle; erode by max(r_min, gap) so turns stay inside; scan lines at
@@ -376,6 +418,11 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
     (_boustrophedon_runs), zigzag each run and chain the runs; alternate
     direction; join with semicircular U-turns (_uturn);
     rotate back by +angle.
+
+    `spacing` (> gap): lines that far apart, the first `offset` further in,
+    so the U-turns (radius spacing/2) can keep the bend radius; layers
+    shifted by one gap each fill in between. Line ends then sit spacing/2 +
+    gap/2 inside, and each turn's ends are cut back level (_level_ends).
     """
     check_gap_radius(gap, min_rad)
 
@@ -384,9 +431,17 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
     # far off the part around holes.)
     pivot = poly.centroid
     rot_poly = rotate(poly, -angle, origin=pivot)
+    pitch = float(spacing) if spacing else gap
+    wide = pitch > gap * 1.001
     # Line ends sit this far inside: min_rad, or at least one gap, which is
-    # what a lat/2 U-turn plus half a tow needs to stay inside the outline.
-    safe_poly = rot_poly.buffer(-max(min_rad, gap), join_style=1)
+    # what a lat/2 U-turn plus half a tow needs to stay inside the outline
+    # (wide lines: their spacing/2 turn plus half a tow -- and a whole
+    # spacing round holes, where the two ends of a turn lie on a curve that
+    # bends towards the hole and the turn between them bulged into it).
+    if wide:
+        safe_poly = _wide_safe(rot_poly, pitch, gap)
+    else:
+        safe_poly = rot_poly.buffer(-max(min_rad, gap), join_style=1)
     if safe_poly.is_empty or safe_poly.area < gap:
         # Walls too thin for that: keep the turns inside with the least
         # erosion that fits (one gap = a gap/2 U-turn plus half a tow), and
@@ -396,7 +451,7 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
             safe_poly = rot_poly
 
     minx, miny, maxx, maxy = safe_poly.bounds
-    y = miny + gap / 2.0
+    y = miny + gap / 2.0 + (float(offset) % pitch if wide else 0.0)
     scan = []                                  # per scan line: its segments, left to right
     while y <= maxy:
         line = LineString([(minx - gap * 2, y), (maxx + gap * 2, y)])
@@ -404,7 +459,7 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
         parts = [g for g in getattr(inter, 'geoms', [inter])
                  if g.geom_type == 'LineString' and not g.is_empty]
         scan.append(sorted(parts, key=lambda g: g.coords[0][0] + g.coords[-1][0]))
-        y += gap
+        y += pitch
 
     region = rot_poly.buffer(1e-6)
     runs = _boustrophedon_runs(scan, region)
@@ -413,7 +468,7 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
         # original single zigzag.
         lines = runs[0] if runs else []
         path = _zigzag(list(reversed(lines)) if start_from_end else lines,
-                       -1 if start_from_end else 1)
+                       -1 if start_from_end else 1, wide)
     else:
         # Long runs (fewest U-turn breaks) can wrap round a hole and box
         # other runs in; strict cells cannot. Keep whichever chains with
@@ -421,7 +476,7 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
         options = []
         for cells in (False, True):
             r = runs if not cells else _boustrophedon_runs(scan, region, cells=True)
-            p = _join_runs(r, rot_poly, gap, start_from_end, min_rad)
+            p = _join_runs(r, rot_poly, gap, start_from_end, min_rad, wide)
             options.append((count_crossings(p), LineString(p).length, p))
             if options[0][0] == 0:
                 break
@@ -432,3 +487,79 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False):
     final_line = LineString(path)
     final_line = rotate(final_line, angle, origin=pivot)
     return list(final_line.coords)
+
+
+def centre_fill(path, region, gap, at_end=True, anchor=None):
+    """Back-and-forth lines over the hollow a spiral leaves in its middle
+    (its innermost ring can be no narrower than twice the bend radius),
+    starting next to the path's end (at_end), or next to `anchor` when
+    given, else ending next to the path's start. Lines run along the
+    hollow's long side, one gap apart and a gap from the laid track; where
+    the spiral bites into the hollow (a line under 60 % of its neighbour)
+    the lines stop, so every turn joins lines of about the same length and
+    stays inside. Their half-circle turns (radius gap/2) are tighter than
+    the bend radius, which validation reports. [] when there is no hollow
+    wider than a track there."""
+    if len(path) < 2 or region.is_empty:
+        return []
+    forward = at_end or anchor is not None
+    target = anchor if anchor is not None else (path[-1] if at_end else path[0])
+    point = Point(target)
+    laid = LineString(path).buffer(gap * 0.98, join_style=1)
+    free = region.buffer(-gap / 2.0, join_style=1).difference(laid)
+    comps = [g for g in getattr(free, 'geoms', [free]) if g.geom_type == 'Polygon' and g.area > 0.5 * gap * gap]
+    if not comps:
+        return []
+    hollow = min(comps, key=lambda g: g.distance(point))
+    if hollow.distance(point) > 1.5 * gap:
+        return []
+    rect = hollow.minimum_rotated_rectangle
+    c = list(rect.exterior.coords) if rect.geom_type == 'Polygon' else []
+    if len(c) < 4:
+        return []
+    e1, e2 = (c[0], c[1]), (c[1], c[2])
+    a, b = e1 if math.dist(*e1) >= math.dist(*e2) else e2
+    ang = math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+    pivot = hollow.centroid
+    rot = rotate(hollow, -ang, origin=pivot)
+    minx, miny, maxx, maxy = rot.bounds
+    n = int(math.floor((maxy - miny) / gap)) + 1
+    y0 = miny + ((maxy - miny) - (n - 1) * gap) / 2.0
+    trim = gap / 2.0 if n > 1 else 0.0           # room for the half-circle turns
+    lines = []
+    for k in range(n):
+        y = y0 + k * gap
+        inter = LineString([(minx - 1.0, y), (maxx + 1.0, y)]).intersection(rot)
+        segs = [g for g in getattr(inter, 'geoms', [inter]) if g.geom_type == 'LineString' and g.length > 1e-6]
+        if not segs:
+            lines.append(None)
+            continue
+        seg = max(segs, key=lambda g: g.length)
+        x0, x1 = sorted((seg.coords[0][0], seg.coords[-1][0]))
+        if x1 - x0 > 2.0 * trim + 1e-3:
+            x0, x1 = x0 + trim, x1 - trim
+        lines.append(LineString([(x0, y), (x1, y)]) if x1 - x0 >= gap else None)
+    # the longest run of neighbouring lines of similar length
+    groups, cur = [], []
+    for ln in lines:
+        if ln is not None and (not cur or ln.length >= 0.6 * cur[-1].length and cur[-1].length >= 0.6 * ln.length):
+            cur.append(ln)
+            continue
+        if cur:
+            groups.append(cur)
+        cur = [ln] if ln is not None else []
+    if cur:
+        groups.append(cur)
+    if not groups:
+        return []
+    lines = max(groups, key=lambda g: sum(ln.length for ln in g))
+    options = []
+    for order in (lines, lines[::-1]):
+        for direction in (1, -1):
+            zz = _zigzag(order, direction, level=True)
+            pts = (list(rotate(LineString(zz), ang, origin=pivot).coords) if len(zz) > 1
+                   else [rotate(Point(zz[0]), ang, origin=pivot).coords[0]])
+            options.append(pts)
+    if forward:
+        return min(options, key=lambda p: math.dist(p[0], target))
+    return min(options, key=lambda p: math.dist(p[-1], target))

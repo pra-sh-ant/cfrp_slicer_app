@@ -46,12 +46,14 @@ FERMAT = "Fermat Spiral (Connected Double Spiral)"
 ORIENTED_SERPENTINE = "Oriented Serpentine"
 DIAGONAL_45 = "45° Diagonal Hatch"
 CORNER_STEP = "Corner-Step Spiral"
+AUTO = "Auto (Best Fit)"        # per layer, the pattern that keeps the fibre rules best (layers/auto.py)
 InfillPattern = Literal[
     "Archimedean (Concentric Spiral)",
     "Fermat Spiral (Connected Double Spiral)",
     "Oriented Serpentine",
     "45° Diagonal Hatch",
     "Corner-Step Spiral",
+    "Auto (Best Fit)",
     "N/A",  # specialty shapes: no infill pattern applies
 ]
 
@@ -291,6 +293,16 @@ class ProcessConfig(_Frozen):
     # (the top of a base under thinner walls, a roof). 0 = off.
     solid_bottom_layers: int = 0
     solid_top_layers: int = 0
+    # Zigzags (Oriented Serpentine, 45° Diagonal Hatch): keep every U-turn at
+    # the min bend radius. Lines are then 2·r_min apart (a whole number of
+    # gaps) and each layer at the same angle is shifted one gap, so that many
+    # layers together fill the area. Off = lines one gap apart, turns tighter
+    # than r_min (slowed, curvature warning).
+    zigzag_respect_radius: bool = False
+    # Archimedean / Corner-Step: fill the hollow the rings leave in the middle
+    # (no ring fits inside twice the bend radius) with short back-and-forth
+    # lines. Their turns are tighter than the bend radius (slowed, reported).
+    fill_centre: bool = False
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")

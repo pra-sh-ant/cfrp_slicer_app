@@ -9,13 +9,19 @@ from .config import DiwConfig
 def compile_diw_gcode(trajectory, cfg: DiwConfig, name="board", standalone=True) -> str:
     ox, oy, oz = cfg.tool_offset
     lw, lh = cfg.line_width_mm, cfg.layer_height_mm
+    counts = {}
+    for p in trajectory:
+        if p.get('extruding'):
+            counts.setdefault(p['feature'], set()).add(p['layer'])
+    cure_after = {p['layer'] for p in trajectory if p.get('cure_after')}
     out = [
         "; ==========================================",
         "; DIW STRUCTURAL ELECTRONICS",
         f"; Design          : {name}",
         f"; Nozzle / bead   : {cfg.nozzle_mm:g} mm / {lw:g} x {lh:g} mm",
-        f"; Layers          : dielectric {cfg.dielectric_layers if cfg.dielectric else 0}, "
-        f"conductor {cfg.conductor_layers}, encapsulation {cfg.encapsulation_layers if cfg.encapsulate else 0}",
+        f"; Layers          : dielectric {len(counts.get('dielectric', ()))}, "
+        f"conductor {len(counts.get('conductor', ()))}, encapsulation {len(counts.get('encapsulation', ()))}"
+        + (f", crossover {len(counts['crossover'])}" if counts.get('crossover') else ""),
         f"; Dispense        : {cfg.dispense}",
         *([f"; Bead spread     : x{cfg.spread_factor:g} (printed {cfg.bead_mm:g} mm)"] if cfg.spread_factor != 1.0
           else []),
@@ -48,7 +54,8 @@ def compile_diw_gcode(trajectory, cfg: DiwConfig, name="board", standalone=True)
         x, y, z = p['x'] + ox, p['y'] + oy, p['z'] + oz
         if p['extruding']:
             if p['layer'] != layer or p['feature'] != feature:
-                if layer is not None and p['layer'] != layer and cfg.uv_cure_between_layers:
+                if layer is not None and p['layer'] != layer and (cfg.uv_cure_between_layers
+                                                                  or layer in cure_after):
                     out += [f"{cfg.uv_cure_on} ; UV cure", f"G4 P{int(cfg.uv_cure_s * 1000)}",
                             f"{cfg.uv_cure_off}"]
                 if layer is not None and p['layer'] != layer and cfg.layer_wait_s > 0:
@@ -95,7 +102,7 @@ def compile_diw_gcode(trajectory, cfg: DiwConfig, name="board", standalone=True)
             out.append(f"G0 F{p['v'] * 60.0:.0f} X{x:.3f} Y{y:.3f} Z{z:.3f}")
     if flowing and cfg.dispense == "pneumatic" and valve_open:
         out.append(f"{cfg.dispense_off} ; ink off")
-    if cfg.uv_cure_between_layers and layer is not None:
+    if layer is not None and (cfg.uv_cure_between_layers or layer in cure_after):
         out += [f"{cfg.uv_cure_on} ; UV cure", f"G4 P{int(cfg.uv_cure_s * 1000)}", f"{cfg.uv_cure_off}"]
     top = max((p['z'] for p in trajectory), default=0.0) + oz
     out += ["; --- DIW END ---", f"G0 Z{top + 10.0:.3f} ; Safe lift", "G0 X0 Y0 F3000 ; Park gantry",

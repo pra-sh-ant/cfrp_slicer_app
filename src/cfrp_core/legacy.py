@@ -71,6 +71,8 @@ _FIELD_MAP = {
     "first_layer_min_coverage": (None, "first_layer_min_coverage"),
     "solid_bottom_layers": (None, "solid_bottom_layers"),
     "solid_top_layers": (None, "solid_top_layers"),
+    "zigzag_respect_radius": (None, "zigzag_respect_radius"),
+    "fill_centre": (None, "fill_centre"),
 }
 
 

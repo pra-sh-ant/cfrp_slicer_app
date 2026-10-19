@@ -7,8 +7,9 @@ import math
 from shapely.ops import unary_union
 
 from .. import geometry as geo
-from ..config import ProcessConfig
+from ..config import AUTO, ProcessConfig
 from ..geometry._common import enforce_min_radius_clear, hole_keepouts
+from . import auto
 from .common import (
     KinematicsParams,
     _end_direction,
@@ -19,7 +20,7 @@ from .common import (
     plan_layer,
 )
 from .islands import flag_bridges, multi_island_layer
-from .planning import _SPIRAL_INFILLS, _fill_track_count, _points_within, plan_layers
+from .planning import _SPIRAL_INFILLS, ZigzagShifts, _fill_track_count, _points_within, plan_layers
 
 
 def part_pieces(base_poly, gap, r_min):
@@ -45,8 +46,9 @@ def build_flat_laminate(config: ProcessConfig):
     fibre angle_i = layup[i mod len(layup)]; each layer's pattern, fill and
     direction from plan_layers (solid skins, spiral/zigzag hand-overs).
 
-    Returns (trajectory, target_shapes, max_z). A ValueError from a layer's
-    geometry is re-raised naming the layer."""
+    Returns (trajectory, target_shapes, max_z, info). A ValueError from a
+    layer's geometry is re-raised naming the layer. `info`: notes (what
+    Auto (Best Fit) chose)."""
     g = config.geometry
     trajectory = []
     target_shapes = []
@@ -75,30 +77,56 @@ def build_flat_laminate(config: ProcessConfig):
     holed = bool(getattr(base_poly, 'interiors', ()))   # a waist without holes: Fermat visits both lobes
     fill_poly = pieces[0] if len(pieces) > 1 and not multi and spiral_only and holed else base_poly
     variants = {}
-    tracks = {}
-    for plan in plan_layers(config, config.layers):
-        key = (plan.pattern, plan.solid)
-        if key not in tracks:
-            tracks[key] = (_fill_track_count(fill_poly, config, plan.pattern) if plan.solid
-                           else config.tracks_per_layer)
+    shifts = ZigzagShifts(config)
+    holes = [h.buffer(-0.1) for h in hole_keepouts(base_poly)]
+    decided, chosen = {}, []                       # Auto: (parity, angle, first) -> (pattern, angle)
 
     for i, plan in enumerate(plan_layers(config, config.layers)):
         layer_z = config.z_offset_mm + (i * layer_height)
         current_angle = layup_sequence[i % len(layup_sequence)]
         max_z = layer_z
 
-        try:
+        def generate(pattern, angle, solid, peek=False, plan=plan, last_pt=last_pt, last_dir=last_dir):
+            spacing, offset = shifts.next(pattern, plan.index, angle, peek=peek)
             if multi:
-                key = (plan.pattern, plan.solid)
+                key = (pattern, solid)
                 if key not in variants:
-                    variants[key] = config.model_copy(update=dict(infill_type=plan.pattern, fill_solid=plan.solid))
-                raw_path = multi_island_layer(pieces, variants[key], current_angle, plan.index, last_pt)
+                    variants[key] = config.model_copy(update=dict(infill_type=pattern, fill_solid=solid))
+                return multi_island_layer(pieces, variants[key], angle, plan.index, last_pt,
+                                          spacing=spacing, offset=offset)
+            count = (_fill_track_count(fill_poly, config, pattern) if solid else config.tracks_per_layer)
+            return geo.laminate_layer(
+                fill_poly, gap, r_min, pattern, count, g.include_boundary, angle, layer_idx=plan.index,
+                last_pt=last_pt, last_dir=last_dir, lead_in=plan.lead_in if pattern == plan.pattern else 0.0,
+                seam_turn=turn, line_spacing=spacing, line_offset=offset, fill_centre=config.fill_centre,
+            )
+
+        try:
+            if plan.pattern == AUTO:
+                # Auto fills every layer: each candidate solid, the best laid.
+                key = (plan.index % 2, round(current_angle % 180.0, 3), i == 0)
+                reused = None
+                if key in decided:
+                    # the same choice for a layer like one judged -- unless it
+                    # lays worse here (the start differs: a crossing, a hole)
+                    pattern, angle, cov = decided[key]
+                    path = generate(pattern, angle, True, peek=True)
+                    m = auto.measure(path, base_poly, holes, gap, r_min, last_pt) if path else None
+                    if m is not None and m[2] == 0 and m[0] >= cov - 0.03:
+                        shifts.next(pattern, plan.index, angle)
+                        raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0)
+                        chosen.append((i + 1, reused))
+                if reused is None:
+                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, True, peek=True),
+                                                   auto.candidates_for(fill_poly, current_angle),
+                                                   base_poly, holes, gap, r_min, last_pt)
+                    if choice is None:
+                        raise ValueError("no pattern fits this layer.")
+                    shifts.next(choice.pattern, plan.index, choice.angle)
+                    decided[key] = (choice.pattern, choice.angle, choice.coverage)
+                    chosen.append((i + 1, choice))
             else:
-                raw_path = geo.laminate_layer(
-                    fill_poly, gap, r_min, plan.pattern, tracks[plan.pattern, plan.solid],
-                    g.include_boundary, current_angle, layer_idx=plan.index,
-                    last_pt=last_pt, last_dir=last_dir, lead_in=plan.lead_in, seam_turn=turn,
-                )
+                raw_path = generate(plan.pattern, current_angle, plan.solid)
             target_shapes.append((layer_z, printable, i + 1))
         except ValueError as exc:
             raise ValueError(f"Layer {i + 1}: {exc}") from exc
@@ -122,4 +150,5 @@ def build_flat_laminate(config: ProcessConfig):
             last_pt = (layer_trajectory[-1]['x'], layer_trajectory[-1]['y'])
             last_dir = _end_direction(layer_trajectory)
 
-    return trajectory, target_shapes, max_z
+    info = [auto.summary(chosen)] if chosen else []
+    return trajectory, target_shapes, max_z, info

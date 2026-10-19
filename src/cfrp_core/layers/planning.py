@@ -148,6 +148,39 @@ def stl_skins(regions, bottom: int, top: int, share: float = 0.2) -> list[bool]:
     return out
 
 
+def zigzag_pitch(config: ProcessConfig) -> tuple[float | None, int]:
+    """(line spacing, k) when zigzag turns must keep the bend radius:
+    k = ceil(2·r_min / gap) gaps; (None, 1) when off or not needed."""
+    gap, r = float(config.track_gap_mm), float(config.min_radius_mm)
+    if not config.zigzag_respect_radius or gap <= 0 or 2.0 * r <= gap * 1.0001:
+        return None, 1
+    k = max(1, math.ceil(2.0 * r / gap - 1e-9))
+    return k * gap, k
+
+
+class ZigzagShifts:
+    """Per-layer (spacing, offset) for radius-keeping zigzags: the j-th layer
+    at an angle starts j·gap further in (mod spacing), so k layers at one
+    angle fill it once."""
+
+    def __init__(self, config: ProcessConfig):
+        self.spacing, self.k = zigzag_pitch(config)
+        self.gap = float(config.track_gap_mm)
+        self.seen: dict[float, int] = {}
+
+    def next(self, pattern, layer_index, angle, peek=False):
+        """(spacing, offset) for this layer; `peek`: without counting it."""
+        if self.spacing is None or pattern not in _ZIGZAGS:
+            return None, 0.0
+        if pattern == DIAGONAL_45:
+            angle = 45.0 if layer_index % 2 == 0 else -45.0
+        key = round(float(angle) % 180.0, 6)
+        j = self.seen.get(key, 0)
+        if not peek:
+            self.seen[key] = j + 1
+        return self.spacing, (j % self.k) * self.gap
+
+
 def _points_within(path, length):
     """How many leading points of `path` lie within `length` mm of travel."""
     run = 0.0

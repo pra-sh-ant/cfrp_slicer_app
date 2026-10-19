@@ -29,7 +29,7 @@ from shapely.affinity import rotate
 from shapely.geometry import LineString, Polygon
 from shapely.ops import unary_union
 
-from .config import DiwConfig
+from .config import DiwConfig, DiwLayerSpec
 from .design import BoardDesign, board_polygon, conductors, crossovers, hole_shape, pad_shape
 
 RAMP_SLOPE = math.tan(math.radians(30.0))         # steepest climb of a level-2 wire onto a bridge
@@ -41,10 +41,14 @@ class DiwLayer:
     feature: str
     paths: list = field(default_factory=list)      # [(coords, closed)]
     z: float = 0.0
-    # Conformal layers (level-2 wires): [(region, layers)] stacked under it,
-    # and its place in its own stack; z then follows what lies under each point.
+    # Conformal layers (level-2 wires): [(region, height mm)] stacked under
+    # it, and the height of its own kind's layers below it; z then follows
+    # what lies under each point.
     stack: list | None = None
-    sub: int = 0
+    base_mm: float = 0.0
+    height: float = 0.0                            # 0 = the DIW layer height
+    speed: float = 0.0                             # 0 = the usual speed for its feature
+    cure: bool = False                             # UV cure right after it
 
 
 @dataclass
@@ -234,17 +238,66 @@ def order_paths(paths, start=None):
 
 # --- layers ----------------------------------------------------------------------------
 
-def dielectric_region(design: BoardDesign, cfg: DiwConfig):
+def default_stack(cfg: DiwConfig, level2: bool = False) -> tuple[DiwLayerSpec, ...]:
+    """The automatic stack from the layer counts: insulation (rasters at
+    0°/90°), level-1 ink, level-2 ink (only with level-2 wires), cover
+    (rasters at ±45°)."""
+    specs = []
+    if cfg.dielectric and cfg.dielectric_layers:
+        specs += [DiwLayerSpec(kind="dielectric", covers=cfg.insulation_coverage,
+                               angle_deg=0.0 if i % 2 == 0 else 90.0) for i in range(cfg.dielectric_layers)]
+    specs += [DiwLayerSpec(kind="conductor", level=1) for _ in range(cfg.conductor_layers)]
+    if level2:
+        specs += [DiwLayerSpec(kind="conductor", level=2) for _ in range(cfg.conductor_layers)]
+    if cfg.encapsulate and cfg.encapsulation_layers:
+        specs += [DiwLayerSpec(kind="encapsulation", angle_deg=45.0 if i % 2 == 0 else -45.0)
+                  for i in range(cfg.encapsulation_layers)]
+    return tuple(specs)
+
+
+def layer_stack(design: BoardDesign, cfg: DiwConfig) -> tuple[DiwLayerSpec, ...]:
+    """The ink layers printed, bottom first: the user's stack (its enabled
+    layers) when set, else the automatic one."""
+    if cfg.stack:
+        return tuple(s for s in cfg.stack if s.enabled)
+    return default_stack(cfg, level2=any(t.level == 2 for t in design.traces))
+
+
+def insulation_covers(cfg: DiwConfig) -> str:
+    """'board' when any insulation layer covers the whole board, else 'wires'."""
+    if cfg.stack:
+        return "board" if any(s.enabled and s.kind == "dielectric" and s.covers == "board"
+                              for s in cfg.stack) else "wires"
+    return cfg.insulation_coverage
+
+
+def has_insulation(cfg: DiwConfig) -> bool:
+    if cfg.stack:
+        return any(s.enabled and s.kind == "dielectric" for s in cfg.stack)
+    return bool(cfg.dielectric and cfg.dielectric_layers)
+
+
+def ink_height_mm(cfg: DiwConfig, level: int = 1) -> float:
+    """Wet height of all ink layers of one wire level."""
+    if cfg.stack:
+        return sum(s.height_mm or cfg.layer_height_mm for s in cfg.stack
+                   if s.enabled and s.kind == "conductor" and s.level == level)
+    return cfg.conductor_layers * cfg.layer_height_mm
+
+
+def dielectric_region(design: BoardDesign, cfg: DiwConfig, covers: str | None = None):
     """Where the insulation is printed: every conductor grown by the
-    dielectric margin, plus dielectric zones, cut to where a whole bead fits
-    on the board. Insulation reaches as far as any conductor can (it was
-    trimmed back further than the ink near edges: 288 uninsulated points in
-    the audit)."""
+    dielectric margin, plus dielectric zones -- or, covering the board, the
+    whole board -- cut to where a whole bead fits on the board. Insulation
+    reaches as far as any conductor can (it was trimmed back further than
+    the ink near edges: 288 uninsulated points in the audit)."""
     elems = conductors(design)
     if not elems:
         return Polygon()
-    cond = unary_union([e["geom"] for e in elems])
     printable = board_polygon(design).buffer(-cfg.bead_mm / 2.0, join_style=2)
+    if (covers or insulation_covers(cfg)) == "board":
+        return printable
+    cond = unary_union([e["geom"] for e in elems])
     extra = [Polygon(z.points).buffer(0) for z in design.zones if z.kind == "dielectric"]
     return unary_union([cond.buffer(cfg.dielectric_margin_mm, join_style=1), *extra]).intersection(printable)
 
@@ -261,7 +314,12 @@ def ink_area(design: BoardDesign, cfg: DiwConfig):
 
 
 def plan_layers(design: BoardDesign, cfg: DiwConfig):
+    """The ink layers, bottom first, from layer_stack: insulation, ink at
+    wire level 1, the crossover bridges (before the first level-2 ink
+    layer, when level-2 wires cross another net), ink at level 2 following
+    what lies under it, cover. Returns (layers, regions)."""
     lw = cfg.bead_mm
+    lh = cfg.layer_height_mm
     elems = conductors(design)
     cond = unary_union([e["geom"] for e in elems]) if elems else Polygon()
     area = ink_area(design, cfg)
@@ -272,17 +330,12 @@ def plan_layers(design: BoardDesign, cfg: DiwConfig):
     printable = board.buffer(-lw / 2.0, join_style=2)
     regions = {"printable": printable}
     layers: list[DiwLayer] = []
-    k = 0
     clipped = [0.0]
-    diel = Polygon()
-    if cfg.dielectric and cfg.dielectric_layers and not cond.is_empty:
-        diel = dielectric_region(design, cfg)
-        regions["dielectric"] = diel
-        for i in range(cfg.dielectric_layers):
-            angle = 0.0 if i % 2 == 0 else 90.0
-            layers.append(DiwLayer(k, "dielectric", raster(diel, lw, angle)))
-            k += 1
     regions["conductor"] = cond
+    has_level2 = any(e.get("level", 1) == 2 for e in elems)
+    diel_union, diel_h, level1_h, bridge_h, level2_h = Polygon(), 0.0, 0.0, 0.0, 0.0
+    under = None
+    pads = unary_union([pad_shape(p).buffer(0.3) for p in design.pads]) if design.pads else Polygon()
 
     def paths_of(level):
         paths = []
@@ -295,42 +348,57 @@ def plan_layers(design: BoardDesign, cfg: DiwConfig):
                 paths += concentric(e["geom"], lw)
         return paths
 
-    for _ in range(cfg.conductor_layers):
-        layers.append(DiwLayer(k, "conductor", _clip(paths_of(1), printable, lw, clipped)))
-        k += 1
-    if any(e.get("level", 1) == 2 for e in elems):
-        n_d = cfg.dielectric_layers if not diel.is_empty else 0
-        level1 = unary_union([e["geom"] for e in elems if e.get("level", 1) == 1])
-        bridges = unary_union([c["geom"] for c in crossovers(design, cfg.bridge_margin_mm)])
-        bridges = bridges.intersection(printable) if not bridges.is_empty else Polygon()
-        n_b = 0
-        if not bridges.is_empty:
-            regions["crossover"] = bridges
-            n_b = cfg.bridge_layers
-            for i in range(n_b):
-                layers.append(DiwLayer(k, "crossover", raster(bridges, lw, 0.0 if i % 2 == 0 else 90.0)))
-                k += 1
-        # What lies under a level-2 wire, as printed: raster lines run to
-        # their region's edge, so the beads reach half a bead past it, and a
-        # wire narrower than the bead prints bead-wide.
-        grow = lw / 2.0
-        level1 = unary_union([LineString(design.traces[e["index"]].points).buffer(lw / 2.0, quad_segs=8)
-                              if e["kind"] == "trace" and design.traces[e["index"]].width_mm < lw else e["geom"]
-                              for e in elems if e.get("level", 1) == 1])
-        wide_bridges = bridges.buffer(grow) if not bridges.is_empty else bridges
-        under = [(diel.buffer(grow) if not diel.is_empty else diel, n_d),
-                 (unary_union([level1, wide_bridges]), cfg.conductor_layers), (wide_bridges, n_b)]
-        for j in range(cfg.conductor_layers):
-            layers.append(DiwLayer(k, "conductor", _clip(paths_of(2), printable, lw, clipped), stack=under, sub=j))
-            k += 1
-    if cfg.encapsulate and cfg.encapsulation_layers and not cond.is_empty:
-        pads = unary_union([pad_shape(p).buffer(0.3) for p in design.pads]) if design.pads else Polygon()
-        enc = cond.buffer(cfg.dielectric_margin_mm * 0.6, join_style=1).difference(pads).intersection(area)
-        regions["encapsulation"] = enc
-        for i in range(cfg.encapsulation_layers):
-            layers.append(DiwLayer(k, "encapsulation", raster(enc, lw, 45.0 if i % 2 == 0 else -45.0)))
-            k += 1
+    def fill(region, spec):
+        return raster(region, lw, spec.angle_deg) if spec.fill == "raster" else concentric(region, lw)
+
+    def add(feature, paths, spec=None, **kw):
+        layers.append(DiwLayer(len(layers), feature, paths, height=(spec.height_mm if spec else 0.0) or lh,
+                               speed=spec.speed_mm_s if spec else 0.0, cure=bool(spec and spec.cure), **kw))
+        return layers[-1].height
+
+    for spec in layer_stack(design, cfg):
+        if spec.kind == "dielectric":
+            if cond.is_empty:
+                continue
+            region = dielectric_region(design, cfg, spec.covers)
+            diel_union = unary_union([diel_union, region])
+            diel_h += add("dielectric", fill(region, spec), spec)
+        elif spec.kind == "conductor" and spec.level == 1:
+            level1_h += add("conductor", _clip(paths_of(1), printable, lw, clipped), spec)
+        elif spec.kind == "conductor":
+            if not has_level2:
+                continue
+            if under is None:
+                bridges = unary_union([c["geom"] for c in crossovers(design, cfg.bridge_margin_mm)])
+                bridges = bridges.intersection(printable) if not bridges.is_empty else Polygon()
+                if not bridges.is_empty:
+                    regions["crossover"] = bridges
+                    for i in range(cfg.bridge_layers):
+                        bridge_h += add("crossover", raster(bridges, lw, 0.0 if i % 2 == 0 else 90.0))
+                # What lies under a level-2 wire, as printed: raster lines run
+                # to their region's edge, so the beads reach half a bead past
+                # it, and a wire narrower than the bead prints bead-wide.
+                grow = lw / 2.0
+                level1 = unary_union([LineString(design.traces[e["index"]].points).buffer(lw / 2.0, quad_segs=8)
+                                      if e["kind"] == "trace" and design.traces[e["index"]].width_mm < lw
+                                      else e["geom"] for e in elems if e.get("level", 1) == 1])
+                wide_bridges = bridges.buffer(grow) if not bridges.is_empty else bridges
+                under = [(diel_union.buffer(grow) if not diel_union.is_empty else diel_union, diel_h),
+                         (unary_union([level1, wide_bridges]), level1_h), (wide_bridges, bridge_h)]
+            level2_h += add("conductor", _clip(paths_of(2), printable, lw, clipped), spec, stack=under,
+                            base_mm=level2_h)
+        else:                                       # cover
+            if cond.is_empty:
+                continue
+            region = (area if spec.covers == "board"
+                      else cond.buffer(cfg.dielectric_margin_mm * 0.6, join_style=1).intersection(area))
+            region = region.difference(pads) if not pads.is_empty else region
+            regions["encapsulation"] = unary_union([regions.get("encapsulation", Polygon()), region])
+            add("encapsulation", fill(region, spec), spec)
+    if not diel_union.is_empty:
+        regions["dielectric"] = diel_union
     regions["clipped_mm"] = clipped[0]
+    regions["ink_layers"] = sum(1 for layer in layers if layer.feature == "conductor")
     return layers, regions
 
 
@@ -353,22 +421,22 @@ def _clip(paths, region, lw, clipped):
     return out
 
 
-def conformal_z(coords, stack, z0, lh, step=0.3, slope=RAMP_SLOPE):
-    """(points, z per point) for a path over stacked regions: each point
-    sits one layer above the layers under it (z0 + lh * count), the path
-    densified to `step` and every climb started early enough that it is never
-    steeper than `slope` (it rises before a bridge and comes down after)."""
+def conformal_z(coords, stack, z0, step=0.3, slope=RAMP_SLOPE):
+    """(points, z per point) for a path over stacked regions [(region,
+    height)]: each point sits at z0 plus the height of the layers under it,
+    the path densified to `step` and every climb started early enough that
+    it is never steeper than `slope` (it rises before a bridge and comes
+    down after)."""
     import shapely
     pts = [tuple(coords[0])]
     for a, b in zip(coords[:-1], coords[1:], strict=False):
         n = max(1, int(math.ceil(math.dist(a, b) / step)))
         pts += [(a[0] + (b[0] - a[0]) * t / n, a[1] + (b[1] - a[1]) * t / n) for t in range(1, n + 1)]
     xy = np.asarray(pts, dtype=np.float64)
-    count = np.zeros(len(xy))
-    for region, n in stack:
-        if n and region is not None and not region.is_empty:
-            count += n * shapely.contains_xy(region.buffer(1e-6), xy[:, 0], xy[:, 1])
-    z = z0 + lh * count
+    z = np.full(len(xy), float(z0))
+    for region, height in stack:
+        if height and region is not None and not region.is_empty:
+            z += height * shapely.contains_xy(region.buffer(1e-6), xy[:, 0], xy[:, 1])
     ds = np.hypot(*np.diff(xy, axis=0).T)
     for i in range(1, len(z)):                     # the climb may not be steeper than slope ...
         z[i] = max(z[i], z[i - 1] - ds[i - 1] * slope)
@@ -383,14 +451,19 @@ def build_trajectory(layers, cfg: DiwConfig, z_base=0.0, offset=(0.0, 0.0), laye
     lh = cfg.layer_height_mm
     traj: list[dict] = []
     cur = None
+    top = z_base                                   # top of the stack so far
     for layer in layers:
-        z = z_base + (layer.index + 1) * lh
+        h = layer.height or lh
+        top += h
+        z = top
         layer.z = z if layer.stack is None else z_base     # conformal: its highest point, below
-        speed = cfg.speed_conductor_mm_s if layer.feature == "conductor" else cfg.speed_dielectric_mm_s
+        speed = layer.speed or (cfg.speed_conductor_mm_s if layer.feature == "conductor"
+                                else cfg.speed_dielectric_mm_s)
         tag = layer.index + 1 + layer_offset
+        first = len(traj)
         for coords in order_paths(layer.paths, cur):
             if layer.stack is not None:
-                pts, zs = conformal_z(coords, layer.stack, z_base + (layer.sub + 1) * lh, lh)
+                pts, zs = conformal_z(coords, layer.stack, z_base + layer.base_mm + h)
                 layer.z = max(layer.z, max(zs))
             else:
                 pts, zs = coords, [z] * len(coords)
@@ -399,20 +472,24 @@ def build_trajectory(layers, cfg: DiwConfig, z_base=0.0, offset=(0.0, 0.0), laye
             if traj:
                 last = traj[-1]
                 _pt(traj, last['x'], last['y'], max(hop, last['z']), cfg.travel_speed_mm_s, "travel", False,
-                    tag, cfg)
-            _pt(traj, pts[0][0], pts[0][1], hop, cfg.travel_speed_mm_s, "travel", False, tag, cfg)
-            _pt(traj, pts[0][0], pts[0][1], zs[0], cfg.travel_speed_mm_s, "travel", False, tag, cfg)
+                    tag, cfg, h)
+            _pt(traj, pts[0][0], pts[0][1], hop, cfg.travel_speed_mm_s, "travel", False, tag, cfg, h)
+            _pt(traj, pts[0][0], pts[0][1], zs[0], cfg.travel_speed_mm_s, "travel", False, tag, cfg, h)
             for (x, y), zz in zip(pts[1:], zs[1:], strict=True):
-                _pt(traj, x, y, zz, speed, layer.feature, True, tag, cfg)
+                _pt(traj, x, y, zz, speed, layer.feature, True, tag, cfg, h)
             cur = (coords[-1][0], coords[-1][1])
+        if layer.cure and len(traj) > first:
+            traj[-1]["cure_after"] = True
+        if layer.stack is not None:
+            top = max(top, layer.z)
     return traj
 
 
-def _pt(traj, x, y, z, v, feature, extruding, layer, cfg):
+def _pt(traj, x, y, z, v, feature, extruding, layer, cfg, height=None):
     dist = math.dist((x, y, z), (traj[-1]['x'], traj[-1]['y'], traj[-1]['z'])) if traj else 0.0
     traj.append({"x": float(x), "y": float(y), "z": float(z), "v": float(v), "dist": dist, "e_mult": 1.0,
                  "layer": int(layer), "feature": feature, "extruding": bool(extruding),
-                 "width": cfg.bead_mm, "height": cfg.layer_height_mm,
+                 "width": cfg.bead_mm, "height": float(height or cfg.layer_height_mm),
                  "layer_start": False, "is_transition": False})
 
 
@@ -436,6 +513,8 @@ def diw_stats(traj, cfg: DiwConfig):
     t += changes * cfg.layer_wait_s
     if cfg.uv_cure_between_layers and layers:
         t += len(layers) * cfg.uv_cure_s
+    elif layers:
+        t += len({p['layer'] for p in traj if p.get('cure_after')}) * cfg.uv_cure_s
     return {
         "ink_length_mm": length,
         "ink_volume_mm3": {k: v * lw * lh for k, v in length.items()},
@@ -452,7 +531,7 @@ def slice_diw(design: BoardDesign, cfg: DiwConfig, z_base=0.0, offset=(0.0, 0.0)
     layers, regions = plan_layers(design, cfg)
     traj = build_trajectory(layers, cfg, z_base, offset, layer_offset)
     validation = drc(design, cfg)
-    cut = regions.pop("clipped_mm", 0.0) / max(cfg.conductor_layers, 1)
+    cut = regions.pop("clipped_mm", 0.0) / max(regions.pop("ink_layers", 0), 1)
     if cut > 0.05:
         validation = dict(validation, messages=[f"{cut:.1f} mm of conductive ink was left out: it lies off the "
                                                 f"board or over a hole. Move those wires or pads inward."]
@@ -462,5 +541,6 @@ def slice_diw(design: BoardDesign, cfg: DiwConfig, z_base=0.0, offset=(0.0, 0.0)
                      diw_stats(traj, cfg), regions)
 
 
-__all__ = ["DiwLayer", "DiwResult", "concentric", "conformal_z", "dielectric_region", "ink_area", "order_paths",
+__all__ = ["DiwLayer", "DiwResult", "concentric", "conformal_z", "default_stack", "dielectric_region",
+           "has_insulation", "ink_area", "ink_height_mm", "insulation_covers", "layer_stack", "order_paths",
            "plan_layers", "raster", "slice_diw", "trace_paths"]

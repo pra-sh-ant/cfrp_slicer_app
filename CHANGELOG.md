@@ -5,6 +5,39 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 42 — Auto infill, filled centres, radius-keeping zigzags, PCB layer stack)
+- **Auto (Best Fit)** infill pattern (`layers/auto.py`): on each layer it tries the
+  three spirals filled solid and zigzags at the layup angle, across it, along the
+  part's long side and at ±45°, and lays the one that keeps the fibre rules best --
+  never over a hole, no crossings, fewest bends tighter than the minimum, most of the
+  layer covered, a short way in from the last layer. Layers that look alike reuse the
+  choice (re-judged if it would cross or cover less there). The info list says what
+  each layer got. STL cup: 97 % covered (plain Archimedean, 3 tracks: 49 %).
+- **Fill Centre** (`fill_centre`): spirals leave a hollow in the middle of each layer
+  (no ring fits inside twice the bend radius); it is now filled with back-and-forth
+  lines along its long side, joined to the spiral's end (or, on an outward layer,
+  leading in from where the last layer ended, the spiral restarted where the fill
+  ends). A 135 x 25 plate filled solid: 76 % -> 91 % covered; 60 x 40: 89 % -> 94 %;
+  no crossings. Their turns are tighter than the bend radius (reported).
+- **Zigzag turns at the min bend radius** (`zigzag_respect_radius`): lines one gap
+  apart can only turn at gap/2 (0.6 mm against a 3 mm bend radius). On: lines
+  ceil(2 r_min / gap) gaps apart, each layer at the same angle shifted one gap, so
+  that many layers fill the area; every turn keeps the radius (ends cut level so wide
+  turns stay inside slanted edges). 45° hatch, 10 layers: 2,390 -> 3 tight points.
+- **Structural PCB layer stack** (`DiwConfig.stack`, editor *Layers* tab): every ink
+  layer set on its own -- insulation / ink (level 1 or 2) / cover, what it covers
+  (under the wires or the whole board), fill (lines at an angle, or rings), height,
+  speed, UV cure after it, on/off -- added, removed and reordered. Off, the tab shows
+  the automatic stack from the layer counts. Heights add up per layer (crossover
+  wires climb over what is really under them); resistance and current use the ink
+  actually printed at each level; a stack with no ink for a wire level is an error.
+- **Insulation over the whole board** (`insulation_coverage`): the insulation can
+  cover the entire top surface (minus holes and the edge) instead of only the wires.
+
+### Known limits (Phase 42)
+- With widely spaced zigzag lines a layer seam can keep one crossing where the climb,
+  tangent to the last layer's end, overshoots the next layer's first line.
+
 ### Added (Phase 41 — holes, pieces, seams, mesh problems)
 - **Fermat spiral round holes**: the Fermat spiral stopped at the first ring that
   came near a hole. On holed outlines it now uses the rings that bend round the

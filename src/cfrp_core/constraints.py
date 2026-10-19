@@ -124,8 +124,15 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
             )
     # Line patterns turn 180 deg between adjacent lines one gap apart; the
     # widest such turn is a semicircle of radius gap/2.
-    if (config.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45) and min_radius > 0
-            and track_gap < 2.0 * min_radius):
+    zigzag_layers = config.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45)
+    if zigzag_layers and min_radius > 0 and track_gap < 2.0 * min_radius and config.zigzag_respect_radius:
+        k = max(1, math.ceil(2.0 * min_radius / track_gap - 1e-9))
+        notes.append(
+            f"{config.infill_type}: turns kept at the {min_radius:.1f} mm min bend radius: lines "
+            f"{k * track_gap:.2f} mm apart (every {k}th line), each layer at the same angle shifted "
+            f"{track_gap:.2f} mm, so {k} such layers fill the area once."
+        )
+    elif zigzag_layers and min_radius > 0 and track_gap < 2.0 * min_radius:
         notes.append(
             f"{config.infill_type}: U-turns between lines {track_gap:.2f} mm apart are at most "
             f"{track_gap / 2.0:.2f} mm radius, below the {min_radius:.1f} mm min bend radius, so they "

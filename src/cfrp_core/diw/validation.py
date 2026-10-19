@@ -40,19 +40,22 @@ def _where(geom):
     return f"({p.x:.1f}, {p.y:.1f})" if p is not None else ""
 
 
-def _film_mm(cfg: DiwConfig) -> float:
-    """Cured film thickness of all conductor layers."""
-    return cfg.conductor_layers * cfg.layer_height_mm * cfg.cured_thickness_ratio
+def _film_mm(cfg: DiwConfig, level: int = 1) -> float:
+    """Cured film thickness of all ink layers of one wire level (a level
+    the stack prints no ink at counts as one layer, so values stay finite;
+    the DRC reports it)."""
+    from .slicer import ink_height_mm
+    return (ink_height_mm(cfg, level) or cfg.layer_height_mm) * cfg.cured_thickness_ratio
 
 
 def trace_resistance(trace, cfg: DiwConfig) -> float:
-    """R = rho * L / (w * t), t = cured film thickness of all conductor layers."""
-    return cfg.resistivity_ohm_mm * trace.length() / (trace.width_mm * _film_mm(cfg))
+    """R = rho * L / (w * t), t = cured film thickness of its level's ink layers."""
+    return cfg.resistivity_ohm_mm * trace.length() / (trace.width_mm * _film_mm(cfg, trace.level))
 
 
 def trace_capacity_a(trace, cfg: DiwConfig) -> float:
     """Current the cured cross-section carries at max_current_density."""
-    return cfg.max_current_density_a_mm2 * trace.width_mm * _film_mm(cfg)
+    return cfg.max_current_density_a_mm2 * trace.width_mm * _film_mm(cfg, trace.level)
 
 
 def _printed(e, trace, bead):
@@ -139,7 +142,14 @@ def drc(design: BoardDesign, cfg: DiwConfig) -> dict:
                                 f"(minimum {cfg.clearance_mm:g} mm){spread}; the ink may bridge them.")
 
     # process
-    if elems and cfg.substrate_conductive and not (cfg.dielectric and cfg.dielectric_layers):
+    from .slicer import has_insulation, ink_height_mm
+    if cfg.stack:
+        for level in (1, 2):
+            used = [e for e in elems if e.get("level", 1) == level]
+            if used and not ink_height_mm(cfg, level):
+                errors.append(f"The layer stack prints no ink at wire level {level}: {len(used)} wire(s) / pad(s) "
+                              f"there would be left out. Add an ink layer at level {level} (Layers tab).")
+    if elems and cfg.substrate_conductive and not has_insulation(cfg):
         errors.append("Carbon fibre is conductive: with no dielectric layer every trace shorts through the "
                       "laminate. Turn the dielectric on (or print on a glass/aramid laminate).")
     elif elems and cfg.substrate_conductive and cfg.min_insulation_overlap_mm > 0:
@@ -172,9 +182,9 @@ def drc(design: BoardDesign, cfg: DiwConfig) -> dict:
         if t.current_a > 0:
             row.update(drop_v=t.current_a * r, power_w=t.current_a ** 2 * r)
             if t.current_a > cap:
-                need_w = t.current_a / (cfg.max_current_density_a_mm2 * _film_mm(cfg))
+                need_w = t.current_a / (cfg.max_current_density_a_mm2 * _film_mm(cfg, t.level))
                 warnings.append(f"{row['name']} must carry {t.current_a:g} A but its {t.width_mm:g} mm x "
-                                f"{_film_mm(cfg):.3g} mm cured section takes about {cap:.2g} A "
+                                f"{_film_mm(cfg, t.level):.3g} mm cured section takes about {cap:.2g} A "
                                 f"({cfg.max_current_density_a_mm2:g} A/mm²): it would overheat. Widen it to "
                                 f"{need_w:.2g} mm or print more conductor layers.")
         traces.append(row)

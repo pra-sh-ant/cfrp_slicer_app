@@ -34,11 +34,24 @@ HELP = {
     "infill_type": "How the fibre is laid in each layer. Spirals (Archimedean, Fermat, Corner-Step) "
                    "go round and round following the outline - smooth, few tight turns. Zigzags "
                    "(Serpentine, 45° Hatch) lay straight lines at an angle and turn back at the "
-                   "edges - stiff in one direction, many tight turns.",
+                   "edges - stiff in one direction, many tight turns. Auto (Best Fit) tries them all "
+                   "on each layer (zigzags in several directions too) and keeps the one that never "
+                   "crosses itself or a hole, bends least below the min bend radius and covers most; "
+                   "the notes say what it chose.",
     "tracks_per_layer": "How many rounds of fibre each layer gets (spirals), or how thick the wall of "
                         "a shell is. More = stronger and heavier; fewer = faster, lighter, hollow "
                         "in the middle.",
     "fill_solid": "Ignore Tracks Per Layer and fill every layer completely (as many rounds as fit).",
+    "fill_centre": "Spirals (Archimedean, Corner-Step) leave the middle of each layer empty: no ring fits "
+                   "inside twice the min bend radius. On: that middle is filled with short back-and-forth "
+                   "lines. Their turns are tighter than the bend radius, so the fibre is slowed there. Use "
+                   "with Fill Solid for a fully covered layer (not on a first layer that starts in the "
+                   "middle under zigzag layers).",
+    "zigzag_respect_radius": "Zigzag patterns turn 180° between neighbouring lines, which is much tighter than "
+                             "the min bend radius when the lines are one Track Gap apart (the fibre is slowed "
+                             "there). On: the turns keep the bend radius instead. Lines are then about twice "
+                             "the bend radius apart, and each layer at the same angle is moved over by one "
+                             "Track Gap, so a few layers together fill the area.",
     "first_layer_solid": "Make the very first layer completely filled, whatever the other layers do. "
                          "Gives the part a closed, flat base that sticks well to the bed.",
     "first_layer_infill": "Pattern for the first layer and for the solid bottom/top layers. Spirals "
@@ -185,5 +198,9 @@ DIW_HELP = {
     "layer_wait": "Pause after each ink layer so solvent inks dry before the next layer goes on top "
                   "(0 = no pause). UV inks use UV cure instead.",
     "bridge_layers": "Insulation layers printed where a crossover (level-2) wire crosses another net.",
+    "insulation_coverage": "Under the wires: insulation only where there is ink (plus the margin) - less "
+                           "material, faster. Whole board: insulation over the entire top surface (minus "
+                           "holes and the edge) - an even, sealed surface. The Layers tab can set this per "
+                           "layer.",
     "bridge_margin": "How far the crossover insulation reaches past the crossing on every side.",
 }

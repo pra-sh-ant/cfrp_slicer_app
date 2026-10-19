@@ -46,6 +46,7 @@ INFILL_OPTIONS = [
     "Oriented Serpentine",
     "45° Diagonal Hatch",
     "Corner-Step Spiral",
+    "Auto (Best Fit)",
 ]
 REVOLVE_INFILL_OPTIONS = [
     "Archimedean (Concentric Spiral)",
@@ -421,6 +422,9 @@ class ControlsPanel(QWidget):
 
         self.tracks_spin = self._add(sec, "tracks_per_layer", "Tracks Per Layer", _ispin(1, 200, 7))
         self.fill_chk = self._add(sec, "fill_solid", "", QCheckBox("Fill Solid (as many tracks as fit)"))
+        self.zz_radius_chk = self._add(sec, "zigzag_respect_radius", "",
+                                       QCheckBox("Zigzag turns at Min Bend Radius (sparser lines)"))
+        self.centre_chk = self._add(sec, "fill_centre", "", QCheckBox("Fill Centre (no hollow middle)"))
         self.layers_spin = self._add(sec, "layers", "Total Layers", _ispin(1, 500, 1))
         self.first_solid_chk = self._add(sec, "first_layer_solid", "",
                                          QCheckBox("First Layer Solid (fully filled base)"))
@@ -442,6 +446,8 @@ class ControlsPanel(QWidget):
         for w in (self.layers_spin, self.tracks_spin):
             w.valueChanged.connect(self._emit)
         self.fill_chk.toggled.connect(self._emit)
+        self.zz_radius_chk.toggled.connect(self._emit)
+        self.centre_chk.toggled.connect(self._emit)
         self.first_solid_chk.toggled.connect(self._emit)
         self.first_infill_cb.currentTextChanged.connect(self._emit)
         self.first_cov_spin.valueChanged.connect(self._emit)
@@ -642,6 +648,8 @@ class ControlsPanel(QWidget):
             "fill_solid": self.fill_chk.isChecked(),
             "first_layer_solid": self.first_solid_chk.isChecked(),
             "first_layer_infill": self.first_infill_cb.currentText(),
+            "zigzag_respect_radius": self.zz_radius_chk.isChecked(),
+            "fill_centre": self.centre_chk.isChecked(),
             "pa_table": self.pa_table_edit.text(),
             "track_gap": self.gap_spin.value(),
             "min_radius": self.min_r_spin.value(),
@@ -702,6 +710,8 @@ class ControlsPanel(QWidget):
             "infill_type": infill,
             "tracks_per_layer": self.tracks_spin.value(),
             "fill_solid": self.fill_chk.isChecked(),
+            "zigzag_respect_radius": self.zz_radius_chk.isChecked(),
+            "fill_centre": self.centre_chk.isChecked(),
             "first_layer_solid": self.first_solid_chk.isChecked() and not is_flat_specialty
             and shape not in REVOLVE_SHAPES,
             "first_layer_infill": (None if self.first_infill_cb.currentIndex() <= 0
@@ -816,6 +826,8 @@ class ControlsPanel(QWidget):
         _set(self.layers_spin, "layers", int)
         _set(self.tracks_spin, "tracks_per_layer", int)
         _set(self.fill_chk, "fill_solid")
+        _set(self.zz_radius_chk, "zigzag_respect_radius")
+        _set(self.centre_chk, "fill_centre")
         _set(self.first_solid_chk, "first_layer_solid")
         if "first_layer_infill" in p:
             self.first_infill_cb.blockSignals(True)

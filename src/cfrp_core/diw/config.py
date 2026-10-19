@@ -12,6 +12,39 @@ from pydantic import BaseModel, ConfigDict, ValidationError, field_validator
 from ..config import ConfigError
 
 
+class DiwLayerSpec(BaseModel):
+    """One printed ink layer of a user-set stack (DiwConfig.stack), bottom
+    first. `covers` (insulation / cover layers): under the wires only, or
+    the whole board; `level` (ink layers): wire level 1 or 2 (crossovers).
+    `height_mm` / `speed_mm_s` 0 = the usual value; `cure`: UV cure right
+    after this layer; `enabled` False = skipped."""
+    model_config = ConfigDict(frozen=True, extra="forbid")
+
+    kind: Literal["dielectric", "conductor", "encapsulation"] = "dielectric"
+    covers: Literal["wires", "board"] = "wires"
+    level: int = 1
+    fill: Literal["raster", "concentric"] = "raster"
+    angle_deg: float = 0.0
+    height_mm: float = 0.0
+    speed_mm_s: float = 0.0
+    cure: bool = False
+    enabled: bool = True
+
+    @field_validator("level")
+    @classmethod
+    def _level(cls, v):
+        if v not in (1, 2):
+            raise ValueError("An ink layer's wire level is 1 or 2.")
+        return v
+
+    @field_validator("height_mm", "speed_mm_s")
+    @classmethod
+    def _nonneg(cls, v, info):
+        if v < 0:
+            raise ValueError(f"A layer's {info.field_name.split('_')[0]} cannot be negative.")
+        return v
+
+
 class DiwConfig(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
@@ -71,6 +104,12 @@ class DiwConfig(BaseModel):
     # insulated by this many dielectric layers, reaching this far past it.
     bridge_layers: int = 2
     bridge_margin_mm: float = 0.6
+    # Insulation under the wires only (grown by the margin), or over the
+    # whole top surface of the board (minus holes and the edge).
+    insulation_coverage: Literal["wires", "board"] = "wires"
+    # The ink layers printed, bottom first, set one by one (empty = the
+    # automatic stack from the layer counts above; see slicer.layer_stack).
+    stack: tuple[DiwLayerSpec, ...] = ()
 
     @field_validator("nozzle_mm", "line_width_mm", "layer_height_mm", "speed_conductor_mm_s",
                      "speed_dielectric_mm_s", "travel_speed_mm_s", "resistivity_ohm_mm",

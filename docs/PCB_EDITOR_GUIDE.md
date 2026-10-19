@@ -107,6 +107,24 @@ Two different signals cannot touch, but one wire can jump over another:
 The printer lays the lower wires, then the insulating patches, then the
 level-2 wires, which climb gently over each patch and come back down after it.
 
+### Setting each ink layer (Layers tab)
+
+The *Layers* tab lists the ink layers in print order (top row first). With
+**Set each layer myself** off it shows what the layer counts in *Ink settings*
+give (greyed). Tick it to:
+
+- add layers (**+ Insulation**, **+ Ink**, **+ Cover**), remove them, or move
+  them earlier / later;
+- choose what each insulation or cover layer covers: **under the wires** or the
+  **whole board**, and for ink layers the wire **level** (2 = crossover wires);
+- select a row and set its fill (lines at an angle, or rings following the
+  edge), angle, height, speed, and **UV cure after this layer**;
+- untick a row to skip it without deleting it.
+
+Crossover insulation is added by itself before the first level-2 ink layer.
+To insulate the whole top of the board without editing layers, set
+*Insulation covers* to **whole board** in *Ink settings*.
+
 ### Current, parts and drying
 
 - Select a wire and give it a **Current** (A): the checks warn if it would

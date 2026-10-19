@@ -20,7 +20,7 @@ from .archimedean import archimedean_path
 from .corner_step import corner_step_path, is_rectangle
 from .fermat import fermat_spiral_path
 from .outlines import printable_boundary
-from .serpentine import oriented_serpentine
+from .serpentine import centre_fill, oriented_serpentine
 
 
 def _lane_change_length(gap, min_rad):
@@ -114,6 +114,27 @@ def _entry_route(entry_from, path, corridor, allowed=None, gap=1.0, min_rad=0.0)
     return []
 
 
+def _with_centre(path, region, gap, outward, last_pt, again=None):
+    """`path` with the hollow in its middle filled: after an inward spiral
+    ends there; or, before an outward one, starting next to where the last
+    layer ended (so the climb does not cut across the new lines), the spiral
+    re-started (`again(hint)`) where the fill ends. Not on a first layer
+    that starts in the middle (its anchor does), and not where the way in
+    would cross the new lines (that layer keeps its middle open)."""
+    if not outward:
+        return dedupe_path(list(path) + centre_fill(path, region, gap, at_end=True))
+    if last_pt is None:
+        return path
+    fill = centre_fill(path, region, gap, anchor=last_pt)
+    if not fill:
+        return path
+    spiral = (again(fill[-1]) if again is not None else None) or path
+    joined = dedupe_path(fill + list(spiral))
+    if count_crossings([tuple(last_pt)] + joined) > count_crossings([tuple(last_pt)] + list(path)):
+        return path
+    return joined
+
+
 def _crossing_count(seg, line):
     """Pieces where seg meets line, not counting their shared end path[0]."""
     hit = seg.intersection(line)
@@ -165,7 +186,7 @@ def max_track_count(base_poly, track_gap, min_radius, infill_type, include_bound
 
 def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_layer,
                    include_boundary, angle, layer_idx=0, last_pt=None, last_dir=None, lead_in=0.0,
-                   seam_turn=0.0):
+                   seam_turn=0.0, line_spacing=None, line_offset=0.0, fill_centre=False):
     """2D path for one layer of a flat part.
 
     Even layers spiral outside-in, odd layers inside-out. With
@@ -176,7 +197,12 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     previous layer ended with) lets the Fermat spiral pick the winding that
     continues it rather than reversing at the seam. `seam_turn` (laps):
     Archimedean only, twist the spiral so the layer ends that much further
-    round (seam stagger between layers).
+    round (seam stagger between layers). `line_spacing` / `line_offset`:
+    zigzags only, lines that far apart, shifted that much (turns at the bend
+    radius; see oriented_serpentine). `fill_centre`: Archimedean and
+    Corner-Step, fill the hollow the rings leave in the middle
+    (serpentine.centre_fill; not on an inside-out first layer, which starts
+    there with its anchor).
     """
     check_gap_radius(track_gap, min_radius)
     gap = track_gap
@@ -192,6 +218,11 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
                                    seam_hint=last_pt, lead_in=lead_in)
         if not path:
             return []
+        if fill_centre:
+            def again(hint):
+                return corner_step_path(base_poly, gap, min_rad, tracks_per_layer, outward=True,
+                                        seam_hint=hint)[0]
+            path = _with_centre(path, base_poly, gap, layer_idx % 2 != 0, last_pt, again)
         if last_pt:
             path = [last_pt] + path
         return path
@@ -236,6 +267,11 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             infill_path, _ = archimedean_path(
                 infill_bounds, gap, min_rad, track_count=tracks_per_layer, outer_start=last_pt,
                 seam_turn=seam_turn)
+        if fill_centre and infill_path:
+            def again(hint):
+                return archimedean_path(infill_bounds, gap, min_rad, track_count=tracks_per_layer,
+                                        start_from_inside=True, seam_hint=hint, seam_turn=seam_turn)[0]
+            infill_path = _with_centre(infill_path, infill_bounds, gap, is_outward, last_pt, again)
     elif infill_type == FERMAT:
         # Enter where the previous layer ended. (Entering diametrically
         # opposite, as before, left the jump from the previous end as a
@@ -262,7 +298,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         # regardless of the layup angle (balanced cross-ply).
         if infill_type == DIAGONAL_45:
             angle = 45.0 if layer_idx % 2 == 0 else -45.0
-        infill_path = oriented_serpentine(infill_bounds, angle, gap, min_rad, start_from_end=is_outward)
+        infill_path = oriented_serpentine(infill_bounds, angle, gap, min_rad, start_from_end=is_outward,
+                                          spacing=line_spacing, offset=line_offset)
         # Where the stroke enters the zigzag: the previous layer's end, or the
         # end of the wall loop when the wall is printed first.
         if wall_first:
@@ -271,7 +308,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             entry_from = last_pt
         if entry_from is not None and infill_path:
             # Start at the zigzag corner nearest the entry point...
-            other = oriented_serpentine(infill_bounds, angle, gap, min_rad, start_from_end=not is_outward)
+            other = oriented_serpentine(infill_bounds, angle, gap, min_rad, start_from_end=not is_outward,
+                                        spacing=line_spacing, offset=line_offset)
             candidates = [infill_path, infill_path[::-1], other, other[::-1]]
             # Distance, plus a penalty for folding the fibre back on the
             # direction it arrived with (a slightly farther corner that
@@ -294,7 +332,9 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             # On a part with holes: fewest lines crossed on the way in, then
             # the nearest corner. (A layer that ended by a hole, mid-part,
             # entered the nearest corner across the new layer's lines.)
-            holed = bool(len(getattr(wall_poly, 'interiors', ())))
+            # (also for widely spaced lines: a start corner on the last
+            # layer's end leads the climb across the first line)
+            holed = bool(len(getattr(wall_poly, 'interiors', ()))) or line_spacing is not None
             if holed:
                 (_, route), infill_path = min(((entry(p), p) for p in candidates), key=lambda e: e[0][0])
             else:

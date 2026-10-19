@@ -50,6 +50,15 @@ def cases():
     for disc, stem in itertools.product((10.0, 15.0, 30.0), (10.0, 25.0)):
         yield dict(shape="3D Overhang (Mushroom)", infill_type="N/A", disc_radius=disc, stem_height=stem,
                    base_radius=10.0)
+    # Auto (Best Fit), Fill Centre and radius-keeping zigzags
+    for shape, bnd, layers, centre, (w, h) in itertools.product(
+            FLAT, (False, True), (1, 4), (False, True), ((135.0, 25.0), (60.0, 60.0))):
+        yield dict(shape=shape, infill_type="Auto (Best Fit)", include_boundary=bnd, layers=layers,
+                   layup_seq="0, 90", fill_centre=centre, width=w, height=h)
+    for shape, inf, keep in itertools.product(FLAT, INFILLS[2:4], (True,)):
+        yield dict(shape=shape, infill_type=inf, layers=4, layup_seq="0, 90", zigzag_respect_radius=keep)
+    for shape, inf in itertools.product(FLAT, (INFILLS[0], INFILLS[4])):
+        yield dict(shape=shape, infill_type=inf, layers=4, fill_solid=True, fill_centre=True)
 
 
 def norm(msg):

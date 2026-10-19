@@ -488,3 +488,40 @@ def test_viewer_shows_mesh_problem_markers(app):
     assert not v.problems_chk.isHidden() and v.problems_chk.text() == "Problems (1)"
     v.update_scene(r.trajectory, r.target_shapes, r.max_z)
     assert v.problems_chk.isHidden()
+
+
+def test_editor_layers_tab_sets_each_ink_layer(editor):
+    from cfrp_core.diw import DiwConfig, slice_diw
+    tab = editor.layers_tab
+    # automatic: the counts' stack, greyed
+    assert not tab.custom() and tab.table.rowCount() == 3            # 2 insulation + 1 ink
+    assert not tab.table.cellWidget(0, 1).isEnabled()
+    assert editor.diw_config().stack == ()
+    editor.d_diel.setValue(3)
+    assert tab.table.rowCount() == 4                                 # follows the counts
+    # set each layer: whole-board insulation, an extra ink layer, a cured cover
+    tab.custom_chk.setChecked(True)
+    assert tab.table.cellWidget(0, 1).isEnabled()
+    tab.table.cellWidget(0, 2).setCurrentIndex(tab.table.cellWidget(0, 2).findData("board"))
+    tab.table.selectRow(tab.table.rowCount() - 1)
+    tab.add_row("conductor")
+    tab.table.selectRow(tab.table.rowCount() - 1)
+    tab.add_row("encapsulation")
+    tab.cure_chk.setChecked(True)                                    # the selected (new) layer's detail
+    cfg = editor.diw_config()
+    assert [s.kind for s in cfg.stack] == ["dielectric"] * 3 + ["conductor"] * 2 + ["encapsulation"]
+    assert cfg.stack[0].covers == "board" and cfg.stack[-1].cure
+    res = slice_diw(editor.design, cfg)
+    assert res.gcode.count("; UV cure") == 1
+    # remove and reorder
+    tab.table.selectRow(1)
+    tab.remove_row()
+    assert len(editor.diw_config().stack) == 5
+    # a saved ink setting with its stack comes back
+    editor.load_diw_config(DiwConfig())
+    assert not tab.custom()
+    editor.load_diw_config(cfg)
+    assert tab.custom() and editor.diw_config().stack == cfg.stack
+    editor.d_covers.setCurrentIndex(editor.d_covers.findData("board"))
+    assert editor.diw_config().insulation_coverage == "board"
+    editor.load_diw_config(DiwConfig())

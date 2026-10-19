@@ -11,6 +11,7 @@ from dataclasses import dataclass
 
 from .config import (
     ARCHIMEDEAN,
+    AUTO,
     CORNER_STEP,
     DIAGONAL_45,
     FERMAT,
@@ -19,7 +20,7 @@ from .config import (
     REVOLVE_SHAPES,
 )
 
-INFILL_PATTERNS = (ARCHIMEDEAN, FERMAT, ORIENTED_SERPENTINE, DIAGONAL_45, CORNER_STEP)
+INFILL_PATTERNS = (ARCHIMEDEAN, FERMAT, ORIENTED_SERPENTINE, DIAGONAL_45, CORNER_STEP, AUTO)
 SPIRALS = (ARCHIMEDEAN, FERMAT, CORNER_STEP)
 ZIGZAGS = (ORIENTED_SERPENTINE, DIAGONAL_45)
 
@@ -84,6 +85,10 @@ def infill_states(p: dict) -> dict[str, OptionState]:
     caution = _u_turn_caution(p)
     states = {}
     for name in INFILL_PATTERNS:
+        if name == AUTO:
+            states[name] = (_off("Z shells are concentric rings only (Archimedean or Fermat).")
+                            if family == "revolve" else ON)
+            continue
         if family == "revolve":
             if name == ARCHIMEDEAN:
                 states[name] = ON
@@ -170,6 +175,9 @@ def field_states(p: dict) -> dict[str, OptionState]:
                 s["fill_solid"] = _off("Zigzag patterns always fill the whole layer.")
                 s["tracks_per_layer"] = _off("Zigzag patterns fill the whole layer; the track count "
                                              "is not used.")
+            elif infill == AUTO:
+                s["fill_solid"] = _off("Auto (Best Fit) fills every layer: each pattern it tries is solid.")
+                s["tracks_per_layer"] = _off("Auto (Best Fit) fills every layer; the track count is not used.")
             else:
                 s["fill_solid"] = ON
                 s["tracks_per_layer"] = (_off("Fill Solid lays as many tracks as fit.") if fill else ON)
@@ -194,6 +202,14 @@ def field_states(p: dict) -> dict[str, OptionState]:
         s["first_layer_min_coverage"] = ON
         s["solid_bottom_layers"] = ON
         s["solid_top_layers"] = ON
+    rings = (infill in (ARCHIMEDEAN, CORNER_STEP, AUTO)
+             or p.get("first_layer_infill") in (ARCHIMEDEAN, CORNER_STEP, AUTO))
+    s["fill_centre"] = (ON if rings and family in ("flat", "stl")
+                        else _off("Only for Archimedean and Corner-Step on flat and STL parts (the rings "
+                                  "leave the middle open; zigzags fill it anyway)."))
+    zz = (infill in (*ZIGZAGS, AUTO) or p.get("first_layer_infill") in (*ZIGZAGS, AUTO)) and family in ("flat", "stl")
+    s["zigzag_respect_radius"] = (ON if zz else _off("Only for zigzag patterns (Oriented Serpentine, "
+                                                      "45° Diagonal Hatch) on flat and STL parts."))
     for key in ("stl_closing_radius", "stl_stitch"):
         s[key] = ON if family == "stl" else stl_only
 
@@ -226,9 +242,9 @@ def field_states(p: dict) -> dict[str, OptionState]:
         s["seam_stagger"] = ON
     elif shape == SQUARE_TUBE:
         s["seam_stagger"] = _off("The square tube keeps its seam on a straight side.")
-    elif family == "flat" and infill == ARCHIMEDEAN and layers > 1:
+    elif family == "flat" and infill in (ARCHIMEDEAN, AUTO) and layers > 1:
         s["seam_stagger"] = ON
-    elif family == "flat" and infill == ARCHIMEDEAN:
+    elif family == "flat" and infill in (ARCHIMEDEAN, AUTO):
         s["seam_stagger"] = _off("Only one layer: there are no layer seams to stagger.")
     else:
         s["seam_stagger"] = _off("Only for round Z shells and flat Archimedean parts (it twists the "

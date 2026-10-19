@@ -57,7 +57,7 @@ def test_crossover_prints_a_bridge_and_climbs_over_it():
 
 def test_conformal_z_ramps_up_before_a_step():
     from shapely.geometry import box
-    pts, z = conformal_z([(0, 0), (10, 0)], [(box(5, -1, 10, 1), 2)], 1.0, 0.25, step=0.25)
+    pts, z = conformal_z([(0, 0), (10, 0)], [(box(5, -1, 10, 1), 2 * 0.25)], 1.0, step=0.25)
     z = np.array(z)
     assert z[0] == pytest.approx(1.0) and z[-1] == pytest.approx(1.5)
     x = np.array([p[0] for p in pts])
@@ -137,3 +137,53 @@ def test_router_uses_a_crossover_only_when_needed():
     assert res.regions["crossover"].area > 0
     assert math.isclose(max(p["z"] for p in res.trajectory if p["extruding"] and p["feature"] == "conductor"),
                         (2 + 1 + 2 + 1) * DiwConfig().layer_height_mm)
+
+
+# --- Phase 42: insulation over the whole board, a user-set layer stack -------------------
+
+def test_insulation_can_cover_the_whole_board():
+    from cfrp_core.diw.design import board_polygon
+    d = example_board()
+    wires = slice_diw(d, DiwConfig())
+    whole = slice_diw(d, DiwConfig(insulation_coverage="board"))
+    board = board_polygon(d)
+    assert whole.regions["dielectric"].area > 0.9 * board.area
+    assert whole.regions["dielectric"].area > 2.0 * wires.regions["dielectric"].area
+    assert not any("inside the insulation" in m for m in whole.validation["messages"])
+
+
+def test_each_ink_layer_can_be_set():
+    from cfrp_core.diw import DiwLayerSpec
+    stack = (DiwLayerSpec(kind="dielectric", covers="board", angle_deg=30.0),
+             DiwLayerSpec(kind="dielectric", covers="wires", fill="concentric", height_mm=0.15),
+             DiwLayerSpec(kind="conductor", level=1, height_mm=0.4, speed_mm_s=3.0),
+             DiwLayerSpec(kind="encapsulation", covers="wires", enabled=False),
+             DiwLayerSpec(kind="encapsulation", covers="board", cure=True))
+    cfg = DiwConfig(stack=stack, layer_height_mm=0.25)
+    res = slice_diw(example_board(), cfg)
+    ink = [p for p in res.trajectory if p["extruding"]]
+    order = []
+    for p in ink:
+        if not order or order[-1][0] != p["layer"]:
+            order.append((p["layer"], p["feature"]))
+    assert [f for _, f in order] == ["dielectric", "dielectric", "conductor", "encapsulation"]
+    tops = {layer: max(p["z"] for p in ink if p["layer"] == layer) for layer, _ in order}
+    assert [round(tops[layer], 3) for layer, _ in order] == [0.25, 0.4, 0.8, 1.05]       # heights add up
+    assert {p["v"] for p in ink if p["feature"] == "conductor"} == {3.0}
+    assert res.gcode.count("; UV cure") == 1                                          # after the cover only
+    # the first insulation layer is rastered at 30 degrees
+    first = [(p["x"], p["y"]) for p in ink if p["layer"] == order[0][0]]
+    seg = np.diff(np.array(first[:40]), axis=0)
+    seg = seg[np.hypot(*seg.T) > 3.0]
+    ang = np.degrees(np.arctan2(seg[:, 1], seg[:, 0])) % 180.0
+    assert np.any(np.abs(ang - 30.0) < 1.0)
+    assert res.validation["status"] != "Fail"
+
+
+def test_stack_without_ink_for_a_level_is_an_error():
+    from cfrp_core.diw import DiwLayerSpec
+    only_insulation = DiwConfig(stack=(DiwLayerSpec(kind="dielectric"),))
+    assert any("prints no ink at wire level 1" in m for m in drc(example_board(), only_insulation)["messages"])
+    level1_only = DiwConfig(stack=(DiwLayerSpec(kind="dielectric"), DiwLayerSpec(kind="conductor", level=1)))
+    msgs = drc(_crossing_board(), level1_only)["messages"]
+    assert any("prints no ink at wire level 2" in m for m in msgs)

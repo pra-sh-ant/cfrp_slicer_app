@@ -65,6 +65,8 @@ PERTURB = {
     "first_layer_min_coverage": lambda p: 0.5,
     "solid_bottom_layers": lambda p: 2,
     "solid_top_layers": lambda p: 2,
+    "zigzag_respect_radius": lambda p: not p.get("zigzag_respect_radius", False),
+    "fill_centre": lambda p: not p.get("fill_centre", False),
     "stl_closing_radius": lambda p: 0.3,
     "stl_stitch": lambda p: 1.0,
 }
@@ -100,6 +102,7 @@ SETUPS = {
     "rect_serp_2layers": {"infill_type": ORIENTED_SERPENTINE, "layers": 2, "layup_seq": "0, 90"},
     "rect_hatch_2layers": {"infill_type": DIAGONAL_45, "layers": 2},
     "rect_fermat_fill": {"infill_type": FERMAT, "fill_solid": True},
+    "rect_auto_2layers": {"infill_type": "Auto (Best Fit)", "layers": 2, "layup_seq": "0, 90"},
     "circle_arch": {"shape": "Circle", "width": 40.0, "height": 40.0},
     "rect_pa_table": {"pa_table": "5:2.0, 10:3.0"},
     "cylinder": {"shape": "Hollow Cylinder (Z)", "tracks_per_layer": 2},

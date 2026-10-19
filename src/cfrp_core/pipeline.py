@@ -7,7 +7,7 @@ from dataclasses import dataclass
 import shapely
 from shapely.affinity import translate
 
-from .config import ARCHIMEDEAN, CORNER_STEP, FERMAT, ProcessConfig
+from .config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT, ORIENTED_SERPENTINE, ProcessConfig
 from .constraints import resolve_process_constraints
 from .coverage import coverage_summary, layer_coverage
 from .gcode import compile_gcode
@@ -86,7 +86,7 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     elif g.is_specialty:
         trajectory, target_shapes, max_z = specialty_shape(cfg), [], None
     else:
-        trajectory, target_shapes, max_z = build_flat_laminate(cfg)
+        trajectory, target_shapes, max_z, part_info = build_flat_laminate(cfg)
 
     info = list(part_info)
     lh, sod = float(cfg.layer_height_mm), float(cfg.z_offset_mm)
@@ -127,7 +127,8 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
         max_z = max((pt['z'] for pt in trajectory), default=float(cfg.z_offset_mm))
 
     stats = _compute_stats(trajectory, cfg, target_shapes)
-    if g.shape == "STL Import" and stats.get("worst_coverage", 1.0) < 0.5:
+    sparse = bool(cfg.zigzag_respect_radius) and cfg.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45)
+    if g.shape == "STL Import" and stats.get("worst_coverage", 1.0) < 0.5 and not sparse:
         if cfg.fill_solid:
             cause = ("even with Fill Solid: parts of the slices are narrower than the bend radius "
                      "allows. Reduce Min Bend Radius or Track Gap to reach them.")

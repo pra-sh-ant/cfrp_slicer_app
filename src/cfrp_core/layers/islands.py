@@ -32,7 +32,8 @@ def _ring_loop(island, gap, r_min, cursor):
     return ring_from(wall, wall_seam(wall, cursor))
 
 
-def island_path(island, config: ProcessConfig, angle, layer_idx, cursor, fallbacks=None):
+def island_path(island, config: ProcessConfig, angle, layer_idx, cursor, fallbacks=None, spacing=None,
+                offset=0.0):
     """Path for one island of a multi-island slice that enters AND leaves on
     the island's perimeter, so the connector to the next island never
     crosses track already laid. Spiral infills use the Fermat double spiral
@@ -54,7 +55,7 @@ def island_path(island, config: ProcessConfig, angle, layer_idx, cursor, fallbac
         return path
     if config.infill_type == DIAGONAL_45:
         angle = 45.0 if layer_idx % 2 == 0 else -45.0
-    path = geo.oriented_serpentine(island, angle, gap, r_min)
+    path = geo.oriented_serpentine(island, angle, gap, r_min, spacing=spacing, offset=offset)
     if cursor is not None and len(path) > 1:
         d0 = math.hypot(path[0][0] - cursor[0], path[0][1] - cursor[1])
         d1 = math.hypot(path[-1][0] - cursor[0], path[-1][1] - cursor[1])
@@ -96,7 +97,8 @@ def _straight(p0, p1, step=_CONNECTOR_STEP_MM):
     return [(p0[0] + (p1[0] - p0[0]) * k / n, p0[1] + (p1[1] - p0[1]) * k / n) for k in range(1, n + 1)]
 
 
-def multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_pt, fallbacks=None):
+def multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_pt, fallbacks=None, spacing=None,
+                       offset=0.0):
     """One stroke over every island: nearest island first, each filled from
     a port on its perimeter, joined by straight connectors (fibre bridges)
     densified to the usual point spacing so bridges can be flagged."""
@@ -115,7 +117,7 @@ def multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_pt
     path = [last_pt] if last_pt is not None else []
     while True:
         remaining.remove(island)
-        sub = island_path(island, config, angle, layer_idx, cursor, fallbacks)
+        sub = island_path(island, config, angle, layer_idx, cursor, fallbacks, spacing, offset)
         if sub:
             if path:
                 path.extend(_straight(path[-1], sub[0]))

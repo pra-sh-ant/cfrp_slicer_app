@@ -10,10 +10,11 @@ import numpy as np
 from shapely.ops import unary_union
 
 from .. import geometry as geo
-from ..config import ARCHIMEDEAN, CORNER_STEP, FERMAT, ProcessConfig
+from ..config import ARCHIMEDEAN, AUTO, CORNER_STEP, FERMAT, ProcessConfig
 from ..geometry._common import enforce_min_radius_clear, hole_keepouts
 from ..geometry.mesh_slicer import islands as mesh_islands
 from ..geometry.mesh_slicer import load_stl, open_edges, slice_mesh_regions
+from . import auto
 from .common import (
     KinematicsParams,
     _end_direction,
@@ -26,6 +27,7 @@ from .common import (
 from .islands import flag_bridges, multi_island_layer
 from .planning import (
     _ZIGZAGS,
+    ZigzagShifts,
     _fill_track_count,
     _points_within,
     plan_layers,
@@ -35,7 +37,7 @@ from .planning import (
 
 
 def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, last_dir=None,
-                    fallbacks=None, lead_in=0.0):
+                    fallbacks=None, lead_in=0.0, spacing=None, offset=0.0):
     """2D path for one sliced layer. A lone island goes through the normal
     flat-laminate generator. Where the chosen pattern cannot work on this
     slice it falls back instead of dropping the layer (each counted in
@@ -46,7 +48,7 @@ def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, l
     if fallbacks is None:
         fallbacks = Counter()
     if len(islands) > 1:
-        return multi_island_layer(islands, config, angle, layer_idx, last_pt, fallbacks)
+        return multi_island_layer(islands, config, angle, layer_idx, last_pt, fallbacks, spacing, offset)
     poly = islands[0]
     gap, r_min = config.track_gap_mm, config.min_radius_mm
     pattern = config.infill_type
@@ -61,6 +63,7 @@ def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, l
             poly, gap, r_min, kind, count, config.geometry.include_boundary,
             angle, layer_idx=layer_idx, last_pt=last_pt, last_dir=last_dir,
             lead_in=lead_in if kind in (ARCHIMEDEAN, CORNER_STEP) else 0.0,
+            line_spacing=spacing, line_offset=offset, fill_centre=config.fill_centre,
         )
 
     if pattern == ARCHIMEDEAN:
@@ -201,6 +204,8 @@ def build_stl_laminate(config: ProcessConfig):
              if bottom or top else [False] * len(slices))
     plans, first = [], None
     variants = {}
+    shifts = ZigzagShifts(config)
+    decided, chosen = {}, []                       # Auto: (parity, angle, outline) -> (pattern, angle)
 
     def layer_config(plan):
         """config with this layer's pattern and fill (cached per pair)."""
@@ -232,10 +237,47 @@ def build_stl_laminate(config: ProcessConfig):
             first = i
             plans = plan_layers(config, len(slices) - i, skins[i:], offset=i)
         plan = plans[i - first]
+        lead = plan.lead_in if len(islands) == 1 else 0.0
         try:
-            lead = plan.lead_in if len(islands) == 1 else 0.0
-            raw_path = _stl_layer_path(islands, layer_config(plan), current_angle, plan.index, last_pt, last_dir,
-                                       fallbacks, lead_in=lead)
+            if plan.pattern == AUTO:
+                # Auto fills every slice; a slice like one already judged
+                # (same outline, direction, angle) gets the same pattern.
+                region = unary_union(islands)
+                sig = (plan.index % 2, round(current_angle % 180.0, 3), len(islands),
+                       round(region.area), tuple(round(b) for b in region.bounds),
+                       sum(len(getattr(p, 'interiors', ())) for p in islands))
+                holes = [h.buffer(-0.1) for p in islands for h in hole_keepouts(p)]
+
+                def generate(pattern, angle, peek=False, plan=plan, islands=islands, last_pt=last_pt,
+                             last_dir=last_dir):
+                    sp, off = shifts.next(pattern, plan.index, angle, peek=peek)
+                    cfg = variants.setdefault((pattern, True), config.model_copy(
+                        update=dict(infill_type=pattern, fill_solid=True)))
+                    return _stl_layer_path(islands, cfg, angle, plan.index, last_pt, last_dir, Counter(),
+                                           lead_in=0.0, spacing=sp, offset=off)
+                reused = None
+                if sig in decided:
+                    pattern, angle, cov = decided[sig]
+                    path = generate(pattern, angle, peek=True)
+                    m = auto.measure(path, region, holes, gap, r_min, last_pt) if path else None
+                    if m is not None and m[2] == 0 and m[0] >= cov - 0.03:
+                        shifts.next(pattern, plan.index, angle)
+                        raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0)
+                        chosen.append((i + 1, reused))
+                if reused is None:
+                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, peek=True),
+                                                   auto.candidates_for(region, current_angle), region, holes,
+                                                   gap, r_min, last_pt)
+                    if choice is None:
+                        continue
+                    shifts.next(choice.pattern, plan.index, choice.angle)
+                    decided[sig] = (choice.pattern, choice.angle, choice.coverage)
+                    chosen.append((i + 1, choice))
+                lead = 0.0
+            else:
+                spacing, offset = shifts.next(plan.pattern, plan.index, current_angle)
+                raw_path = _stl_layer_path(islands, layer_config(plan), current_angle, plan.index, last_pt,
+                                           last_dir, fallbacks, lead_in=lead, spacing=spacing, offset=offset)
         except ValueError:
             continue
         if not raw_path:
@@ -286,4 +328,6 @@ def build_stl_laminate(config: ProcessConfig):
         if summary:
             info.append(summary)
     info.extend(dict.fromkeys(p.note for p in plans if p.note))
+    if chosen:
+        info.append(auto.summary(chosen))
     return trajectory, target_shapes, max_z, warnings, info, markers

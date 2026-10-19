@@ -29,6 +29,7 @@ class TrajectoryPoint(TypedDict):
     comment: NotRequired[str]         # G-code comment (calibration coupons)
     # DIW points:
     feature: NotRequired[str]         # dielectric | conductor | crossover | encapsulation | travel
+    cure_after: NotRequired[bool]     # DIW: UV cure once this layer is printed
     extruding: NotRequired[bool]
     width: NotRequired[float]
     height: NotRequired[float]
@@ -37,7 +38,8 @@ class TrajectoryPoint(TypedDict):
 REQUIRED = ("x", "y", "z", "dist", "v")
 KNOWN = set(TrajectoryPoint.__annotations__)
 _NUMERIC = {"x", "y", "z", "dist", "v", "e_mult", "z_layer", "width", "height"}
-_BOOL = {"layer_start", "is_transition", "pump_floored", "cure_dwell", "is_bridge", "is_anchor", "extruding"}
+_BOOL = {"layer_start", "is_transition", "pump_floored", "cure_dwell", "is_bridge", "is_anchor", "extruding",
+         "cure_after"}
 DIW_FEATURES = {"dielectric", "conductor", "crossover", "encapsulation", "travel"}
 
 
