@@ -5,6 +5,25 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Changed / Fixed (Phase 35 — easy PCB editor, drag/drop/rotate, true bead width)
+- PCB editor has **Easy** (default) and **Advanced** modes. Easy is six numbered
+  steps in plain words: board size + Make board, 4 corner holes, a parts list to
+  drag onto the board, Draw wire with three width presets, move/rotate, check &
+  print (print mode + Slice board); the DIW process uses defaults and a "How to"
+  guide replaces it. Advanced keeps every tool and setting. A hint line under the
+  canvas says what the current tool expects.
+- **Drag and drop** parts from the list onto the board; **live preview** while
+  dragging; **rotate** the selection 90° (R / Shift+R or buttons); a placed
+  footprint's pads select, move, rotate and delete as one part (labelled R1, D1…).
+  Wires drawn without a net take the net of the pad they start on (or a new one).
+  Palette includes sensors (strain gauge, heater, touch/humidity electrodes, coil).
+  Editing logic is UI-free and tested (`cfrp_core.diw.edit`).
+- **Bead width fixed in the viewer**: the bead was drawn as wide as Track Gap
+  (the spacing, 1.2 mm) and the resin coat wider still; it is now the needle
+  diameter (capped at the spacing), with the dry fibre tow inside at ~half that
+  width. Outside Feature colours the full bead is drawn.
+- Guide for designing a structural PCB in plain language: `docs/PCB_EDITOR_GUIDE.md`.
+
 ### Added / Fixed (Phase 34 — first layer, print modes, every setting tunable, plain-language help, viewer colours)
 - **First layer**: `first_layer_solid` lays the first layer with as many tracks as fit;
   `first_layer_infill` picks its pattern (a spiral reaches 90-99 % on compact parts,

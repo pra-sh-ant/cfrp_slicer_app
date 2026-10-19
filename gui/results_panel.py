@@ -253,7 +253,10 @@ class ViewerTab(QWidget):
     def update_view(self, trajectory, target_shapes, max_z, config=None, extra=None):
         kw = {}
         if config is not None:
-            kw = dict(bead_width=float(config.track_gap_mm), bead_height=float(config.layer_height_mm),
+            # The laid bead is about as wide as the needle (never wider than
+            # the track spacing); Track Gap is the spacing, not the width.
+            bead = min(float(config.material.needle_dia_mm), float(config.track_gap_mm))
+            kw = dict(bead_width=bead, bead_height=float(config.layer_height_mm),
                       r_min=float(config.min_radius_mm))
         self._viewer.update_scene(trajectory, target_shapes, max_z, extra=extra, **kw)
 

@@ -580,7 +580,14 @@ class ViewerGL(QWidget):
                 self._view.removeItem(item)
         self._tube = self._resin = self._lines = self._travel = None
         sides = tm.sides_for(len(data))
-        self._mesh = tm.tube_mesh(data, sides=sides)
+        # With the resin coat on, the coloured tube is the fibre tow inside
+        # the resin bead; otherwise it is the whole bead.
+        self._core_mode = self._resin_wanted()
+        if self._core_mode:
+            self._mesh = tm.tube_mesh(data, sides=sides, width_scale=tm.FIBRE_CORE[0],
+                                      height_scale=tm.FIBRE_CORE[1])
+        else:
+            self._mesh = tm.tube_mesh(data, sides=sides, width_scale=0.95, height_scale=0.95)
         rgb, legend = tm.mode_colors(self.mode_cb.currentText(), data, self._r_min)
         self.legend.set_legend(legend)
         self._tube = ToolpathItem()
@@ -590,7 +597,7 @@ class ViewerGL(QWidget):
         if (data.tool == 0).any():
             import dataclasses
             fibre_only = dataclasses.replace(data, breaks=data.breaks | (data.tool != 0))
-            resin_mesh = tm.tube_mesh(fibre_only, sides=sides, width_scale=1.08, height_scale=1.12)
+            resin_mesh = tm.tube_mesh(fibre_only, sides=sides, width_scale=1.0, height_scale=1.0)
             col = np.tile(np.array(tm.RESIN, dtype=np.float32), (len(data), 1))
             col[data.tool != 0] = 0.0
             self._resin = ToolpathItem(alpha=0.33)
@@ -613,6 +620,10 @@ class ViewerGL(QWidget):
             and self._data is not None and not (self._data.tool != 0).any()
 
     def _recolor(self, *_):
+        if self._data is not None and self._view is not None and                 getattr(self, "_core_mode", None) is not None and self._core_mode != self._resin_wanted():
+            self._build_meshes()            # core <-> full-bead tube
+            self._apply_range()
+            return
         if self._resin is not None:
             self._resin.setVisible(self._resin_wanted())
         if self._data is None or self._tube is None:

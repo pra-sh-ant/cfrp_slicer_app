@@ -53,6 +53,7 @@ FEATURES = (
     ("end", "End of path", (0.98, 0.20, 0.55)),
 )
 RESIN = (0.96, 0.72, 0.36)          # resin coat drawn round the fibre (Feature mode)
+FIBRE_CORE = (0.48, 0.62)           # dry tow inside the resin bead: share of bead width, height
 END_MM = 10.0                       # the last END_MM of the fibre are "End of path"
 FEATURE_INDEX = {key: i for i, (key, _, _) in enumerate(FEATURES)}
 TOOLS = (("Fibre head", (0.95, 0.56, 0.20)), ("DIW head", (0.80, 0.84, 0.95)))
@@ -297,8 +298,9 @@ def tube_mesh(data: ToolpathData, sides=8, width_scale=0.86, height_scale=0.9) -
     hh = (data.height.astype(np.float64) * height_scale / 2.0)[:, None]
     ang = 2.0 * np.pi * np.arange(sides) / sides
     ca, sa = np.cos(ang)[None, :, None], np.sin(ang)[None, :, None]
-    # Centre the bead half a height below the nozzle tip point.
-    centre = xyz - nup * hh
+    # Every tube (resin bead, fibre core inside it) is centred half a BEAD
+    # height below the nozzle point, whatever its own scale.
+    centre = xyz - nup * (data.height.astype(np.float64) / 2.0)[:, None]
     offs = ca * (hw[:, None] * side[:, None, :]) + sa * (hh[:, None] * nup[:, None, :])
     verts = (centre[:, None, :] + offs).reshape(-1, 3)
     nrm = ca * (side[:, None, :] / hw[:, None]) + sa * (nup[:, None, :] / hh[:, None])

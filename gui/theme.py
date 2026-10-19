@@ -45,6 +45,9 @@ QTabBar::tab { background: #1c1c2c; border: 1px solid #2e2e46; padding: 5px 14px
                border-top-left-radius: 4px; border-top-right-radius: 4px; }
 QTabBar::tab:selected { background: #26263e; color: #e4e6ff; border-bottom: 2px solid %(accent)s; }
 
+QGroupBox#step { border: 1px solid #2e3350; border-radius: 6px; margin-top: 14px; padding: 6px 6px 6px 6px;
+                 font-weight: bold; color: #b9c2f0; }
+QGroupBox#step::title { subcontrol-origin: margin; left: 8px; top: 2px; }
 QListWidget#issues { background: #171724; border: 1px solid #2a2a40; border-radius: 4px; }
 QListWidget#issues::item { padding: 3px 4px; }
 QListWidget#issues::item:hover { background: #20203a; }

@@ -167,3 +167,48 @@ def test_board_print_modes(mode):
         assert "DIW" not in r.gcode
     with pytest.raises(ValueError, match="Print mode"):
         slice_structural_board(example_board(), ProcessConfig(), DiwConfig(), mode="both")
+
+
+# --- editing operations (easy editor) ----------------------------------------------
+
+def test_part_moves_and_rotates_as_one():
+    from cfrp_core.diw import edit as ed
+    d = BoardDesign()
+    d, sel = ed.place(d, "led", 30, 20)
+    assert sel == ("part", "D1") and len(ed.part_pads(d, "D1")) == 2
+    r = ed.transform(d, sel, angle_deg=90)
+    xs = sorted(round(p.x, 6) for p in r.pads)
+    ys = sorted(round(p.y, 6) for p in r.pads)
+    assert xs == [30.0, 30.0] and ys == [18.5, 21.5]          # pads now stacked vertically
+    assert all(p.angle_deg == 90 for p in r.pads)
+    m = ed.transform(r, sel, dx=5, dy=-2)
+    assert ed.centre(m, sel) == pytest.approx((35.0, 18.0))
+    assert ed.delete(m, sel).pads == ()
+    assert ed.pick(m, 35, 19.5) == sel
+
+
+def test_wire_takes_the_net_of_the_pad_it_starts_on():
+    from cfrp_core.diw import edit as ed
+    d = BoardDesign(pads=(Pad(x=10, y=10, net="VCC"), Pad(x=30, y=10)))
+    d2, net = ed.auto_net(d, [(10, 10), (30, 10)])
+    assert net == "VCC" and d2.pads[1].net == "VCC"
+    d3, net2 = ed.auto_net(BoardDesign(pads=(Pad(x=10, y=10), Pad(x=30, y=10))), [(10, 10), (30, 10)])
+    assert net2 == "N1" and {p.net for p in d3.pads} == {"N1"}
+
+
+def test_every_palette_part_places_cleanly():
+    from cfrp_core.diw import edit as ed
+    d = BoardDesign(outline=((0, 0), (120, 0), (120, 90), (0, 90)))
+    for k, key in enumerate(ed.PALETTE):
+        d, _ = ed.place(d, key, 15 + (k % 4) * 28, 15 + (k // 4) * 28)
+    assert drc(d, DiwConfig())["status"] == "Pass"
+    assert ed.next_ref(d, "D") == "D2"
+
+
+def test_easy_board_and_corner_holes():
+    from cfrp_core.diw import edit as ed
+    d = BoardDesign(outline=ed.rectangle_outline(80, 50, 6.0))
+    d = ed.corner_holes(ed.corner_holes(d))          # twice: no duplicates
+    assert len(d.holes) == 4 and (d.holes[0].x, d.holes[0].y) == (5.0, 5.0)
+    from shapely.geometry import Polygon
+    assert Polygon(d.outline).area < 80 * 50 and Polygon(d.outline).exterior.is_ccw

@@ -58,8 +58,11 @@ def test_tube_mesh_layout():
     assert np.allclose(np.linalg.norm(m.normals, axis=1), 1.0, atol=1e-4)
     first, count = m.face_range(10, 20)
     assert first == 10 * 16 and count == 9 * 16
-    # bead centre half a bead height below the nozzle point
-    assert m.vertices[:, 2].max() == pytest.approx(0.2, abs=1e-5)
+    # bead centred half a bead height below the nozzle point (0.2 - 0.1)
+    z = m.vertices[:, 2]
+    assert (z.max() + z.min()) / 2 == pytest.approx(0.1, abs=1e-5)
+    core = tube_mesh(d, sides=8, width_scale=0.48, height_scale=0.62)
+    assert (core.vertices[:, 2].max() + core.vertices[:, 2].min()) / 2 == pytest.approx(0.1, abs=1e-5)
 
 
 def test_travel_segments_have_no_bead():

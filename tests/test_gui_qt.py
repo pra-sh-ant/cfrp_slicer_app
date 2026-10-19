@@ -230,3 +230,32 @@ def test_every_setting_has_plain_help(panel):
     for key in panel._rows:
         assert len(HELP.get(key, "")) > 20, key
     assert all(len(v) > 20 for v in DIW_HELP.values())
+
+
+def test_easy_mode_drop_rotate_move_and_wire(editor):
+    from PySide6.QtCore import Qt
+    assert not editor.advanced and editor.diw_box.isHidden() and not editor.guide_box.isHidden()
+    editor.new_design()
+    editor.e_w.setValue(70)
+    editor.e_h.setValue(45)
+    editor.make_board()
+    assert max(x for x, _ in editor.design.outline) == pytest.approx(70)
+    editor._drop("resistor", 20, 20)                  # drag-and-drop from the parts list
+    assert editor._sel == ("part", "R1")
+    editor._key(Qt.Key_R)                              # R rotates 90°
+    assert all(p.angle_deg == 90 for p in editor.design.pads)
+    editor._press(20, 21, Qt.LeftButton)               # grab the part ...
+    editor._move(30, 26, True)                         # ... live preview while dragging
+    assert editor._preview is not None
+    editor._release(30, 26)
+    assert editor._preview is None
+    from cfrp_core.diw import edit as ed
+    assert ed.centre(editor.design, ("part", "R1")) == pytest.approx((30.0, 25.0))
+    editor._drop("led", 50, 25)
+    editor.set_tool("trace")
+    editor._press(30, 26.5, Qt.LeftButton)
+    editor._press(48.5, 25, Qt.LeftButton)
+    editor._finish()
+    assert editor.design.traces[-1].net == "N1" and editor.design.traces[-1].width_mm == 1.0
+    editor.set_advanced(True)
+    assert not editor.diw_box.isHidden() and editor.guide_box.isHidden()
