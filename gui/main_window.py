@@ -47,6 +47,9 @@ _DEFAULTS = {
     "p_advance": 3.0, "pump_stall_floor": 5.0, "transition_angle": 30.0,
     "seam_trim_length": 3.0, "anchor_length": 15.0, "min_radius": 3.0,
     "v_z": 2.0, "v_overhang": 5.0, "dwell": 1.5, "fill_solid": False,
+    "first_layer_solid": True, "first_layer_infill": "Same as other layers", "first_layer_min_coverage": 0.0,
+    "stl_closing_radius": 0.049, "stl_stitch": 5.0,
+    "bed_x": 180.0, "bed_y": 220.0, "z_max": 200.0, "bed_margin": 1.0,
     "uv": 225, "purge_e": 15.0, "purge_f": 60.0, "travel_f": 600.0,
 }
 
@@ -225,6 +228,10 @@ class MainWindow(QMainWindow):
         self._busy.setVisible(True)
 
         board = self._board if params.get("shape") == "Custom Outline" else None
+        machine = self._controls.get_machine()
+        if machine != self._machine:
+            self._machine = machine
+            self._results.viewer.set_machine(machine)
         self._worker = SlicerWorker(params, layup, self._machine, board=board)
         self._worker.finished.connect(self._on_finished)
         self._worker.failed.connect(self._on_failed)
@@ -242,13 +249,13 @@ class MainWindow(QMainWindow):
 
     def _board_changed(self, design):
         if self._board is not None:
-            self._board = (design, self._editor.diw_config())
+            self._board = (design, self._editor.diw_config(), self._editor.print_mode())
 
-    def _slice_board(self, design, diw_cfg):
+    def _slice_board(self, design, diw_cfg, mode="structural"):
         """Editor -> slicer: the outline becomes the Custom Outline part and
         the ink is sliced on top of it."""
         from cfrp_core.diw import hole_outlines
-        self._board = (design, diw_cfg)
+        self._board = (design, diw_cfg, mode)
         self._controls.set_custom_outline(design.outline, hole_outlines(design), design.name)
         self._modes.setCurrentIndex(0)
         self._slice()
@@ -256,38 +263,57 @@ class MainWindow(QMainWindow):
     def _on_finished(self, result):
         self._busy.setVisible(False)
         self._cancel_btn.setVisible(False)
+        ink = 0
         if hasattr(result, "diw"):
+            ink = len(result.diw.trajectory) if result.diw is not None else 0
+            top = max((p["z"] for p in result.diw.trajectory), default=0.0) if result.diw else 0.0
             result = self._show_board(result)
+            top = max(top, result.max_z)
         else:
             self._results.update(result)
+            top = result.max_z
         n = len(result.trajectory)
         v = result.validation["status"]
-        self._status_lbl.setText(
-            f"{n:,} points · {result.max_z:.2f} mm tall · {v}"
-        )
+        parts = ([f"{n:,} fibre points"] if n else []) + ([f"{ink:,} ink points"] if ink else [])
+        self._status_lbl.setText(f"{' + '.join(parts) or 'nothing'} · {top:.2f} mm tall · {v}")
 
     def _show_board(self, board):
-        """Show a structural PCB result: fibre + ink in one view, merged
-        checks, combined G-code. Returns the fibre result with those merged."""
+        """Show a structural PCB result (fibre and/or ink in one view, merged
+        checks, one G-code). Returns the result shown as the main one."""
         import dataclasses
+
+        from cfrp_core import from_legacy_dict
 
         from .toolpath_mesh import from_trajectory
         fibre, diw = board.fibre, board.diw
+        if fibre is None:      # electronics only: a fibre-less stand-in for the panels
+            from cfrp_core.pipeline import SliceResult
+            cfg = from_legacy_dict(self._controls.get_params(), layup=self._controls.get_layup())
+            top = max((p["z"] for p in diw.trajectory), default=0.0)
+            fibre = SliceResult(config=cfg, trajectory=[], target_shapes=[], gcode=board.gcode,
+                                validation={"status": "Pass", "messages": []}, max_z=top,
+                                constraint_notes=(), info=("Electronics only: no fibre is printed.",),
+                                stats={})
         rank = {"Pass": 0, "Warning": 1, "Fail": 2}
-        status = max(fibre.validation["status"], diw.validation["status"], key=rank.get)
+        statuses = [fibre.validation["status"]] + ([diw.validation["status"]] if diw else [])
+        status = max(statuses, key=rank.get)
         msgs = [m for m in fibre.validation["messages"] if not m.startswith("✅")]
-        msgs += [f"DIW: {m}" for m in diw.validation["messages"] if not m.startswith("DRC passed")]
+        if diw is not None:
+            msgs += [f"DIW: {m}" for m in diw.validation["messages"] if not m.startswith("DRC passed")]
         if not msgs:
-            msgs = ["✅ Fibre and DIW checks passed."]
+            msgs = ["✅ All checks passed."]
         merged = dataclasses.replace(fibre, validation={"status": status, "messages": msgs}, gcode=board.gcode)
-        st = diw.stats
-        rows = [("─" * 20, ""), ("DIW ink", ", ".join(f"{k} {v / 1000:.2f} m" for k, v in st["ink_length_mm"].items())),
-                ("DIW volume", ", ".join(f"{k} {v:.1f} mm³" for k, v in st["ink_volume_mm3"].items())),
-                ("DIW time", f"{st['print_time_s'] / 60:.1f} min, {st['starts']} ink starts"),
-                ("Board origin", f"X {board.offset[0]:.2f}  Y {board.offset[1]:.2f} mm")]
-        rows += [(f"R {t['name']}", f"{t['resistance_ohm'] * 1000:.1f} mΩ  ({t['length_mm']:.1f} mm)")
-                 for t in diw.validation["traces"]]
-        extra = from_trajectory(diw.trajectory, tool=1)
+        rows, extra = [("Print mode", board.mode)], None
+        if diw is not None:
+            st = diw.stats
+            rows += [("─" * 20, ""),
+                     ("DIW ink", ", ".join(f"{k} {v / 1000:.2f} m" for k, v in st["ink_length_mm"].items())),
+                     ("DIW volume", ", ".join(f"{k} {v:.1f} mm³" for k, v in st["ink_volume_mm3"].items())),
+                     ("DIW time", f"{st['print_time_s'] / 60:.1f} min, {st['starts']} ink starts"),
+                     ("Board origin", f"X {board.offset[0]:.2f}  Y {board.offset[1]:.2f} mm")]
+            rows += [(f"R {t['name']}", f"{t['resistance_ohm'] * 1000:.1f} mΩ  ({t['length_mm']:.1f} mm)")
+                     for t in diw.validation["traces"]]
+            extra = from_trajectory(diw.trajectory, tool=1)
         self._results.update(merged, extra=extra, extra_rows=rows)
         return merged
 

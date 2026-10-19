@@ -16,13 +16,16 @@ from .diw.slicer import DiwResult, slice_diw
 from .machine import DEFAULT_MACHINE, MachineProfile, check_bounds
 from .pipeline import SliceResult, slice_part
 
+PRINT_MODES = ("structural", "fibre", "electronics")
+
 
 @dataclass
 class BoardResult:
-    fibre: SliceResult
-    diw: DiwResult
-    gcode: str                    # fibre then DIW, one file
+    fibre: SliceResult | None     # None when printing the electronics only
+    diw: DiwResult | None         # None when printing the fibre only
+    gcode: str                    # one program for everything printed
     offset: tuple                 # board origin on the bed (mm)
+    mode: str = "structural"
 
 
 def board_process(design: BoardDesign, process: ProcessConfig) -> ProcessConfig:
@@ -41,19 +44,36 @@ def combine_gcode(fibre_gcode: str, diw_gcode: str) -> str:
 
 
 def slice_structural_board(design: BoardDesign, process: ProcessConfig, diw: DiwConfig,
-                           machine: MachineProfile = DEFAULT_MACHINE) -> BoardResult:
+                           machine: MachineProfile = DEFAULT_MACHINE, mode: str = "structural") -> BoardResult:
+    """Slice a structural PCB. mode: "structural" = fibre laminate + ink on
+    top; "fibre" = the laminate only; "electronics" = the ink only, on an
+    existing surface `diw.surface_z_mm` high, board origin at Start X/Y."""
+    if mode not in PRINT_MODES:
+        raise ValueError(f"Print mode must be one of {', '.join(PRINT_MODES)} (got {mode!r}).")
+    from .diw.gcode import compile_diw_gcode
+    g = process.geometry
+    if mode == "electronics":
+        offset = (g.start_x_mm, g.start_y_mm)
+        result = slice_diw(design, diw, z_base=float(diw.surface_z_mm), offset=offset)
+        _check_bed(result, machine)
+        return BoardResult(None, result, result.gcode, offset, mode)
     fibre = slice_part(board_process(design, process), machine)
     g = fibre.config.geometry
     offset = (g.start_x_mm + fibre.bed_shift[0], g.start_y_mm + fibre.bed_shift[1])
+    if mode == "fibre":
+        return BoardResult(fibre, None, fibre.gcode, offset, mode)
     top = max((p['z'] for p in fibre.trajectory), default=float(process.z_offset_mm))
     layers = max((p.get('layer', 1) for p in fibre.trajectory), default=0)
     result = slice_diw(design, diw, z_base=top, offset=offset, layer_offset=layers)
+    _check_bed(result, machine)
+    diw_gcode = compile_diw_gcode(result.trajectory, diw, design.name, standalone=False)
+    return BoardResult(fibre, result, combine_gcode(fibre.gcode, diw_gcode), offset, mode)
+
+
+def _check_bed(result: DiwResult, machine: MachineProfile):
     out_of_bed = check_bounds(result.trajectory, machine)
     if out_of_bed:
         v = dict(result.validation)
         v["messages"] = [f"Out-of-bounds (DIW): {m}" for m in out_of_bed] + list(v["messages"])
         v["status"] = "Fail"
         result.validation = v
-    from .diw.gcode import compile_diw_gcode
-    diw_gcode = compile_diw_gcode(result.trajectory, diw, design.name, standalone=False)
-    return BoardResult(fibre, result, combine_gcode(fibre.gcode, diw_gcode), offset)

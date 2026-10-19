@@ -153,3 +153,17 @@ def test_pad_smaller_than_a_bead_still_prints():
     r = slice_diw(d, DiwConfig())
     assert any(p["extruding"] and p["feature"] == "conductor" for p in r.trajectory)
     assert any("smaller than one" in m for m in r.validation["messages"])
+
+
+@pytest.mark.parametrize("mode", ["structural", "fibre", "electronics"])
+def test_board_print_modes(mode):
+    r = slice_structural_board(example_board(), ProcessConfig(), DiwConfig(surface_z_mm=2.0), mode=mode)
+    assert (r.fibre is not None) == (mode != "electronics")
+    assert (r.diw is not None) == (mode != "fibre")
+    if mode == "electronics":
+        assert min(p["z"] for p in r.diw.trajectory if p["extruding"]) == pytest.approx(2.25)
+        assert "M0 " in r.gcode and "UV ON" not in r.gcode
+    if mode == "fibre":
+        assert "DIW" not in r.gcode
+    with pytest.raises(ValueError, match="Print mode"):
+        slice_structural_board(example_board(), ProcessConfig(), DiwConfig(), mode="both")

@@ -72,7 +72,9 @@ def coverage_summary(per_layer: dict[int, dict]) -> dict:
     cov = sum(v["coverage"] * v["area_mm2"] for v in per_layer.values()) / area
     ovl = sum(v["overlap"] * v["area_mm2"] for v in per_layer.values()) / area
     worst = min(per_layer, key=lambda k: per_layer[k]["coverage"])
+    first = min(per_layer)
     return {
         "coverage": cov, "overlap": ovl,
         "worst_layer": worst, "worst_coverage": per_layer[worst]["coverage"],
+        "first_layer": first, "first_coverage": per_layer[first]["coverage"],
     }

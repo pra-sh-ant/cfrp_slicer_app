@@ -5,6 +5,37 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added / Fixed (Phase 34 — first layer, print modes, every setting tunable, plain-language help, viewer colours)
+- **First layer**: `first_layer_solid` lays the first layer with as many tracks as fit;
+  `first_layer_infill` picks its pattern (a spiral reaches 90-99 % on compact parts,
+  zigzag line ends stay a bend radius in, ~83 %); `first_layer_min_coverage` warns
+  below a target; `stats["first_coverage"]` reports it. A spiral base under zigzag
+  layers runs inside-out so it ends on the perimeter where the zigzag starts, with
+  its lead-in anchor laid on the innermost ring (`ring_tail`; a straight anchor
+  from the centre was crossed by every ring). GUI default: on.
+- **Print modes** for a structural PCB (`slice_structural_board(mode=...)`, editor
+  drop-down): structural (fibre + electronics), fibre board only, electronics only
+  (on an existing surface `DiwConfig.surface_z_mm` high, at Start X/Y).
+- **More settings exposed**: STL crack closing and hole stitching; a Machine
+  section (bed size, max height, edge margin; the viewer redraws the bed); DIW
+  encapsulation layers, travel speed, Z-hop, valve open/close delays, E per mm³,
+  tool command, head offset X/Y/Z, pause before ink, cure shrink, surface height.
+  DIW settings that do not apply (valve codes in volumetric mode, …) are greyed
+  with the reason.
+- **Plain-language help** on every setting (fibre and DIW): what it does and what
+  raising/lowering it changes.
+- **Viewer colours**: carbon-grey fibre core inside a see-through amber resin coat
+  (Feature colours, "Resin" toggle), layer transitions cyan, the last 10 mm of the
+  stroke "End of path" pink with a red end marker (start marker green).
+- Fixed: the tube shader was registered under pyqtgraph's default shader name and
+  replaced the bed's shader (bed drew in the wrong colour).
+
+Audit (all built-in shapes x patterns x settings, 1182 cases): no failures or
+exceptions; the only warnings are curvature at U-turns (inherent while Track Gap <
+2 x r_min) and one Fermat crossing on a triangle. 252-case multi-layer audit: no
+errors; spiral "reversals" on triangles are seam trims on the r_min innermost ring.
+Goldens unchanged.
+
 ### Added (Phase 33 — Structural PCB editor)
 - New top-level tab **Structural PCB (DIW)** (`gui/pcb_editor.py`): mm canvas (Y
   up) with grid and snap, zoom/pan, cursor read-out; tools for the board outline

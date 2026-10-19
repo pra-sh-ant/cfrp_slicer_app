@@ -30,6 +30,8 @@ fibre layers would mean cutting the fibre).
 | 32b DIW core | **done**: design model, footprints, sensors, DIW slicer, DRC + resistance, DIW G-code, combined board slicing | `c2cf929` |
 | 33 Structural PCB editor | **done**: editor tab, tools, footprints, sensor generators, undo/redo, live DRC, DIW settings, Slice board → fibre + ink in one view and one G-code | (this commit) |
 
+| 34 Audit + first layer + modes | **done**: solid first layer (choosable pattern, coverage target), print modes (structural / fibre / electronics), STL repair + machine + all DIW settings exposed, plain-language help everywhere, fibre/resin/transition/end colours; full audit clean | (this commit) |
+
 ### What is left (next candidates)
 - Fermat spiral on holed outlines (it still stops at the first hole; caution shown).
 - Ramp seam on holed zigzag layers can cut the entry detour (1 crossing on the test board).

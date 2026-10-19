@@ -666,6 +666,9 @@ def build_flat_laminate(config: ProcessConfig):
     tracks = config.tracks_per_layer
     if config.fill_solid:
         tracks = _fill_track_count(geo.base_polygon(g, gap, r_min), config, config.infill_type)
+    first_infill = config.first_layer_infill or config.infill_type
+    first_tracks = (_fill_track_count(geo.base_polygon(g, gap, r_min), config, first_infill)
+                    if config.first_layer_solid else tracks)
 
     for i in range(config.layers):
         layer_z = config.z_offset_mm + (i * layer_height)
@@ -677,16 +680,20 @@ def build_flat_laminate(config: ProcessConfig):
 
             printable = geo.printable_boundary(base_poly, gap, r_min)
             raw_path = geo.laminate_layer(
-                base_poly, gap, r_min, config.infill_type, tracks,
-                g.include_boundary, current_angle, layer_idx=i, last_pt=last_pt,
-                last_dir=last_dir,
+                base_poly, gap, r_min, first_infill if i == 0 else config.infill_type,
+                first_tracks if i == 0 else tracks,
+                g.include_boundary, current_angle, layer_idx=_layer_index(i, first_infill, config),
+                last_pt=last_pt,
+                last_dir=last_dir, lead_in=_ring_lead_in(i, first_infill, config),
             )
             target_shapes.append((layer_z, printable, i + 1))
         except ValueError as exc:
             raise ValueError(f"Layer {i + 1}: {exc}") from exc
 
         anchor_n = 0
-        if i == 0:
+        if i == 0 and _ring_lead_in(i, first_infill, config):
+            anchor_n = _points_within(raw_path, float(config.anchor_length_mm))
+        elif i == 0:
             n_before = len(raw_path)
             raw_path = add_lead_in_anchor(raw_path, float(config.anchor_length_mm))
             anchor_n = len(raw_path) - n_before
@@ -706,6 +713,37 @@ def build_flat_laminate(config: ProcessConfig):
 _SPIRAL_INFILLS = (ARCHIMEDEAN, FERMAT, CORNER_STEP)
 _ZIGZAGS = (ORIENTED_SERPENTINE, DIAGONAL_45)
 _POLY_FILL_TRACKS = 100000   # Corner-Step on a polygon stops by itself when rings run out
+
+
+def _layer_index(i, pattern, config: ProcessConfig):
+    """Layer index handed to the layer generator (it sets the spiral's
+    direction). A spiral FIRST layer under zigzag layers runs inside-out
+    (as odd layers do), so it ends on the perimeter where the zigzag
+    starts; ending in the centre, the next layer had to cut across its own
+    lines to get out (up to 19 crossings)."""
+    if i == 0 and pattern in _SPIRAL_INFILLS and config.infill_type in _ZIGZAGS:
+        return 1
+    return i
+
+
+def _ring_lead_in(i, pattern, config: ProcessConfig):
+    """Lead-in length to lay ON the innermost ring for an inside-out first
+    layer (a straight anchor from the centre would be crossed by every
+    ring); 0 when the usual straight anchor is used."""
+    if _layer_index(i, pattern, config) == 1 and i == 0 and pattern in (ARCHIMEDEAN, CORNER_STEP) \
+            and not config.geometry.include_boundary:
+        return float(config.anchor_length_mm)
+    return 0.0
+
+
+def _points_within(path, length):
+    """How many leading points of `path` lie within `length` mm of travel."""
+    run = 0.0
+    for k in range(1, len(path)):
+        run += math.dist(path[k - 1], path[k])
+        if run > length:
+            return k
+    return len(path)
 
 
 def _fill_track_count(poly, config: ProcessConfig, pattern):
@@ -838,7 +876,7 @@ def _multi_island_layer(islands, config: ProcessConfig, angle, layer_idx, last_p
 
 
 def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, last_dir=None,
-                    fallbacks=None):
+                    fallbacks=None, lead_in=0.0):
     """2D path for one sliced layer. A lone island goes through the normal
     flat-laminate generator. Where the chosen pattern cannot work on this
     slice it falls back instead of dropping the layer (each counted in
@@ -863,6 +901,7 @@ def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, l
         return geo.laminate_layer(
             poly, gap, r_min, kind, count, config.geometry.include_boundary,
             angle, layer_idx=layer_idx, last_pt=last_pt, last_dir=last_dir,
+            lead_in=lead_in if kind in (ARCHIMEDEAN, CORNER_STEP) else 0.0,
         )
 
     if pattern == ARCHIMEDEAN:
@@ -1016,15 +1055,25 @@ def build_stl_laminate(config: ProcessConfig):
         printable = unary_union([geo.printable_boundary(p, gap, r_min) for p in islands])
         target_shapes.append((layer_z, printable, i + 1))
 
+        layer_cfg = config
+        if not trajectory and (config.first_layer_solid or config.first_layer_infill):
+            layer_cfg = config.model_copy(update=dict(
+                fill_solid=config.fill_solid or config.first_layer_solid,
+                infill_type=config.first_layer_infill or config.infill_type))
         try:
-            raw_path = _stl_layer_path(islands, config, current_angle, i, last_pt, last_dir, fallbacks)
+            idx = _layer_index(0, layer_cfg.infill_type, config) if not trajectory else i
+            lead = _ring_lead_in(0, layer_cfg.infill_type, config) if not trajectory and len(islands) == 1 else 0.0
+            raw_path = _stl_layer_path(islands, layer_cfg, current_angle, idx, last_pt, last_dir, fallbacks,
+                                       lead_in=lead)
         except ValueError:
             continue
         if not raw_path:
             continue
 
         anchor_n = 0
-        if not trajectory:
+        if not trajectory and lead:
+            anchor_n = _points_within(raw_path, float(config.anchor_length_mm))
+        elif not trajectory:
             n_before = len(raw_path)
             raw_path = add_lead_in_anchor(raw_path, float(config.anchor_length_mm))
             anchor_n = len(raw_path) - n_before

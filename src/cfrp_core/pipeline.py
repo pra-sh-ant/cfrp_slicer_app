@@ -114,6 +114,13 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
             f"Only {stats['worst_coverage'] * 100:.0f}% of layer {stats['worst_layer']} is covered "
             f"by fibre ({stats['coverage'] * 100:.0f}% overall): {cause}"
         )
+    need = float(cfg.first_layer_min_coverage)
+    if need > 0 and stats.get("first_coverage", 1.0) < need:
+        part_warnings.append(
+            f"The first layer is only {stats['first_coverage'] * 100:.0f}% covered by fibre (target "
+            f"{need * 100:.0f}%). Turn on First Layer Solid, or reduce Min Bend Radius / Track Gap so "
+            f"the tracks reach further into the corners and the centre."
+        )
     validation = _with_part_warnings(validation, part_warnings)
 
     return SliceResult(

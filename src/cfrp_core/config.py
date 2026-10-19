@@ -277,6 +277,14 @@ class ProcessConfig(_Frozen):
     # Flat parts and STL slices: lay as many spiral tracks as fit instead of
     # tracks_per_layer (zigzags always fill; revolve walls keep their count).
     fill_solid: bool = False
+    # Lay the FIRST layer solid (as many tracks as fit) whatever the other
+    # layers use: a closed base for the laminate. Off = like the others.
+    first_layer_solid: bool = False
+    # Pattern for that first layer (None = the same as the other layers). A
+    # spiral reaches furthest into the outline (zigzag line ends stay r_min in).
+    first_layer_infill: InfillPattern | None = None
+    # Warn when the first layer's fibre coverage is below this (0..1, 0 = no check).
+    first_layer_min_coverage: float = 0.0
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")
@@ -311,6 +319,13 @@ class ProcessConfig(_Frozen):
     @classmethod
     def _layer_height(cls, v: Number) -> Number:
         return _require(v, "Layer Height", unit=" mm")
+
+    @field_validator("first_layer_min_coverage")
+    @classmethod
+    def _first_cov(cls, v: float) -> float:
+        if not (0.0 <= v <= 1.0):
+            raise ValueError("First layer minimum coverage must be between 0 and 1 (0-100 %).")
+        return v
 
     @field_validator("seam_stagger_deg")
     @classmethod

@@ -14,7 +14,15 @@ from __future__ import annotations
 
 import math
 
-from ._common import check_gap_radius, dedupe_path, fillet, largest_polygon, notched_rings, resample_closed_ring
+from ._common import (
+    check_gap_radius,
+    dedupe_path,
+    fillet,
+    largest_polygon,
+    notched_rings,
+    resample_closed_ring,
+    ring_tail,
+)
 
 _ARC_PTS = 32
 _RING_PTS = 256
@@ -210,14 +218,14 @@ def _resample_cw(coords, n_pts):
     return resample_closed_ring(poly, n_pts)
 
 
-def _poly_path(base_poly, gap, r, N, outward=False, seam_hint=None):
+def _poly_path(base_poly, gap, r, N, outward=False, seam_hint=None, lead_in=0.0):
     rings: list[list[tuple[float, float]]] = []
     if base_poly.geom_type == 'Polygon' and len(base_poly.interiors):
         # Holes: rings that wrap round them (notched_rings), same stitching.
         for ring_poly in notched_rings(base_poly, gap, r, max_rings=N):
             n_pts = max(_RING_PTS, int(math.ceil(ring_poly.exterior.length / 0.5)))
             rings.append(_resample_cw(list(ring_poly.exterior.coords), n_pts))
-        return _stitch_rings(rings, gap, r, outward, seam_hint)
+        return _stitch_rings(rings, gap, r, outward, seam_hint, lead_in)
     for k in range(N):
         offset = gap / 2.0 + k * gap
         shrunk = base_poly.buffer(-offset, join_style=1)
@@ -234,12 +242,13 @@ def _poly_path(base_poly, gap, r, N, outward=False, seam_hint=None):
         coords = _resample_cw(list(filleted.exterior.coords), n_pts)
         rings.append(coords)
 
-    return _stitch_rings(rings, gap, r, outward, seam_hint)
+    return _stitch_rings(rings, gap, r, outward, seam_hint, lead_in)
 
 
-def _stitch_rings(rings, gap, r, outward=False, seam_hint=None):
+def _stitch_rings(rings, gap, r, outward=False, seam_hint=None, lead_in=0.0):
     """Closed rings (outermost first) joined into one stroke by lane changes
-    on one seam."""
+    on one seam. `lead_in` (mm): prepend that much of the first ring before
+    its start (a lead-in anchor lying on the ring itself)."""
     if not rings:
         return []
 
@@ -262,6 +271,9 @@ def _stitch_rings(rings, gap, r, outward=False, seam_hint=None):
     path: list[tuple[float, float]] = []
     for k, ring in enumerate(order):
         start = _nearest_index(ring, seam_pt)
+        if k == 0 and lead_in > 0:
+            closed = ring[:-1] if ring[0] == ring[-1] else ring
+            path.extend(ring_tail(closed, start % len(closed), lead_in))
         lap = ring[start:] + ring[:start]
         if k < len(order) - 1:
             spacing = math.dist(ring[0], ring[1]) or 1e-9
@@ -311,7 +323,7 @@ def _seam_index(ring):
 # ---------------------------------------------------------------------------
 
 def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=False,
-                     corner_lead=False, seam_hint=None):
+                     corner_lead=False, seam_hint=None, lead_in=0.0):
     """Concentric CW rings with corner-step transitions.
 
     Rectangles use an analytical path; other shapes use polygon offsets with
@@ -328,11 +340,13 @@ def corner_step_path(base_poly, track_gap, min_radius, track_count, outward=Fals
     gap = track_gap
     r = min_radius
 
-    if _is_rectangle(base_poly):
+    # A lead-in on the innermost ring needs real rings: polygon path.
+    if _is_rectangle(base_poly) and not (outward and lead_in > 0):
         raw = (_rect_path_outward(base_poly, gap, r, N) if outward
                else _rect_path(base_poly, gap, r, N, corner_lead=corner_lead))
     else:
-        raw = _poly_path(base_poly, gap, r, N, outward=outward, seam_hint=seam_hint)
+        raw = _poly_path(base_poly, gap, r, N, outward=outward, seam_hint=seam_hint,
+                         lead_in=lead_in if outward else 0.0)
 
     if not raw:
         return [], base_poly

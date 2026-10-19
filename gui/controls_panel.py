@@ -253,6 +253,8 @@ class ControlsPanel(QWidget):
         self._add(sec, "stl_path", "STL File", stl_container)
         self.stl_scale_spin = self._add(sec, "stl_scale", "STL Scale", _spin(0.001, 1000, 1, 1.0, 3, "x"))
         self.stl_islands_chk = self._add(sec, "stl_islands", "", QCheckBox("Print All Islands (fibre-bridged)"))
+        self.stl_close_spin = self._add(sec, "stl_closing_radius", "Close Cracks", _spin(0, 2, 0.01, 0.049, 3, "mm"))
+        self.stl_stitch_spin = self._add(sec, "stl_stitch", "Stitch Holes", _spin(0, 50, 0.5, 5.0, 1, "mm"))
 
         # Revolve / specialty fields
         self.base_r_spin = self._add(sec, "base_radius", "Outer Radius", _spin(1, 200, 1, 20.0, 1, "mm"))
@@ -261,7 +263,8 @@ class ControlsPanel(QWidget):
         self.stem_top_spin = self._add(sec, "stem_top", "Stem Top (abs. Z)", _spin(0.1, 500, 1, 25.0, 1, "mm"))
 
         for w in (self.w_spin, self.h_spin, self.base_r_spin, self.stem_h_spin,
-                  self.disc_r_spin, self.stem_top_spin, self.stl_scale_spin):
+                  self.disc_r_spin, self.stem_top_spin, self.stl_scale_spin, self.stl_close_spin,
+                  self.stl_stitch_spin):
             w.valueChanged.connect(self._emit)
         self.boundary_chk.toggled.connect(self._emit)
         self.stl_islands_chk.toggled.connect(self._emit)
@@ -286,6 +289,15 @@ class ControlsPanel(QWidget):
         self.tracks_spin = self._add(sec, "tracks_per_layer", "Tracks Per Layer", _ispin(1, 200, 7))
         self.fill_chk = self._add(sec, "fill_solid", "", QCheckBox("Fill Solid (as many tracks as fit)"))
         self.layers_spin = self._add(sec, "layers", "Total Layers", _ispin(1, 500, 1))
+        self.first_solid_chk = self._add(sec, "first_layer_solid", "",
+                                         QCheckBox("First Layer Solid (fully filled base)"))
+        self.first_solid_chk.setChecked(True)
+        self.first_infill_cb = QComboBox()
+        self.first_infill_cb.addItems(["Same as other layers"] + INFILL_OPTIONS)
+        self._add(sec, "first_layer_infill", "First Layer Pattern", self.first_infill_cb)
+        self.first_cov_spin = self._add(sec, "first_layer_min_coverage", "First Layer Target",
+                                        _spin(0, 100, 5, 0, 0, "%"))
+        self.first_cov_spin.setSpecialValueText("no check")
         self.layup_edit = QLineEdit("0")
         self.layup_edit.setPlaceholderText("e.g. 0, 90, 45, -45")
         self._add(sec, "layup_seq", "Layup Angles (°)", self.layup_edit)
@@ -293,6 +305,9 @@ class ControlsPanel(QWidget):
         for w in (self.layers_spin, self.tracks_spin):
             w.valueChanged.connect(self._emit)
         self.fill_chk.toggled.connect(self._emit)
+        self.first_solid_chk.toggled.connect(self._emit)
+        self.first_infill_cb.currentTextChanged.connect(self._emit)
+        self.first_cov_spin.valueChanged.connect(self._emit)
         self.infill_cb.currentTextChanged.connect(self._emit)
         self.layup_edit.textChanged.connect(self._emit)
 
@@ -357,6 +372,15 @@ class ControlsPanel(QWidget):
         self.purge_f_spin = self._add(sec, "purge_f", "Purge Speed", _spin(1, 3000, 10, 60.0, 0, "mm/min"))
         self.travel_f_spin = self._add(sec, "travel_f", "Approach Speed", _spin(1, 3000, 10, 600.0, 0, "mm/min"))
         sec.set_open(False)
+
+        sec = self._section("Machine")
+        self.bed_x_spin = self._add(sec, "bed_x", "Bed Width (X)", _spin(10, 2000, 10, 180.0, 0, "mm"))
+        self.bed_y_spin = self._add(sec, "bed_y", "Bed Depth (Y)", _spin(10, 2000, 10, 220.0, 0, "mm"))
+        self.z_max_spin = self._add(sec, "z_max", "Max Height (Z)", _spin(1, 2000, 10, 200.0, 0, "mm"))
+        self.margin_spin = self._add(sec, "bed_margin", "Edge Margin", _spin(0, 50, 0.5, 1.0, 1, "mm"))
+        sec.set_open(False)
+        for w in (self.bed_x_spin, self.bed_y_spin, self.z_max_spin, self.margin_spin):
+            w.valueChanged.connect(self._emit)
 
         for w in (self.vmax_spin, self.vmin_spin, self.accel_spin, self.decel_spin,
                   self.p_adv_spin, self.pump_floor_spin, self.trans_angle_spin,
@@ -471,6 +495,8 @@ class ControlsPanel(QWidget):
             "infill_type": self.infill_cb.currentText(),
             "layers": self.layers_spin.value(),
             "fill_solid": self.fill_chk.isChecked(),
+            "first_layer_solid": self.first_solid_chk.isChecked(),
+            "first_layer_infill": self.first_infill_cb.currentText(),
             "pa_table": self.pa_table_edit.text(),
             "track_gap": self.gap_spin.value(),
             "min_radius": self.min_r_spin.value(),
@@ -531,6 +557,14 @@ class ControlsPanel(QWidget):
             "infill_type": infill,
             "tracks_per_layer": self.tracks_spin.value(),
             "fill_solid": self.fill_chk.isChecked(),
+            "first_layer_solid": self.first_solid_chk.isChecked() and not is_flat_specialty
+            and shape not in REVOLVE_SHAPES,
+            "first_layer_infill": (None if self.first_infill_cb.currentIndex() <= 0
+                                   or is_flat_specialty or shape in REVOLVE_SHAPES
+                                   else self.first_infill_cb.currentText()),
+            "first_layer_min_coverage": self.first_cov_spin.value() / 100.0,
+            "stl_closing_radius": self.stl_close_spin.value(),
+            "stl_stitch": self.stl_stitch_spin.value(),
             "layer_height": self.lh_spin.value(),
             "needle_dia": self.needle_spin.value(),
             "e_mult": self.emult_spin.value(),
@@ -559,6 +593,12 @@ class ControlsPanel(QWidget):
         if shape == "Custom Outline":
             params.update(self._custom)
         return params
+
+    def get_machine(self):
+        """Machine profile from the Machine section."""
+        from cfrp_core.machine import MachineProfile
+        return MachineProfile(name="custom", bed_x_mm=self.bed_x_spin.value(), bed_y_mm=self.bed_y_spin.value(),
+                              z_max_mm=self.z_max_spin.value(), margin_mm=self.margin_spin.value())
 
     def get_layup(self) -> list[float]:
         try:
@@ -625,6 +665,20 @@ class ControlsPanel(QWidget):
         _set(self.layers_spin, "layers", int)
         _set(self.tracks_spin, "tracks_per_layer", int)
         _set(self.fill_chk, "fill_solid")
+        _set(self.first_solid_chk, "first_layer_solid")
+        if "first_layer_infill" in p:
+            self.first_infill_cb.blockSignals(True)
+            self.first_infill_cb.setCurrentText(p["first_layer_infill"] or "Same as other layers")
+            self.first_infill_cb.blockSignals(False)
+        if "first_layer_min_coverage" in p:
+            self.first_cov_spin.blockSignals(True)
+            self.first_cov_spin.setValue(float(p["first_layer_min_coverage"]) * 100.0)
+            self.first_cov_spin.blockSignals(False)
+        _set(self.stl_close_spin, "stl_closing_radius")
+        _set(self.stl_stitch_spin, "stl_stitch")
+        for key, w in (("bed_x", self.bed_x_spin), ("bed_y", self.bed_y_spin), ("z_max", self.z_max_spin),
+                       ("bed_margin", self.margin_spin)):
+            _set(w, key)
         _set(self.infill_cb, "infill_type")
         _set(self.layup_edit, "layup_seq")
 

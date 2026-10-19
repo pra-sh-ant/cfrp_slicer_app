@@ -9,7 +9,7 @@ import numpy as np
 import pytest
 from shapely.geometry import LineString
 
-from cfrp_core import from_legacy_dict, resolve_process_constraints
+from cfrp_core import from_legacy_dict, resolve_process_constraints, slice_part
 from cfrp_core.geometry import revolve_cross_section
 from cfrp_core.geometry._common import _clipper_to_polys, local_bend_radii
 from cfrp_core.geometry.serpentine import oriented_serpentine
@@ -204,3 +204,26 @@ def test_layer_ramps_stay_within_the_transition_angle(layup):
                          infill_type="Oriented Serpentine")
     msgs = run_slice(cfg, layup=layup)[3]["messages"]
     assert not any("ramp exceeded" in m for m in msgs)
+
+
+# --- Phase 34: first layer -----------------------------------------------------------
+
+@pytest.mark.parametrize("infill", ["Oriented Serpentine", "45° Diagonal Hatch", "Archimedean (Concentric Spiral)"])
+@pytest.mark.parametrize("first", [None, "Archimedean (Concentric Spiral)", "Corner-Step Spiral"])
+def test_first_layer_solid_base(infill, first):
+    """A solid first layer (optionally in another pattern) fills the base and
+    hands over to the next layer without crossings: a spiral base under
+    zigzags runs inside-out with its lead-in on the innermost ring."""
+    from cfrp_core.coverage import layer_coverage
+    cfg = dict(shape="Square/Rectangle", width=60.0, height=60.0, infill_type=infill, layers=3,
+               tracks_per_layer=3, layup_seq="0, 90", first_layer_solid=True, first_layer_infill=first)
+    res = slice_part(from_legacy_dict(cfg, layup=[0.0, 90.0]))
+    cov = layer_coverage(res.trajectory, res.target_shapes, res.config.track_gap_mm)
+    assert cov[1]["coverage"] > (0.9 if first or infill.startswith("Archimedean") else 0.8)
+    assert not any("crosses itself" in m or "Disjointed" in m for m in res.validation["messages"])
+
+
+def test_first_layer_target_warns():
+    cfg = dict(shape="Square/Rectangle", width=135.0, height=25.0, first_layer_min_coverage=0.95)
+    res = slice_part(from_legacy_dict(cfg))
+    assert any("first layer is only" in m for m in res.validation["messages"])

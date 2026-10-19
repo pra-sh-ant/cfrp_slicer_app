@@ -72,6 +72,7 @@ varying vec4 v_color;
 varying vec3 v_normal;
 varying vec3 v_eye;
 uniform float u_dim;
+uniform float u_alpha;
 void main() {
     vec3 n = normalize(v_normal);
     if (!gl_FrontFacing) n = -n;
@@ -85,21 +86,30 @@ void main() {
     vec3 c = v_color.rgb * (ambient + diff) + vec3(spec);
     float grey = dot(c, vec3(0.30, 0.59, 0.11));
     c = mix(vec3(grey) * 0.55 + vec3(0.05, 0.05, 0.08), c, u_dim);
-    gl_FragColor = vec4(pow(c, vec3(0.95)), 1.0);
+    gl_FragColor = vec4(pow(c, vec3(0.95)), u_alpha);
 }
 """
 
 
 if _HAS_GL:
+    def _toolpath_shader():
+        """The tube shader, registered under its own name: ShaderProgram(None)
+        would replace pyqtgraph's default shader, which the bed mesh uses."""
+        prog = pg_shaders.ShaderProgram.names.get("cfrp_toolpath")
+        if prog is None:
+            prog = pg_shaders.ShaderProgram("cfrp_toolpath", [
+                pg_shaders.VertexShader(_VERT), pg_shaders.FragmentShader(_FRAG)])
+        return prog
+
     class ToolpathItem(GLGraphicsItem):
         """Tube mesh with per-vertex colour, drawn over point index ranges:
         `ghost` dimmed, `active` in full colour."""
 
-        def __init__(self):
+        def __init__(self, alpha=1.0):
             super().__init__()
-            self.setGLOptions('opaque')
-            self._shader = pg_shaders.ShaderProgram(None, [
-                pg_shaders.VertexShader(_VERT), pg_shaders.FragmentShader(_FRAG)])
+            self.alpha = float(alpha)
+            self.setGLOptions('opaque' if alpha >= 1.0 else 'translucent')
+            self._shader = _toolpath_shader()
             self._bufs = {k: None for k in ("pos", "nrm", "col", "idx")}
             self._data = {}
             self._dirty = set()
@@ -167,6 +177,7 @@ if _HAS_GL:
                 GL.glUniformMatrix4fv(GL.glGetUniformLocation(program, "u_mvp"), 1, False, mvp)
                 GL.glUniformMatrix4fv(GL.glGetUniformLocation(program, "u_mv"), 1, False, mv)
                 GL.glUniformMatrix3fv(GL.glGetUniformLocation(program, "u_normal"), 1, False, nm)
+                GL.glUniform1f(GL.glGetUniformLocation(program, "u_alpha"), self.alpha)
                 u_dim = GL.glGetUniformLocation(program, "u_dim")
                 self._bufs["idx"].bind()
                 for (a, b), dim in ((self.ghost, 0.32), (self.active, 1.0)):
@@ -365,6 +376,12 @@ class ViewerGL(QWidget):
         self.outline_chk.setToolTip("Show each layer's part outline")
         self.outline_chk.toggled.connect(self._apply_range)
         bar.addWidget(self.outline_chk)
+        self.resin_chk = QCheckBox("Resin")
+        self.resin_chk.setChecked(True)
+        self.resin_chk.setToolTip("Feature colours: draw the resin coat (amber, see-through) round the "
+                                  "carbon fibre core")
+        self.resin_chk.toggled.connect(self._recolor)
+        bar.addWidget(self.resin_chk)
         self.travel_chk = QCheckBox("Travel")
         self.travel_chk.setChecked(True)
         self.travel_chk.setToolTip("Show DIW travel moves (no ink)")
@@ -433,6 +450,8 @@ class ViewerGL(QWidget):
         self._timer.timeout.connect(self._tick)
 
         self._tube = None
+        self._resin = None
+        self._end = None
         self._lines = None
         self._travel = None
         self._outline_item = None
@@ -444,22 +463,37 @@ class ViewerGL(QWidget):
     # ------------------------------------------------------------------
     # Static scene
     # ------------------------------------------------------------------
-    def _draw_bed(self):
+    def set_machine(self, machine):
+        """Redraw the bed for another machine profile."""
+        self._machine = machine
+        if self._view is None:
+            return
+        for item in getattr(self, "_bed_items", []):
+            self._view.removeItem(item)
+        self._draw_bed(markers=False)
+
+    def _draw_bed(self, markers=True):
         bx, by = self._machine.bed_x_mm, self._machine.bed_y_mm
         verts = np.array([[0, 0, -0.02], [bx, 0, -0.02], [bx, by, -0.02], [0, by, -0.02]], dtype=np.float32)
         faces = np.array([[0, 1, 2], [0, 2, 3]], dtype=np.int32)
         colors = np.full((2, 4), [0.17, 0.17, 0.23, 1.0], dtype=np.float32)
-        self._view.addItem(gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
-                                         smooth=False, drawEdges=False))
+        self._bed_items = [gl.GLMeshItem(vertexes=verts, faces=faces, faceColors=colors,
+                                         smooth=False, drawEdges=False)]
+        self._view.addItem(self._bed_items[0])
         grid = gl.GLGridItem()
         grid.setSize(bx, by)
         grid.setSpacing(10, 10)
         grid.translate(bx / 2, by / 2, 0)
         grid.setColor((80, 80, 110, 60))
         self._view.addItem(grid)
+        self._bed_items.append(grid)
         border = np.array([[0, 0, 0], [bx, 0, 0], [bx, by, 0], [0, by, 0], [0, 0, 0]], dtype=np.float32)
-        self._view.addItem(gl.GLLinePlotItem(pos=border, color=(0.45, 0.47, 0.65, 0.8), width=1.5,
-                                             antialias=True, mode='line_strip'))
+        edge = gl.GLLinePlotItem(pos=border, color=(0.45, 0.47, 0.65, 0.8), width=1.5,
+                                 antialias=True, mode='line_strip')
+        self._view.addItem(edge)
+        self._bed_items.append(edge)
+        if not markers:
+            return
         for end, col in (((25, 0, 0.05), (0.9, 0.3, 0.3, 1)), ((0, 25, 0.05), (0.3, 0.85, 0.35, 1)),
                          ((0, 0, 25), (0.35, 0.55, 1.0, 1))):
             self._view.addItem(gl.GLLinePlotItem(pos=np.array([(0, 0, 0.05), end], dtype=np.float32),
@@ -469,9 +503,12 @@ class ViewerGL(QWidget):
                                      color=(0.92, 0.94, 1.0, 1.0), glOptions='opaque')
         self._nozzle.setVisible(False)
         self._view.addItem(self._nozzle)
-        self._start = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(0.2, 0.95, 0.5, 1), size=11)
+        self._start = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(0.2, 0.95, 0.5, 1), size=12)
         self._start.setVisible(False)
         self._view.addItem(self._start)
+        self._end = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(0.98, 0.2, 0.3, 1), size=12)
+        self._end.setVisible(False)
+        self._view.addItem(self._end)
 
     # ------------------------------------------------------------------
     # Scene update
@@ -516,27 +553,32 @@ class ViewerGL(QWidget):
             self.fit()
         self._start.setData(pos=data.xyz[:1])
         self._start.setVisible(True)
+        fib_idx = np.nonzero(data.tool == 0)[0]
+        if len(fib_idx):
+            self._end.setData(pos=data.xyz[fib_idx[-1]:fib_idx[-1] + 1])
+            self._end.setVisible(True)
         self._apply_range()
 
     def clear(self):
         self._data = None
         self._layers = {}
-        for item in (self._tube, self._lines, self._travel, self._outline_item):
+        for item in (self._tube, self._resin, self._lines, self._travel, self._outline_item):
             if item is not None and self._view is not None:
                 self._view.removeItem(item)
-        self._tube = self._lines = self._travel = self._outline_item = None
+        self._tube = self._resin = self._lines = self._travel = self._outline_item = None
         self.legend.set_legend(None)
         self.info.setText("")
         if self._nozzle is not None:
             self._nozzle.setVisible(False)
             self._start.setVisible(False)
+            self._end.setVisible(False)
 
     def _build_meshes(self):
         data = self._data
-        for item in (self._tube, self._lines, self._travel):
+        for item in (self._tube, self._resin, self._lines, self._travel):
             if item is not None:
                 self._view.removeItem(item)
-        self._tube = self._lines = self._travel = None
+        self._tube = self._resin = self._lines = self._travel = None
         sides = tm.sides_for(len(data))
         self._mesh = tm.tube_mesh(data, sides=sides)
         rgb, legend = tm.mode_colors(self.mode_cb.currentText(), data, self._r_min)
@@ -544,6 +586,18 @@ class ViewerGL(QWidget):
         self._tube = ToolpathItem()
         self._tube.set_mesh(self._mesh, tm.vertex_colors(rgb, sides))
         self._view.addItem(self._tube)
+        # Resin coat: a slightly larger see-through tube round the fibre.
+        if (data.tool == 0).any():
+            import dataclasses
+            fibre_only = dataclasses.replace(data, breaks=data.breaks | (data.tool != 0))
+            resin_mesh = tm.tube_mesh(fibre_only, sides=sides, width_scale=1.08, height_scale=1.12)
+            col = np.tile(np.array(tm.RESIN, dtype=np.float32), (len(data), 1))
+            col[data.tool != 0] = 0.0
+            self._resin = ToolpathItem(alpha=0.33)
+            self._resin.setDepthValue(10)
+            self._resin.set_mesh(resin_mesh, tm.vertex_colors(col, sides))
+            self._view.addItem(self._resin)
+            self._resin.setVisible(self._resin_wanted())
         # DIW travel moves as thin lines
         tr = np.nonzero(data.breaks[1:])[0]
         if len(tr):
@@ -554,7 +608,13 @@ class ViewerGL(QWidget):
             self._travel.travel_index = tr
             self._view.addItem(self._travel)
 
+    def _resin_wanted(self):
+        return self.resin_chk.isChecked() and self.mode_cb.currentText() == "Feature" \
+            and self._data is not None and not (self._data.tool != 0).any()
+
     def _recolor(self, *_):
+        if self._resin is not None:
+            self._resin.setVisible(self._resin_wanted())
         if self._data is None or self._tube is None:
             return
         rgb, legend = tm.mode_colors(self.mode_cb.currentText(), self._data, self._r_min)
@@ -603,6 +663,8 @@ class ViewerGL(QWidget):
         ghost = (0, a + 1) if self.ghost_chk.isChecked() and a > 0 else (0, 0)
         if self._tube is not None:
             self._tube.set_ranges((a, end), ghost)
+            if self._resin is not None:
+                self._resin.set_ranges((a, end), ghost)
             if self._tube.failed and self._lines is None:
                 self._fallback_lines()
         if self._lines is not None:

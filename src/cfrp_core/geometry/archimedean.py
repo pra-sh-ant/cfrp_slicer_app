@@ -13,11 +13,12 @@ from ._common import (
     notched_rings,
     resample_closed_ring,
     resample_polar_ring,
+    ring_tail,
 )
 
 
 def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_from_inside=False,
-                     seam_hint=None, polar_center=None, outer_start=None):
+                     seam_hint=None, polar_center=None, outer_start=None, lead_in=0.0):
     """One smooth, continuously-blended spiral inside an arbitrary polygon.
 
     Rings sit at inset d_k = gap/2 + k·gap from the outer shell. Instead of
@@ -82,7 +83,7 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
                      for p in notched]
             hint = seam_hint if start_from_inside else outer_start
             return dedupe_path(_stitch_rings(rings, track_gap, min_radius, outward=start_from_inside,
-                                             seam_hint=hint)), base_poly
+                                             seam_hint=hint, lead_in=lead_in if start_from_inside else 0.0)), base_poly
 
     if not ring_polys:
         return [], base_poly
@@ -144,7 +145,10 @@ def archimedean_path(base_poly, track_gap, min_radius, track_count=None, start_f
             prev_start = pts[0]
 
         inner_close = resampled[-1][1:] + [resampled[-1][0]]
-        continuous_path = blend_chain(resampled, samples) + inner_close
+        # Lead-in (first layer only): the innermost ring just before the
+        # start; the first lap blends away from it, so nothing crosses it.
+        lead = ring_tail(ring0_pts, 0, lead_in) if lead_in > 0 else []
+        continuous_path = lead + blend_chain(resampled, samples) + inner_close
 
     path = dedupe_path(continuous_path)
 

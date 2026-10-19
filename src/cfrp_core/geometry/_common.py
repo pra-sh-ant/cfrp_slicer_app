@@ -216,6 +216,22 @@ def arc_along_ring(ring_poly, p_from, p_to):
     return pts
 
 
+def ring_tail(ring_pts, start, length):
+    """The `length` mm of a closed ring (point list, no repeated end) that
+    come just BEFORE index `start`, in traversal order: a lead-in that lies
+    on the ring itself, tangent to where the path starts."""
+    n = len(ring_pts)
+    if length <= 0 or n < 3:
+        return []
+    out, run, k = [], 0.0, start
+    while run < length and len(out) < n - 1:
+        a, b = ring_pts[(k - 1) % n], ring_pts[k % n]
+        run += math.dist(a, b)
+        out.append(a)
+        k -= 1
+    return out[::-1]
+
+
 def dedupe_path(points, tol: float = 0.05):
     """Drop consecutive points closer than `tol` apart -- the blend/
     resample generators all produce a few near-duplicate points at

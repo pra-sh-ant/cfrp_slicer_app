@@ -42,6 +42,7 @@ class DiwConfig(BaseModel):
     resistivity_ohm_mm: float = 4.0e-5   # cured ink (silver flake ~4 µΩ·cm)
     cured_thickness_ratio: float = 0.5   # cured film / wet layer height
     substrate_conductive: bool = True    # carbon fibre conducts
+    surface_z_mm: float = 0.0            # electronics-only prints: top of the part printed on
 
     @field_validator("nozzle_mm", "line_width_mm", "layer_height_mm", "speed_conductor_mm_s",
                      "speed_dielectric_mm_s", "travel_speed_mm_s", "resistivity_ohm_mm",
@@ -59,7 +60,8 @@ class DiwConfig(BaseModel):
             raise ValueError(f"DIW {info.field_name.replace('_', ' ')} out of range (got {v}).")
         return v
 
-    @field_validator("z_hop_mm", "dielectric_margin_mm", "clearance_mm", "edge_clearance_mm")
+    @field_validator("z_hop_mm", "dielectric_margin_mm", "clearance_mm", "edge_clearance_mm", "surface_z_mm",
+                     "on_delay_ms", "off_delay_ms")
     @classmethod
     def _non_negative(cls, v, info):
         if v < 0:

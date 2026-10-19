@@ -154,9 +154,15 @@ class DashboardTab(QScrollArea):
         self._labels = []
 
         if not trajectory:
-            lbl = QLabel("No trajectory.")
+            lbl = QLabel("No fibre in this print." if extra_rows else "No trajectory.")
             self._layout.addWidget(lbl)
             self._labels.append(lbl)
+            for key, val in extra_rows:
+                if key.startswith("─"):
+                    continue
+                w = QLabel(f"<b>{key}</b>   {val}")
+                self._layout.addWidget(w)
+                self._labels.append(w)
             return
 
         xs = [p['x'] for p in trajectory]

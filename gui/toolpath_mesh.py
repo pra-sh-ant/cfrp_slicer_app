@@ -41,8 +41,8 @@ LAYER_PALETTE = np.array([
 ], dtype=np.float32)
 
 FEATURES = (
-    ("fibre", "Fibre", (0.95, 0.56, 0.20)),
-    ("ramp", "Layer ramp", (0.38, 0.68, 0.98)),
+    ("fibre", "Fibre (carbon tow)", (0.40, 0.42, 0.48)),
+    ("ramp", "Layer transition", (0.20, 0.85, 0.95)),
     ("anchor", "Lead-in anchor", (0.72, 0.48, 0.96)),
     ("bridge", "Bridge between islands", (0.98, 0.28, 0.34)),
     ("floored", "Pump floor engaged", (0.98, 0.86, 0.26)),
@@ -50,7 +50,10 @@ FEATURES = (
     ("dielectric", "Dielectric ink", (0.30, 0.80, 0.62)),
     ("encapsulation", "Encapsulation", (0.52, 0.62, 0.78)),
     ("travel", "Travel (no flow)", (0.42, 0.42, 0.52)),
+    ("end", "End of path", (0.98, 0.20, 0.55)),
 )
+RESIN = (0.96, 0.72, 0.36)          # resin coat drawn round the fibre (Feature mode)
+END_MM = 10.0                       # the last END_MM of the fibre are "End of path"
 FEATURE_INDEX = {key: i for i, (key, _, _) in enumerate(FEATURES)}
 TOOLS = (("Fibre head", (0.95, 0.56, 0.20)), ("DIW head", (0.80, 0.84, 0.95)))
 
@@ -170,6 +173,14 @@ def from_trajectory(trajectory, bead_width=1.0, bead_height=0.2, tool=0, layer_o
             feat[i] = FEATURE_INDEX['floored']
     if n:
         brk[0] = True
+    if n and 'feature' not in trajectory[-1]:
+        # Mark the end of the fibre stroke (where the tow is cut).
+        run = 0.0
+        for i in range(n - 1, 0, -1):
+            feat[i] = FEATURE_INDEX['end']
+            run += float(np.linalg.norm(xyz[i] - xyz[i - 1]))
+            if run >= END_MM:
+                break
     return ToolpathData(xyz, v, e, layer, feat, brk, np.full(n, tool, dtype=np.int8),
                         np.arange(n), width, height)
 

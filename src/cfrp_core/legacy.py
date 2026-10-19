@@ -66,6 +66,9 @@ _FIELD_MAP = {
     "anchor_length": (None, "anchor_length_mm"),
     "seam_stagger": (None, "seam_stagger_deg"),
     "fill_solid": (None, "fill_solid"),
+    "first_layer_solid": (None, "first_layer_solid"),
+    "first_layer_infill": (None, "first_layer_infill"),
+    "first_layer_min_coverage": (None, "first_layer_min_coverage"),
 }
 
 
@@ -106,6 +109,8 @@ def to_nested(d: dict, layup=None) -> dict:
         section, field = _FIELD_MAP[key]
         if field == "pressure_advance_table":
             value = parse_pa_table(value)
+        if field == "first_layer_infill" and value in ("", "Same as other layers", "N/A"):
+            value = None
         (nested[section] if section else nested)[field] = value
     # The legacy G-code header printed layup_seq with a "0" default.
     nested.setdefault("layup_text", "0")

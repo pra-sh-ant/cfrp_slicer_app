@@ -207,6 +207,26 @@ def test_editor_save_load_and_slice_request(editor, tmp_path):
     editor.open_design(str(path))
     assert editor.design == design
     got = []
-    editor.slice_requested.connect(lambda d, c: got.append((d, c)))
+    editor.slice_requested.connect(lambda d, c, m: got.append((d, c, m)))
     editor._request_slice()
     assert got and got[0][0] == design and got[0][1].line_width_mm == editor.d_lw.value()
+    assert got[0][2] == "structural"
+
+
+def test_editor_greys_out_diw_settings_that_do_not_apply(editor):
+    assert not editor.d_epm.isEnabled() and editor.d_on.isEnabled()        # pneumatic
+    editor.d_mode.setCurrentText("volumetric")
+    assert editor.d_epm.isEnabled() and not editor.d_on.isEnabled()
+    assert "Not used here" in editor.d_on.toolTip()
+    assert not editor.d_surface.isEnabled()
+    editor.mode_cb.setCurrentIndex(2)                                      # electronics only
+    assert editor.d_surface.isEnabled() and editor.print_mode() == "electronics"
+    cfg = editor.diw_config()
+    assert cfg.dispense == "volumetric" and cfg.tool_select == "T1"
+
+
+def test_every_setting_has_plain_help(panel):
+    from gui.settings_help import DIW_HELP, HELP
+    for key in panel._rows:
+        assert len(HELP.get(key, "")) > 20, key
+    assert all(len(v) > 20 for v in DIW_HELP.values())

@@ -63,6 +63,11 @@ from cfrp_core.diw import (
 )
 from cfrp_core.diw.design import pad_shape, trace_shape
 
+from .settings_help import DIW_HELP
+
+MODES = (("Structural: fibre + electronics", "structural"), ("Fibre board only", "fibre"),
+         ("Electronics only (ink)", "electronics"))
+
 TOOLS = (
     ("select", "Select", "Select / move (drag) · Delete removes"),
     ("rect", "Board ▭", "Board outline: drag a rectangle"),
@@ -194,7 +199,7 @@ class PcbEditor(QWidget):
     """Board editor. `slice_requested(design, diw_config)` asks the main
     window to slice fibre + ink; `design_changed` fires on every edit."""
 
-    slice_requested = Signal(object, object)
+    slice_requested = Signal(object, object, str)     # design, DiwConfig, print mode
     design_changed = Signal(object)
 
     def __init__(self, parent=None):
@@ -291,6 +296,11 @@ class PcbEditor(QWidget):
         self.coord_lbl = QLabel("")
         self.coord_lbl.setObjectName("viewInfo")
         top.addWidget(self.coord_lbl)
+        self.mode_cb = QComboBox()
+        for label, key in MODES:
+            self.mode_cb.addItem(label, key)
+        self.mode_cb.setToolTip(DIW_HELP["print_mode"])
+        top.addWidget(self.mode_cb)
         self.slice_btn = QPushButton("Slice board  ▶")
         self.slice_btn.setObjectName("primary")
         self.slice_btn.setToolTip("Fibre laminate of this outline + DIW electronics on top")
@@ -374,20 +384,81 @@ class PcbEditor(QWidget):
         self.d_rho.setToolTip("Cured ink resistivity in Ω·mm (silver flake ~4e-5, carbon ~0.1, EGaIn 3e-4)")
         self.d_carbon = QCheckBox("Laminate is carbon (conductive)")
         self.d_carbon.setChecked(d.substrate_conductive)
-        for label, w in (("Nozzle", self.d_nozzle), ("Bead width", self.d_lw), ("Layer height", self.d_lh),
-                         ("Conductor layers", self.d_cond), ("", self.d_diel_on), ("Dielectric layers", self.d_diel),
-                         ("Dielectric margin", self.d_margin), ("", self.d_enc), ("Net clearance", self.d_clear),
-                         ("Edge clearance", self.d_edge), ("Ink speed", self.d_vc), ("Dielectric speed", self.d_vd),
-                         ("Dispense", self.d_mode), ("Valve on", self.d_on), ("Valve off", self.d_off),
-                         ("Resistivity Ω·mm", self.d_rho), ("", self.d_carbon)):
-            f.addRow(label, w)
+        self.d_enc_n = QSpinBox()
+        self.d_enc_n.setRange(1, 10)
+        self.d_enc_n.setValue(d.encapsulation_layers)
+        self.d_vt = _spin(1, 300, d.travel_speed_mm_s, 1, 0, " mm/s")
+        self.d_hop = _spin(0, 20, d.z_hop_mm, 0.1, 2)
+        self.d_on_ms = QSpinBox()
+        self.d_on_ms.setRange(0, 5000)
+        self.d_on_ms.setSuffix(" ms")
+        self.d_on_ms.setValue(d.on_delay_ms)
+        self.d_off_ms = QSpinBox()
+        self.d_off_ms.setRange(0, 5000)
+        self.d_off_ms.setSuffix(" ms")
+        self.d_off_ms.setValue(d.off_delay_ms)
+        self.d_epm = _spin(0.0001, 1000, d.e_per_mm3, 0.01, 4, "")
+        self.d_tool = QLineEdit(d.tool_select)
+        self.d_ox = _spin(-500, 500, 0.0)
+        self.d_oy = _spin(-500, 500, 0.0)
+        self.d_oz = _spin(-100, 100, 0.0)
+        self.d_pause = QCheckBox("Pause before ink (cut fibre, swap head)")
+        self.d_pause.setChecked(d.pause_before)
+        self.d_cure = _spin(0.05, 1.0, d.cured_thickness_ratio, 0.05, 2, "")
+        self.d_surface = _spin(0, 500, d.surface_z_mm, 0.1, 2)
+        rows = (("Nozzle", self.d_nozzle, "nozzle"), ("Bead width", self.d_lw, "line_width"),
+                ("Layer height", self.d_lh, "layer_height"), ("Conductor layers", self.d_cond, "conductor_layers"),
+                ("", self.d_diel_on, "dielectric"), ("Dielectric layers", self.d_diel, "dielectric_layers"),
+                ("Dielectric margin", self.d_margin, "dielectric_margin"), ("", self.d_enc, "encapsulate"),
+                ("Encapsulation layers", self.d_enc_n, "encapsulation_layers"),
+                ("Net clearance", self.d_clear, "clearance"), ("Edge clearance", self.d_edge, "edge_clearance"),
+                ("Ink speed", self.d_vc, "speed_conductor"), ("Dielectric speed", self.d_vd, "speed_dielectric"),
+                ("Travel speed", self.d_vt, "travel_speed"), ("Z-hop", self.d_hop, "z_hop"),
+                ("Dispense", self.d_mode, "dispense"), ("Valve on", self.d_on, "dispense_on"),
+                ("Valve off", self.d_off, "dispense_off"), ("Open delay", self.d_on_ms, "on_delay"),
+                ("Close delay", self.d_off_ms, "off_delay"), ("E per mm³", self.d_epm, "e_per_mm3"),
+                ("Tool command", self.d_tool, "tool_select"), ("Head offset X", self.d_ox, "tool_offset"),
+                ("Head offset Y", self.d_oy, "tool_offset"), ("Head offset Z", self.d_oz, "tool_offset"),
+                ("", self.d_pause, "pause_before"), ("Resistivity Ω·mm", self.d_rho, "resistivity"),
+                ("Cure shrink", self.d_cure, "cured_ratio"), ("", self.d_carbon, "carbon"),
+                ("Surface height", self.d_surface, "surface_z"))
+        for _, w, _ in rows:
             for sig in ("valueChanged", "toggled", "currentTextChanged", "editingFinished"):
                 if hasattr(w, sig):
                     getattr(w, sig).connect(self._run_drc)
                     break
-        self.d_mode.currentTextChanged.connect(lambda m: (self.d_on.setEnabled(m == "pneumatic"),
-                                                          self.d_off.setEnabled(m == "pneumatic")))
+        self._diw_tips = {}
+        for label, w, key in rows:
+            tip = DIW_HELP.get(key, "")
+            self._diw_tips[w] = tip
+            w.setToolTip(tip)
+            lbl = QLabel(label)
+            lbl.setToolTip(tip)
+            f.addRow(lbl, w)
+        self.d_mode.currentTextChanged.connect(self._diw_states)
+        self.d_diel_on.toggled.connect(self._diw_states)
+        self.d_enc.toggled.connect(self._diw_states)
+        self.mode_cb.currentIndexChanged.connect(self._diw_states)
+        self._diw_states()
         return box
+
+    def _diw_states(self, *_):
+        """Grey out DIW settings that do not apply (with the reason)."""
+        pneu = self.d_mode.currentText() == "pneumatic"
+        rules = ((self.d_on, pneu, "Volumetric dispensing uses the E axis, not valve commands."),
+                 (self.d_off, pneu, "Volumetric dispensing uses the E axis, not valve commands."),
+                 (self.d_on_ms, pneu, "Only for pneumatic (valve) dispensing."),
+                 (self.d_off_ms, pneu, "Only for pneumatic (valve) dispensing."),
+                 (self.d_epm, not pneu, "Only for volumetric dispensing."),
+                 (self.d_diel, self.d_diel_on.isChecked(), "The dielectric layer is off."),
+                 (self.d_margin, self.d_diel_on.isChecked(), "The dielectric layer is off."),
+                 (self.d_enc_n, self.d_enc.isChecked(), "Encapsulation is off."),
+                 (self.d_surface, self.print_mode() == "electronics",
+                  "Only for Electronics only: otherwise the ink goes on the fibre board's top."))
+        for w, on, why in rules:
+            w.setEnabled(on)
+            tip = self._diw_tips.get(w, "")
+            w.setToolTip(tip if on else f"<b>Not used here.</b> {why}<br><br>{tip}")
 
     def diw_config(self) -> DiwConfig:
         try:
@@ -403,7 +474,13 @@ class PcbEditor(QWidget):
             speed_dielectric_mm_s=self.d_vd.value(), dispense=self.d_mode.currentText(),
             dispense_on=self.d_on.text(), dispense_off=self.d_off.text(),
             resistivity_ohm_mm=rho if rho > 0 else DiwConfig().resistivity_ohm_mm,
-            substrate_conductive=self.d_carbon.isChecked())
+            substrate_conductive=self.d_carbon.isChecked(),
+            encapsulation_layers=self.d_enc_n.value(), travel_speed_mm_s=self.d_vt.value(),
+            z_hop_mm=self.d_hop.value(), on_delay_ms=self.d_on_ms.value(), off_delay_ms=self.d_off_ms.value(),
+            e_per_mm3=self.d_epm.value(), tool_select=self.d_tool.text().strip(),
+            tool_offset=(self.d_ox.value(), self.d_oy.value(), self.d_oz.value()),
+            pause_before=self.d_pause.isChecked(), cured_thickness_ratio=self.d_cure.value(),
+            surface_z_mm=self.d_surface.value())
 
     # ------------------------------------------------------------------
     # Design editing
@@ -790,8 +867,11 @@ class PcbEditor(QWidget):
             tr = spiral_coil(v["x"], v["y"], v["r"], v["turns"], v["pitch"], v["width"], v["net"])
             self.commit(self.design.model_copy(update=dict(traces=self.design.traces + (tr,))))
 
+    def print_mode(self) -> str:
+        return self.mode_cb.currentData()
+
     def _request_slice(self):
-        self.slice_requested.emit(self.design, self.diw_config())
+        self.slice_requested.emit(self.design, self.diw_config(), self.print_mode())
 
 
 def _moved(d: BoardDesign, sel, dx, dy) -> BoardDesign:

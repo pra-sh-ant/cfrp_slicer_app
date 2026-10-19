@@ -151,7 +151,7 @@ def max_track_count(base_poly, track_gap, min_radius, infill_type, include_bound
 
 
 def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_layer,
-                   include_boundary, angle, layer_idx=0, last_pt=None, last_dir=None):
+                   include_boundary, angle, layer_idx=0, last_pt=None, last_dir=None, lead_in=0.0):
     """2D path for one layer of a flat part.
 
     Even layers spiral outside-in, odd layers inside-out. With
@@ -173,7 +173,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         path, _ = corner_step_path(base_poly, gap, min_rad, tracks_per_layer,
                                    outward=layer_idx % 2 != 0,
                                    corner_lead=layer_idx % 2 == 0 and last_pt is not None,
-                                   seam_hint=last_pt)
+                                   seam_hint=last_pt, lead_in=lead_in)
         if not path:
             return []
         if last_pt:
@@ -206,6 +206,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         infill_path, _ = archimedean_path(
             infill_bounds, gap, min_rad, track_count=tracks_per_layer, start_from_inside=is_outward,
             seam_hint=last_pt if is_outward else None, outer_start=wall_start,
+            lead_in=lead_in if is_outward and not include_boundary else 0.0,
         )
         # Outside-in after another layer: the outer ring starts at its first
         # vertex, which on a sliced mesh can be anywhere; if that is not where

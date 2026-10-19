@@ -60,6 +60,11 @@ PERTURB = {
     "v_z": lambda p: p["v_z"] + 1.0,
     "v_overhang": lambda p: p["v_overhang"] + 1.0,
     "dwell": lambda p: p["dwell"] + 1.0,
+    "first_layer_solid": lambda p: not p.get("first_layer_solid", False),
+    "first_layer_infill": lambda p: "Corner-Step Spiral",
+    "first_layer_min_coverage": lambda p: 0.5,
+    "stl_closing_radius": lambda p: 0.3,
+    "stl_stitch": lambda p: 1.0,
 }
 
 

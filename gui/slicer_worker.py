@@ -45,7 +45,8 @@ class SlicerWorker(QThread):
         try:
             if self._board is not None:
                 from cfrp_core.board import slice_structural_board
-                result = slice_structural_board(self._board[0], config, self._board[1], self._machine)
+                mode = self._board[2] if len(self._board) > 2 else "structural"
+                result = slice_structural_board(self._board[0], config, self._board[1], self._machine, mode=mode)
             else:
                 result = slice_part(config, self._machine)
         except ValueError as exc:
