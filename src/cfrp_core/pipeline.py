@@ -67,6 +67,7 @@ class SliceResult:
     constraint_notes: tuple[str, ...]     # automatic adjustments (spec §4)
     info: tuple[str, ...]                 # other notes (e.g. bed auto-positioning)
     stats: dict = None                    # print_time_s, fiber_length_mm, fiber_mass_g
+    bed_shift: tuple = (0.0, 0.0)         # XY added by fit_trajectory_to_bed
 
 
 def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> SliceResult:
@@ -118,5 +119,5 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
     return SliceResult(
         config=cfg, trajectory=trajectory, target_shapes=target_shapes, gcode=gcode,
         validation=validation, max_z=max_z, constraint_notes=resolved.notes, info=tuple(info),
-        stats=stats,
+        stats=stats, bed_shift=(float(shift_x), float(shift_y)),
     )

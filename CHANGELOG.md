@@ -5,6 +5,25 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 32b — DIW slicing for structural electronics)
+- `cfrp_core.diw`: structural PCB design model (`BoardDesign`: outline, holes,
+  traces with width/net, pads, conductor/dielectric/keepout zones; JSON
+  `.spcb.json`), footprint library (1206/0805, SOT-23, headers, JST-PH, test
+  pad), parametric sensors (meander strain gauge/heater, interdigitated
+  electrodes, spiral coil) and an example board.
+- DIW slicer (`DiwConfig`): dielectric raster under the conductors (carbon fibre
+  conducts), conductors as centreline passes or concentric fills, optional
+  encapsulation leaving pads open; segments chained into zigzags, rings of a pad
+  into one path; nearest-neighbour + 2-opt ordering; Z-hop travel; pneumatic
+  (valve codes + dwell) or volumetric (E) dispensing; tool select and offset.
+- DRC: shorts by connectivity, net-to-net clearance, bead-width minimum, edge /
+  hole / keepout clearance, missing dielectric on carbon; per-trace resistance
+  estimate (resistivity, cured thickness); ink length/volume, starts, time.
+- `cfrp_core.board.slice_structural_board`: fibre laminate of the board (Custom
+  Outline with its holes) + DIW on its top surface at the same bed placement,
+  combined G-code (fibre, pause to cut the tow, DIW head). `SliceResult.bed_shift`
+  records the auto-positioning shift.
+
 ### Added / Fixed (Phase 32a — Custom Outline shape, rings that bend round holes)
 - Shape **Custom Outline** (`geometry.custom_outline`, `custom_holes`, mm, placed at
   Start X/Y): any outline with holes, e.g. a structural PCB from the editor; sliced
