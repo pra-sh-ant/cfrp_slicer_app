@@ -35,7 +35,9 @@ fibre layers would mean cutting the fibre).
 | 35 Easy/Advanced editor | **done**: easy 6-step mode, drag-drop parts, rotate, true bead width | `1694613` |
 | 36 Deep PCB audit + Advanced panel | **done**: ink clipped to the board, insulation under all ink, 200 random boards clean; grouped Advanced panel, tabs, fixed widths | (this commit) |
 
-### Suggested upgrades (prioritised)
+| 37 Suggested upgrades | **done**: 1 vertex editing, 2 multi-select/copy/paste, 3 auto-router + connection lines, 4 DXF/netlist import + DXF export, 5 embedded electronics, 6 ink/insulation presets + UV cure, 7 flow start/stop compensation, 9 part overlay + measure, 10 HTML report. Not done: 8 (extra reinforcing loops / Fermat round holes), Gerber import, align/distribute, a DIW flow calibration coupon | (this commit) |
+
+### Suggested upgrades (prioritised; Phase 37 did all but 8)
 1. **Vertex editing**: drag outline corners and wire bends; insert/delete a bend.
 2. **Multi-select and copy/paste** (rubber-band selection, Ctrl+C/V, align/distribute).
 3. **Auto-router** for wires (grid A* around pads/holes with clearance), plus

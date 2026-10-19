@@ -77,9 +77,13 @@ def check(d, cfg, proc, problems, messages):
                 if not any(m.startswith("Short") for m in rep["messages"]):
                     problems["short not reported"] += 1
     placement_err = any("board edge" in m or "hole at" in m or "keepout" in m for m in rep["messages"])
-    for mode in ("structural", "fibre", "electronics"):
+    for mode in ("structural", "fibre", "electronics", "embedded"):
+        if mode == "embedded" and proc.layers < 2:
+            proc_m = proc.model_copy(update=dict(layers=2))
+        else:
+            proc_m = proc
         try:
-            r = slice_structural_board(d, proc, cfg, mode=mode)
+            r = slice_structural_board(d, proc_m, cfg, mode=mode)
         except Exception:
             problems[f"exception {mode}: {traceback.format_exc().splitlines()[-1][:90]}"] += 1
             continue
@@ -109,6 +113,12 @@ def check(d, cfg, proc, problems, messages):
                 problems["fibre Fail"] += 1
         if r.diw is None:
             continue
+        if r.fibre_upper is not None:
+            lo = min(p["z"] for p in r.fibre_upper.trajectory)
+            if any(p["extruding"] and p["z"] >= lo for p in r.diw.trajectory):
+                problems["ink above the upper laminate"] += 1
+            if r.gcode.count("G28") != 1 or r.gcode.count("M84") != 1:
+                problems["embedded G-code not one program"] += 1
         traj = r.diw.trajectory
         ox, oy = r.offset
         board = Polygon([(x + ox, y + oy) for x, y in d.outline]).buffer(1e-6)
@@ -165,13 +175,21 @@ def main():
             DiwConfig(dielectric=False, substrate_conductive=False)]
     procs = [ProcessConfig(), ProcessConfig(infill_type="Corner-Step Spiral", fill_solid=True, layers=2),
              ProcessConfig(infill_type="Oriented Serpentine", layers=2, layup_deg=(0.0, 90.0), first_layer_solid=True)]
+    from cfrp_core.diw.router import auto_route, ratsnest
+    routed = failed = 0
     for k in range(n):
         d = random_design(rng)
+        if k % 2:
+            d, rep = auto_route(d, cfgs[k % len(cfgs)])
+            routed += rep["routed"]
+            failed += len(rep["failed"])
+            if not rep["failed"] and ratsnest(d):
+                problems["router left connections without reporting"] += 1
         try:
             check(d, cfgs[k % len(cfgs)], procs[k % len(procs)], problems, messages)
         except Exception:
             problems["audit crash: " + traceback.format_exc().splitlines()[-1][:90]] += 1
-    print(f"designs {n}")
+    print(f"designs {n}, wires auto-routed {routed}, nets the router could not reach {failed}")
     print("PROBLEMS:", dict(problems) if problems else "none")
     print("messages:")
     for m, c in messages.most_common(40):

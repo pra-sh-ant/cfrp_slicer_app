@@ -42,7 +42,14 @@ def printable_boundary(base_poly, track_gap, min_radius):
     if boundary.is_empty or min_rad <= 0:
         return boundary
 
-    rounded = fillet(boundary, min_rad)
+    if boundary.geom_type == 'MultiPolygon':
+        # Holes or narrow necks split the wall centreline into pieces (e.g. a
+        # board whose pad windows nearly touch): round each piece.
+        from shapely.ops import unary_union
+        pieces = [fillet(Polygon(g.exterior), min_rad) for g in boundary.geoms if not g.is_empty]
+        rounded = unary_union([g for g in pieces if not g.is_empty])
+    else:
+        rounded = fillet(boundary, min_rad)
     if rounded.is_empty:
         return boundary
     # fillet works on the outer boundary only; put the holes back (a slice of

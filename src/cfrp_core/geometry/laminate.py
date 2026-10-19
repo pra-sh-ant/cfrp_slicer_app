@@ -181,6 +181,9 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
         return path
 
     wall_poly = printable_boundary(base_poly, gap, min_rad)
+    if wall_poly.geom_type == 'MultiPolygon':
+        # Holes pinch the part into pieces: one stroke follows the largest.
+        wall_poly = largest_polygon(wall_poly)
     if wall_poly.is_empty or wall_poly.geom_type != 'Polygon':
         return []
     wall_coords = list(wall_poly.exterior.coords)

@@ -217,3 +217,174 @@ def auto_net(design: BoardDesign, points) -> tuple[BoardDesign, str]:
     pads = tuple(p.model_copy(update=dict(net=net)) if i in hit and not p.net else p
                  for i, p in enumerate(design.pads))
     return design.model_copy(update=dict(pads=pads)), net
+
+
+# --- several items at once -------------------------------------------------------
+
+def transform_many(design: BoardDesign, sels, dx=0.0, dy=0.0, angle_deg=0.0) -> BoardDesign:
+    """Move / rotate several selections together (rotation about the centre
+    of all of them)."""
+    sels = list(dict.fromkeys(sels))
+    if not sels:
+        return design
+    about = None
+    if angle_deg:
+        b = unary_union([geometry(design, s) for s in sels]).bounds
+        about = ((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0)
+    for s in sels:
+        design = transform(design, s, dx, dy, angle_deg, about)
+    return design
+
+
+def delete_many(design: BoardDesign, sels) -> BoardDesign:
+    """Delete several selections (highest index first so the rest stay valid)."""
+    by_kind = {}
+    for s in dict.fromkeys(sels):
+        by_kind.setdefault(s[0], []).append(s[1])
+    for kind, keys in by_kind.items():
+        if kind == "part":
+            for ref in keys:
+                design = delete(design, ("part", ref))
+            continue
+        for k in sorted(keys, reverse=True):
+            design = delete(design, (kind, k))
+    return design
+
+
+def select_in_rect(design: BoardDesign, x0, y0, x1, y1) -> list:
+    """Every item lying completely inside the rectangle."""
+    from shapely.geometry import box
+    r = box(min(x0, x1), min(y0, y1), max(x0, x1), max(y0, y1))
+    out, refs = [], set()
+    for i, p in enumerate(design.pads):
+        ref = part_ref(p.name)
+        if ref:
+            if ref not in refs and r.contains(geometry(design, ("part", ref))):
+                out.append(("part", ref))
+            refs.add(ref)
+        elif r.contains(pad_shape(p)):
+            out.append(("pad", i))
+    for kind, items in (("trace", design.traces), ("hole", design.holes), ("zone", design.zones)):
+        for i in range(len(items)):
+            if r.contains(geometry(design, (kind, i))):
+                out.append((kind, i))
+    return out
+
+
+def copy_items(design: BoardDesign, sels) -> dict:
+    """A clipboard: the selected traces, pads, holes and zones."""
+    clip = {"traces": [], "pads": [], "holes": [], "zones": []}
+    for kind, key in dict.fromkeys(sels):
+        if kind == "part":
+            clip["pads"] += [design.pads[i] for i in part_pads(design, key)]
+        else:
+            clip[_FIELD[kind]].append(getattr(design, _FIELD[kind])[key])
+    return clip
+
+
+def paste_items(design: BoardDesign, clip: dict, dx=5.0, dy=-5.0) -> tuple[BoardDesign, list]:
+    """Add a clipboard moved by (dx, dy); copied parts get new names (R1 ->
+    the next free R<n>). Returns (design, selections of the pasted items)."""
+    def mv(pts):
+        return tuple((x + dx, y + dy) for x, y in pts)
+    rename = {}
+    pads = []
+    for p in clip["pads"]:
+        ref = part_ref(p.name)
+        name = p.name
+        if ref:
+            if ref not in rename:
+                prefix = ref.rstrip("0123456789") or "U"
+                taken = design.model_copy(update=dict(pads=design.pads + tuple(pads)))
+                used = {part_ref(q.name) for q in taken.pads} | set(rename.values())
+                n = 1
+                while f"{prefix}{n}" in used:
+                    n += 1
+                rename[ref] = f"{prefix}{n}"
+            name = rename[ref] + "." + p.name.rpartition(".")[2]
+        pads.append(p.model_copy(update=dict(x=p.x + dx, y=p.y + dy, name=name)))
+    n_t, n_h, n_z, n_p = len(design.traces), len(design.holes), len(design.zones), len(design.pads)
+    d = design.model_copy(update=dict(
+        traces=design.traces + tuple(t.model_copy(update=dict(points=mv(t.points))) for t in clip["traces"]),
+        pads=design.pads + tuple(pads),
+        holes=design.holes + tuple(h.model_copy(update=dict(x=h.x + dx, y=h.y + dy)) for h in clip["holes"]),
+        zones=design.zones + tuple(z.model_copy(update=dict(points=mv(z.points))) for z in clip["zones"])))
+    sels = [("trace", n_t + i) for i in range(len(clip["traces"]))]
+    sels += [("hole", n_h + i) for i in range(len(clip["holes"]))]
+    sels += [("zone", n_z + i) for i in range(len(clip["zones"]))]
+    sels += [("part", r) for r in dict.fromkeys(rename.values())]
+    sels += [("pad", n_p + i) for i, p in enumerate(pads) if not part_ref(p.name)]
+    return d, sels
+
+
+# --- corners of the outline and bends of wires/zones ----------------------------------
+
+def _points(design: BoardDesign, target):
+    kind, key = target
+    if kind == "outline":
+        return list(design.outline), True
+    if kind == "trace":
+        return list(design.traces[key].points), False
+    return list(design.zones[key].points), True
+
+
+def _set_points(design: BoardDesign, target, pts):
+    kind, key = target
+    if kind == "outline":
+        return design.model_copy(update=dict(outline=tuple(pts)))
+    items = list(getattr(design, _FIELD[kind]))
+    items[key] = items[key].model_copy(update=dict(points=tuple(pts)))
+    return design.model_copy(update={_FIELD[kind]: tuple(items)})
+
+
+def _all_targets(design):
+    return ([("trace", i) for i in range(len(design.traces))] + [("zone", i) for i in range(len(design.zones))]
+            + [("outline", None)])
+
+
+def find_vertex(design: BoardDesign, x, y, tol=1.0, targets=None):
+    """(target, index) of the corner/bend nearest (x, y) within tol."""
+    best = None
+    for t in targets if targets is not None else _all_targets(design):
+        pts, _ = _points(design, t)
+        for k, (px, py) in enumerate(pts):
+            d = math.hypot(px - x, py - y)
+            if d <= tol and (best is None or d < best[0]):
+                best = (d, t, k)
+    return None if best is None else (best[1], best[2])
+
+
+def find_segment(design: BoardDesign, x, y, tol=1.0, targets=None):
+    """(target, i) of the segment pts[i] -> pts[i+1] nearest (x, y) within tol."""
+    from shapely.geometry import LineString
+    best = None
+    for t in targets if targets is not None else _all_targets(design):
+        pts, closed = _points(design, t)
+        segs = list(zip(pts, pts[1:] + ([pts[0]] if closed else []), strict=False))
+        for i, (a, b) in enumerate(segs):
+            d = LineString([a, b]).distance(Point(x, y))
+            if d <= tol and (best is None or d < best[0]):
+                best = (d, t, i)
+    return None if best is None else (best[1], best[2])
+
+
+def move_vertex(design: BoardDesign, target, k, x, y) -> BoardDesign:
+    pts, _ = _points(design, target)
+    pts[k] = (x, y)
+    return _set_points(design, target, pts)
+
+
+def insert_vertex(design: BoardDesign, target, i, x, y) -> BoardDesign:
+    """Add a bend/corner after point i (on segment i)."""
+    pts, _ = _points(design, target)
+    pts.insert(i + 1, (x, y))
+    return _set_points(design, target, pts)
+
+
+def delete_vertex(design: BoardDesign, target, k) -> BoardDesign:
+    """Remove a bend/corner (a wire keeps 2 points, a shape 3)."""
+    pts, closed = _points(design, target)
+    if len(pts) <= (3 if closed else 2):
+        return design
+    pts.pop(k)
+    return _set_points(design, target, pts)

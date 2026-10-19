@@ -382,6 +382,14 @@ class ViewerGL(QWidget):
                                   "carbon fibre core")
         self.resin_chk.toggled.connect(self._recolor)
         bar.addWidget(self.resin_chk)
+        self.part_chk = QCheckBox("Part")
+        self.part_chk.setToolTip("Show the part itself, see-through (STL model or the extruded outline)")
+        self.part_chk.toggled.connect(self._show_part)
+        bar.addWidget(self.part_chk)
+        self.measure_chk = QCheckBox("Measure")
+        self.measure_chk.setToolTip("Click two toolpath points to measure the distance between them")
+        self.measure_chk.toggled.connect(self._reset_measure)
+        bar.addWidget(self.measure_chk)
         self.travel_chk = QCheckBox("Travel")
         self.travel_chk.setChecked(True)
         self.travel_chk.setToolTip("Show DIW travel moves (no ink)")
@@ -514,10 +522,14 @@ class ViewerGL(QWidget):
     # Scene update
     # ------------------------------------------------------------------
     def update_scene(self, trajectory, target_shapes, max_z, bead_width=1.0, bead_height=0.2,
-                     r_min=3.0, extra=None):
+                     r_min=3.0, extra=None, part_mesh=None):
         """Show a slice result. `extra`: further ToolpathData (e.g. DIW)
-        drawn after the fibre."""
+        drawn after the fibre. `part_mesh`: (N, 3, 3) triangles of the part
+        for the see-through overlay (None = extrude the first outline)."""
         self._r_min = float(r_min)
+        self._part_tris = part_mesh
+        self._part_top = float(max_z or 0.0)
+        self._reset_measure()
         fibre = tm.from_trajectory(trajectory or [], bead_width, bead_height)
         data = tm.concat([fibre, extra]) if extra is not None else fibre
         self._outlines = list(target_shapes or [])
@@ -553,6 +565,7 @@ class ViewerGL(QWidget):
             self.fit()
         self._start.setData(pos=data.xyz[:1])
         self._start.setVisible(True)
+        self._show_part()
         fib_idx = np.nonzero(data.tool == 0)[0]
         if len(fib_idx):
             self._end.setData(pos=data.xyz[fib_idx[-1]:fib_idx[-1] + 1])
@@ -793,6 +806,79 @@ class ViewerGL(QWidget):
         if k is not None:
             self._show_info(k)
             self.point_picked.emit(int(self._data.source[k]))
+            if self.measure_chk.isChecked():
+                self._measure_point(k)
+
+    # ------------------------------------------------------------------
+    # Part overlay and measuring
+    # ------------------------------------------------------------------
+    def _part_triangles(self):
+        if getattr(self, "_part_tris", None) is not None:
+            return np.asarray(self._part_tris, dtype=np.float32)
+        shapes = [sh for sh in self._outlines if sh[1] is not None and not sh[1].is_empty]
+        if not shapes:
+            return None
+        import shapely
+        z0 = 0.0
+        z1 = max(self._part_top, 0.2)
+        geom = shapes[0][1].buffer(0)
+        tris = []
+        for poly in getattr(geom, 'geoms', [geom]):
+            if poly.geom_type != 'Polygon':
+                continue
+            for t in shapely.constrained_delaunay_triangles(poly).geoms:
+                c = np.asarray(t.exterior.coords)[:3]
+                tris.append([[*c[0], z0], [*c[2], z0], [*c[1], z0]])
+                tris.append([[*c[0], z1], [*c[1], z1], [*c[2], z1]])
+            for ring in [poly.exterior, *poly.interiors]:
+                c = np.asarray(ring.coords)
+                for a, b in zip(c[:-1], c[1:], strict=False):
+                    tris.append([[*a, z0], [*b, z0], [*b, z1]])
+                    tris.append([[*a, z0], [*b, z1], [*a, z1]])
+        return np.asarray(tris, dtype=np.float32) if tris else None
+
+    def _show_part(self, on=None):
+        if self._view is None:
+            return
+        if getattr(self, "_part_item", None) is not None:
+            self._view.removeItem(self._part_item)
+            self._part_item = None
+        if not self.part_chk.isChecked():
+            return
+        tris = self._part_triangles()
+        if tris is None or not len(tris):
+            return
+        verts = tris.reshape(-1, 3)
+        faces = np.arange(len(verts), dtype=np.int32).reshape(-1, 3)
+        md = gl.MeshData(vertexes=verts, faces=faces)
+        self._part_item = gl.GLMeshItem(meshdata=md, smooth=False, shader='shaded',
+                                        color=(0.55, 0.62, 0.85, 0.18), glOptions='translucent')
+        self._part_item.setDepthValue(20)
+        self._view.addItem(self._part_item)
+
+    def _reset_measure(self, *_):
+        self._measure = []
+        if getattr(self, "_measure_item", None) is not None and self._view is not None:
+            self._view.removeItem(self._measure_item)
+        self._measure_item = None
+
+    def _measure_point(self, k):
+        self._measure.append(k)
+        if len(self._measure) < 2:
+            self.info.setText(self.info.text() + "   ·  Measure: click a second point")
+            return
+        a, b = (self._data.xyz[i].astype(np.float64) for i in self._measure[-2:])
+        d = float(np.linalg.norm(b - a))
+        dxy = float(np.linalg.norm(b[:2] - a[:2]))
+        self.info.setText(f"Distance {d:.2f} mm  (in plan {dxy:.2f} mm, height {b[2] - a[2]:+.2f} mm)")
+        if self._view is not None:
+            if self._measure_item is not None:
+                self._view.removeItem(self._measure_item)
+            self._measure_item = gl.GLLinePlotItem(pos=np.array([a, b], dtype=np.float32),
+                                                   color=(1.0, 0.9, 0.3, 1.0), width=2.5, antialias=True)
+            self._measure_item.setDepthValue(30)
+            self._view.addItem(self._measure_item)
+        self._measure = []
 
     # ------------------------------------------------------------------
     # Camera

@@ -43,6 +43,18 @@ class DiwConfig(BaseModel):
     cured_thickness_ratio: float = 0.5   # cured film / wet layer height
     substrate_conductive: bool = True    # carbon fibre conducts
     surface_z_mm: float = 0.0            # electronics-only prints: top of the part printed on
+    # Flow start/stop compensation (calibrate with a test print):
+    stop_early_mm: float = 0.0           # pneumatic: close the valve this far before a line ends
+    prime_e: float = 0.0                 # volumetric: extra push at each line start (E units)
+    retract_e: float = 0.0               # volumetric: pull back at each line end (E units)
+    # Cure between ink layers (UV LED on the head):
+    uv_cure_between_layers: bool = False
+    uv_cure_on: str = "M1995 P47 S255"
+    uv_cure_off: str = "M1995 P47 S0"
+    uv_cure_s: float = 3.0
+    # Embedded electronics: print them after this fibre layer, then lay the
+    # remaining fibre layers on top (0 = on top of the whole laminate).
+    embed_after_layer: int = 0
 
     @field_validator("nozzle_mm", "line_width_mm", "layer_height_mm", "speed_conductor_mm_s",
                      "speed_dielectric_mm_s", "travel_speed_mm_s", "resistivity_ohm_mm",
@@ -61,7 +73,8 @@ class DiwConfig(BaseModel):
         return v
 
     @field_validator("z_hop_mm", "dielectric_margin_mm", "clearance_mm", "edge_clearance_mm", "surface_z_mm",
-                     "on_delay_ms", "off_delay_ms")
+                     "on_delay_ms", "off_delay_ms", "stop_early_mm", "prime_e", "retract_e", "uv_cure_s",
+                     "embed_after_layer")
     @classmethod
     def _non_negative(cls, v, info):
         if v < 0:

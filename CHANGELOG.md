@@ -5,6 +5,45 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 37 — the suggested upgrades)
+- **Auto-router** (`cfrp_core.diw.router`): unrouted connections (ratsnest: same-net
+  islands joined by a minimum spanning tree) drawn dashed in the editor;
+  Auto-route draws each with grid A* (8 directions, bend penalty) clear of other
+  nets, holes, keepouts and the edge, re-planning after every wire, and names the
+  nets it cannot reach.
+- **Imports / exports** (`cfrp_core.diw.io`): board outline + holes from ASCII DXF
+  (LWPOLYLINE, POLYLINE, LINE chains, ARC, CIRCLE, $INSUNITS); netlists as
+  `ref,pin,net` CSV or `NET: R1.2 D1-1` text; DXF export of outline, holes, wires.
+- **Ink presets** (silver flake, nanoparticle silver, carbon/graphene, liquid metal,
+  copper) and insulation presets (UV, epoxy, silicone).
+- **Flow start/stop compensation**: close the valve early (pneumatic), prime and
+  retract (volumetric); **UV cure** between ink layers (commands and time).
+- **Embedded electronics** (print mode `embedded`, `embed_after_layer`): lower
+  laminate -> insulated electronics (covering forced on) -> upper laminate as a
+  second fibre stroke, filled solid, with windows over the pads; one program
+  (no re-homing, two pauses).
+- **Print report** (`cfrp_core.report.html_report`, toolbar *Report…*): one HTML
+  page with the 3D view, time, materials, checks, coverage per layer, ink and
+  wire resistances.
+- **Editor**: multi-select (Shift+click, area rectangle, Ctrl+A), move/rotate/
+  delete of many, copy/paste/duplicate with new part names, corner/bend editing of
+  wires, areas and the board outline (drag, double-click to add, right-click to
+  remove), Import/export menu, connection lines toggle, Auto-route buttons, ink
+  preset choice in Easy mode; Easy and Advanced print-mode boxes stay in sync.
+- **Viewer**: see-through part overlay (STL model as placed, or the extruded
+  outline) and a measuring tool (two clicks: distance, plan distance, height).
+- `tools/pcb_audit.py` also routes half the random boards and checks the embedded
+  mode (ink between the laminates, one program).
+- **DIW flow coupon** (`cfrp_core.diw.calibration.flow_coupon`, written with the other
+  calibration coupons): six lines with increasing close-early distance / retract.
+- Fixed: the early valve close only fired when a path point happened to lie inside
+  the distance (never on long straight raster lines); the move is now split exactly
+  there.
+- Fixed (found by the audit): holes that pinch a board split the wall centreline
+  and `printable_boundary` crashed (MultiPolygon has no exterior); each piece is now
+  rounded, and with Print Outer Boundary the stroke follows the largest piece
+  instead of printing nothing.
+
 ### Fixed (Phase 36 — deep PCB / structural audit, usable Advanced panel)
 - New `tools/pcb_audit.py`: random boards (outline, holes, every palette part,
   wires between random pads, moves and rotations) sliced in all three print

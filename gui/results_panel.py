@@ -236,6 +236,21 @@ class DashboardTab(QScrollArea):
             self._labels.append(lbl)
 
 
+def _stl_triangles(geometry, shift):
+    """The imported model as the slicer placed it (scale, bed shift)."""
+    try:
+        import numpy as np
+
+        from cfrp_core.geometry.mesh_slicer import load_stl
+        tris = np.asarray(load_stl(geometry.stl_path).triangles, dtype=np.float64) * float(geometry.stl_scale)
+        tris[..., 2] -= tris[..., 2].min()
+        tris[..., 0] += shift[0]
+        tris[..., 1] += shift[1]
+        return tris
+    except Exception:
+        return None
+
+
 class ViewerTab(QWidget):
     """The 3D viewer (layer range, scrubber and colour modes live inside it)."""
 
@@ -250,7 +265,7 @@ class ViewerTab(QWidget):
     def viewer(self):
         return self._viewer
 
-    def update_view(self, trajectory, target_shapes, max_z, config=None, extra=None):
+    def update_view(self, trajectory, target_shapes, max_z, config=None, extra=None, shift=(0.0, 0.0)):
         kw = {}
         if config is not None:
             # The laid bead is about as wide as the needle (never wider than
@@ -258,6 +273,9 @@ class ViewerTab(QWidget):
             bead = min(float(config.material.needle_dia_mm), float(config.track_gap_mm))
             kw = dict(bead_width=bead, bead_height=float(config.layer_height_mm),
                       r_min=float(config.min_radius_mm))
+            g = config.geometry
+            if g.shape == "STL Import" and g.stl_path:
+                kw["part_mesh"] = _stl_triangles(g, shift)
         self._viewer.update_scene(trajectory, target_shapes, max_z, extra=extra, **kw)
 
     def show_layer(self, layer):
@@ -380,7 +398,8 @@ class ResultsPanel(QWidget):
         self.banner.set_result(result.validation, result.constraint_notes,
                                tuple(result.info) + tuple(extra_notes))
         self._viewer_tab.update_view(result.trajectory, result.target_shapes, result.max_z,
-                                     config=result.config, extra=extra)
+                                     config=result.config, extra=extra,
+                                     shift=getattr(result, "bed_shift", (0.0, 0.0)))
         self._gcode_tab.set_gcode(result.gcode, result.config.layers, trajectory=result.trajectory)
         self._dash_tab.update_stats(
             result.trajectory, result.gcode,

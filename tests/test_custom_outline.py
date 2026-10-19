@@ -71,3 +71,16 @@ def test_zigzag_on_a_board_never_crosses_a_hole():
     pts = [(p["x"], p["y"]) for p in res.trajectory if not p.get("is_anchor") and not p.get("is_transition")]
     line = LineString(pts)
     assert sum(line.intersection(translate(h, sx, sy)).length for h in HOLES) == 0.0
+
+
+def test_holes_that_pinch_the_board_do_not_crash():
+    """Two holes almost meeting split the wall centreline in two; the fillet
+    took only a single polygon (AttributeError, found by tools/pcb_audit.py)."""
+    from shapely.geometry import Polygon
+
+    from cfrp_core.geometry import printable_boundary
+    holes = [list(Point(30, y).buffer(9.4, 16).exterior.coords)[:-1] for y in (10, 30)]
+    poly = Polygon(OUTLINE, holes)
+    assert not printable_boundary(poly, 1.2, 3.0).is_empty
+    res = _board(custom_holes=holes, infill_type="Archimedean (Concentric Spiral)", include_boundary=True)
+    assert res.trajectory

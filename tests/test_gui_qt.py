@@ -260,3 +260,62 @@ def test_easy_mode_drop_rotate_move_and_wire(editor):
     editor.set_advanced(True)
     assert editor.side_tabs.isTabVisible(2)
     assert sum(b.isChecked() for b in editor._tool_btns.buttons()) == 1
+
+
+def test_editor_multi_select_copy_paste_and_vertices(editor, tmp_path):
+    from PySide6.QtCore import Qt
+
+    editor.set_tool("select")
+    editor._press(24, 24, Qt.LeftButton)            # empty board: start a selection rectangle
+    editor._move(48, 31, True)
+    editor._release(48, 31)
+    assert ("part", "R1") in editor._sels and ("part", "D1") in editor._sels
+    n = len(editor.design.pads)
+    editor._key(Qt.Key_C, Qt.ControlModifier)
+    editor._key(Qt.Key_V, Qt.ControlModifier)
+    assert len(editor.design.pads) == n + 4 and ("part", "R2") in editor._sels
+    editor.delete_selected()
+    assert len(editor.design.pads) == n
+    # drag a wire bend
+    editor._sels = [("trace", 0)]
+    editor.redraw()
+    editor._press(12, 28, Qt.LeftButton)            # the bend handle at (12, 28)
+    editor._move(14, 30, True)
+    editor._release(14, 30)
+    assert editor.design.traces[0].points[1] == (14, 30)
+    editor._double(20, 29.2)                         # double-click on the segment adds a bend
+    assert len(editor.design.traces[0].points) == 4
+    editor._press(20, 29, Qt.RightButton)            # right-click on it removes it again
+    assert len(editor.design.traces[0].points) == 3
+    # board corner
+    editor._press(60, 20, Qt.LeftButton)            # on the board edge
+    assert editor._sels == [("outline", None)]
+    editor._release(60, 20)
+    editor._press(60, 40, Qt.LeftButton)
+    editor._move(64, 44, True)
+    editor._release(64, 44)
+    assert (64.0, 44.0) in editor.design.outline
+
+
+def test_editor_auto_route_import_and_presets(editor, tmp_path):
+    from cfrp_core.diw.io import export_dxf
+    from cfrp_core.diw.router import ratsnest
+    editor.commit(editor.design.model_copy(update=dict(traces=())))
+    assert ratsnest(editor.design)
+    rep = editor.auto_route()
+    assert rep["failed"] == [] and not ratsnest(editor.design)
+    export_dxf(editor.design, tmp_path / "b.dxf")
+    editor.new_design()
+    editor.import_dxf_dialog(str(tmp_path / "b.dxf"))
+    assert len(editor.design.holes) == 4
+    (tmp_path / "n.csv").write_text("ref,pin,net\nJ1,1,GND\n")
+    editor.load_example()
+    editor.import_netlist_dialog(str(tmp_path / "n.csv"))
+    assert "1 pad(s)" in editor.hint.text()
+    editor.set_advanced(True)
+    editor.d_ink_preset.setCurrentText("Liquid metal (EGaIn)")
+    cfg = editor.diw_config()
+    assert cfg.encapsulate and cfg.resistivity_ohm_mm == pytest.approx(2.94e-4)
+    editor.mode_cb.setCurrentIndex(3)
+    editor.set_advanced(False)
+    assert editor.print_mode() == "embedded"

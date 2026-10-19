@@ -30,6 +30,33 @@ left); switch to **Advanced** only when you need a tool or setting Easy hides.
 The 3D view then shows the fibre (grey core in amber resin) and the ink
 (insulation green, conductive ink silver). Save the G-code from the toolbar.
 
+## Faster ways
+
+- **Let it draw the wires.** Give pads the same net (draw one wire, import a
+  netlist, or type a net in Advanced): dashed lines show what still needs
+  connecting. Press **Auto-route** and the wires are drawn for you, keeping
+  clear of other wires, holes and the edge. Anything it cannot reach is named
+  under the canvas.
+- **Select many.** Shift+click adds to the selection; drag on an empty part of
+  the board to select everything inside the rectangle; Ctrl+A selects all.
+  Move, rotate and delete then act on all of them. Ctrl+C / Ctrl+V copy and
+  paste (copied parts get new names), Ctrl+D duplicates.
+- **Change a shape.** Click a wire, an area or the board edge: white squares
+  appear on its corners. Drag one to move it, double-click an edge to add a
+  corner, right-click a corner to remove it.
+- **Import.** *Import / export* reads a board outline (and holes) from a DXF
+  drawn in any CAD program, or a netlist (`ref,pin,net` lines or
+  `NET: R1.2 D1.1`) to tell which pads connect. Export DXF sends the outline
+  and wires back to CAD.
+- **Inks.** Pick your ink in step 6 (silver, nanoparticle silver, carbon,
+  liquid metal, copper): line width, speed and resistance follow.
+- **Electronics inside the board.** Print mode *Embedded* prints part of the
+  fibre, then the electronics (insulated below and above), then the rest of
+  the fibre on top, leaving a window over every pad. The printer pauses twice:
+  to cut the fibre and mount the ink head, and to re-thread the fibre.
+- **Report.** The main toolbar's *Report…* saves a page with the print time,
+  materials, every check, coverage per layer and each wire's resistance.
+
 ## Good to know
 
 - **Carbon fibre conducts electricity.** The slicer prints an insulating layer

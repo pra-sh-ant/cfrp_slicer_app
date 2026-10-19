@@ -147,6 +147,8 @@ class MainWindow(QMainWindow):
         tb.addSeparator()
         tb.addAction("PCB Editor", self._show_editor).setToolTip(
             "Draw a structural PCB: board outline, holes, traces, pads (DIW electronics)")
+        tb.addAction("Report…", self._save_report).setToolTip(
+            "Save a print report (HTML): time, materials, checks, coverage, wire resistances")
         tb.addAction("Calibration…", self._generate_calibration).setToolTip(
             "Write the calibration coupons for these settings")
         self._toolbar = tb
@@ -260,6 +262,32 @@ class MainWindow(QMainWindow):
         self._modes.setCurrentIndex(0)
         self._slice()
 
+    def _save_report(self):
+        """HTML report of the last slice, with a picture of the 3D view."""
+        from PySide6.QtCore import QBuffer, QByteArray, QIODevice
+
+        from cfrp_core.report import html_report
+        res = getattr(self, "_last_result", None)
+        if res is None:
+            QMessageBox.information(self, "Report", "Slice something first.")
+            return
+        path, _ = QFileDialog.getSaveFileName(self, "Save report", "print_report.html", "HTML (*.html)")
+        if not path:
+            return
+        img = None
+        view = getattr(self._results.viewer, "_view", None)
+        if view is not None:
+            data = QByteArray()
+            buf = QBuffer(data)
+            buf.open(QIODevice.WriteOnly)
+            view.grabFramebuffer().save(buf, "PNG")
+            img = bytes(data)
+        board = getattr(self, "_last_board", None) if res.config.geometry.shape == "Custom Outline" else None
+        html = html_report(fibre=None if board else res, board=board, image_png=img,
+                           title=f"Print report: {res.config.geometry.shape}")
+        pathlib.Path(path).write_text(html, encoding="utf-8")
+        self._status_lbl.setText(f"Report saved: {pathlib.Path(path).name}")
+
     def _on_finished(self, result):
         self._busy.setVisible(False)
         self._cancel_btn.setVisible(False)
@@ -272,6 +300,9 @@ class MainWindow(QMainWindow):
         else:
             self._results.update(result)
             top = result.max_z
+        self._last_result = result
+        if not hasattr(result, "diw") and result.config.geometry.shape != "Custom Outline":
+            self._last_board = None
         n = len(result.trajectory)
         v = result.validation["status"]
         parts = ([f"{n:,} fibre points"] if n else []) + ([f"{ink:,} ink points"] if ink else [])
@@ -297,9 +328,15 @@ class MainWindow(QMainWindow):
         rank = {"Pass": 0, "Warning": 1, "Fail": 2}
         statuses = [fibre.validation["status"]] + ([diw.validation["status"]] if diw else [])
         status = max(statuses, key=rank.get)
+        upper = None
         msgs = [m for m in fibre.validation["messages"] if not m.startswith("✅")]
         if diw is not None:
             msgs += [f"DIW: {m}" for m in diw.validation["messages"] if not m.startswith("DRC passed")]
+        upper = getattr(board, "fibre_upper", None)
+        if upper is not None:
+            msgs += [f"Upper laminate: {m}" for m in upper.validation["messages"] if not m.startswith("✅")]
+            statuses.append(upper.validation["status"])
+            status = max(statuses, key=rank.get)
         if not msgs:
             msgs = ["✅ All checks passed."]
         merged = dataclasses.replace(fibre, validation={"status": status, "messages": msgs}, gcode=board.gcode)
@@ -314,7 +351,14 @@ class MainWindow(QMainWindow):
             rows += [(f"R {t['name']}", f"{t['resistance_ohm'] * 1000:.1f} mΩ  ({t['length_mm']:.1f} mm)")
                      for t in diw.validation["traces"]]
             extra = from_trajectory(diw.trajectory, tool=1)
-        self._results.update(merged, extra=extra, extra_rows=rows)
+        if upper is not None:
+            from .toolpath_mesh import concat
+            c = upper.config
+            bead = min(float(c.material.needle_dia_mm), float(c.track_gap_mm))
+            extra = concat([extra, from_trajectory(upper.trajectory, bead, float(c.layer_height_mm))])
+            rows += [("Upper laminate", f"{c.layers} layer(s), {(upper.stats or {}).get('print_time_s', 0) / 60:.1f} min")]
+        self._last_board = board
+        self._results.update(merged, extra=extra, extra_rows=rows, extra_notes=tuple(getattr(board, "notes", ())))
         return merged
 
     def _on_failed(self, msg: str):
@@ -324,7 +368,7 @@ class MainWindow(QMainWindow):
         self._status_lbl.setText(f"Failed: {msg[:80]}")
 
     def _generate_calibration(self):
-        """Write the four calibration coupons for the current settings."""
+        """Write the fibre calibration coupons and the ink flow coupon."""
         from cfrp_core import from_legacy_dict, resolve_process_constraints
         from cfrp_core.calibration import COUPONS, make_coupon
 
@@ -340,6 +384,10 @@ class MainWindow(QMainWindow):
                 path = pathlib.Path(folder) / f"calibration_{kind}.gcode"
                 path.write_text(gcode, encoding="utf-8")
                 written.append(path.name)
+            from cfrp_core.diw.calibration import flow_coupon
+            path = pathlib.Path(folder) / "calibration_ink_flow.gcode"
+            path.write_text(flow_coupon(self._editor.diw_config()), encoding="utf-8")
+            written.append(path.name)
         except Exception as exc:
             QMessageBox.critical(self, "Calibration failed", str(exc))
             return

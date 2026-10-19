@@ -149,4 +149,19 @@ DIW_HELP = {
     "carbon": "Tick when the board is carbon fibre (it conducts): the checks then insist on the "
               "insulating layer.",
     "surface_z": "Electronics only: height of the top of the part you print onto.",
+    "ink_preset": "Fill in typical values for a conductive ink (silver, carbon, liquid metal, copper). "
+                  "Then fine-tune with a test print.",
+    "diel_preset": "Fill in typical values for the insulating ink (UV-curable, epoxy, silicone).",
+    "stop_early": "Close the valve this far before each line ends: the ink still in the needle finishes "
+                  "the line instead of leaving a blob. Raise it if line ends are fat.",
+    "prime_e": "Push a little extra ink at the start of each line so it starts full. Raise it if line "
+               "starts are thin.",
+    "retract_e": "Pull the ink back a little at each line end so it stops cleanly. Raise it if ink "
+                 "strings between lines.",
+    "uv_cure": "Switch the UV light on after each ink layer to harden it before the next one.",
+    "uv_cure_s": "How long each UV cure lasts.",
+    "uv_on": "Printer command that switches the UV light on.",
+    "uv_off": "Printer command that switches the UV light off.",
+    "embed_after": "Embedded mode: after which fibre layer the electronics are printed (the rest of the "
+                   "layers go on top). 'middle' = half way.",
 }

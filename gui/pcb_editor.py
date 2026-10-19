@@ -23,6 +23,7 @@ import math
 from PySide6.QtCore import QMimeData, QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QDrag, QKeySequence, QPainter, QPainterPath, QPen, QPolygonF, QShortcut
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QCheckBox,
     QComboBox,
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
     QLineEdit,
     QListWidget,
     QListWidgetItem,
+    QMenu,
     QMessageBox,
     QPushButton,
     QScrollArea,
@@ -52,7 +54,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
     QWidget,
 )
-from shapely.geometry import Polygon
+from shapely.geometry import Point, Polygon
 
 from cfrp_core.diw import (
     FOOTPRINTS,
@@ -73,11 +75,14 @@ from cfrp_core.diw import (
 )
 from cfrp_core.diw import edit as ed
 from cfrp_core.diw.design import pad_shape, trace_shape
+from cfrp_core.diw.presets import DIELECTRIC_PRESETS, INK_PRESETS, apply_preset
+from cfrp_core.diw.router import ratsnest as ed_ratsnest
 
 from .settings_help import DIW_HELP
 
 MODES = (("Structural: fibre + electronics", "structural"), ("Fibre board only", "fibre"),
-         ("Electronics only (ink)", "electronics"))
+         ("Electronics only (ink)", "electronics"),
+         ("Embedded: electronics inside the board", "embedded"))
 _MIME = "application/x-spcb-part"
 
 TOOLS = (
@@ -285,7 +290,10 @@ class PcbEditor(QWidget):
         self._draft: list[tuple[float, float]] = []
         self._drag_from = None
         self._preview = None
-        self._sel = None
+        self._sels = []
+        self._clipboard = None
+        self._vdrag = None
+        self._band = None
         self._cursor = (0.0, 0.0)
         self._min_radius = 3.0
         self.path = None
@@ -296,7 +304,7 @@ class PcbEditor(QWidget):
         self.canvas.pressed.connect(self._press)
         self.canvas.moved.connect(self._move)
         self.canvas.released.connect(self._release)
-        self.canvas.double.connect(lambda x, y: self._finish())
+        self.canvas.double.connect(self._double)
         self.canvas.key.connect(self._key)
         self.canvas.dropped.connect(self._drop)
 
@@ -328,6 +336,21 @@ class PcbEditor(QWidget):
             b.setToolTip(tip)
             b.clicked.connect(cb)
             top.addWidget(b)
+        imp = QPushButton("Import / export ▾")
+        imp.setToolTip("Bring in a board outline (DXF) or a netlist, or export the design as DXF")
+        menu = QMenu(imp)
+        menu.addAction("Board outline from DXF…", self.import_dxf_dialog)
+        menu.addAction("Netlist (which pads connect)…", self.import_netlist_dialog)
+        menu.addSeparator()
+        menu.addAction("Export DXF…", self.export_dxf_dialog)
+        imp.setMenu(menu)
+        top.addWidget(imp)
+        self.show_links = QCheckBox("Show connections")
+        self.show_links.setChecked(True)
+        self.show_links.setToolTip("Dashed lines between pads that should be connected (same net) but are "
+                                   "not wired yet")
+        self.show_links.toggled.connect(lambda _: self.redraw(live=True))
+        top.addWidget(self.show_links)
         top.addStretch()
         self.coord_lbl = QLabel("")
         self.coord_lbl.setObjectName("viewInfo")
@@ -406,8 +429,10 @@ class PcbEditor(QWidget):
         QShortcut(QKeySequence.Undo, self, self.undo)
         QShortcut(QKeySequence.Redo, self, self.redo)
         QShortcut(QKeySequence("Ctrl+Y"), self, self.redo)
+        # The Easy and Advanced print-mode boxes are one setting.
+        self.mode_cb.currentIndexChanged.connect(lambda i: self.adv_mode_cb.setCurrentIndex(i))
+        self.adv_mode_cb.currentIndexChanged.connect(lambda i: self.mode_cb.setCurrentIndex(i))
         self.mode_cb.currentIndexChanged.connect(self._diw_states)
-        self.adv_mode_cb.currentIndexChanged.connect(self._diw_states)
         self.set_advanced(False)
         self.redraw()
         self._show_props()
@@ -470,6 +495,11 @@ class PcbEditor(QWidget):
         b.setToolTip("Click on a pad, click to bend, double-click on the other pad")
         b.clicked.connect(lambda: self.set_tool("trace"))
         lay.addWidget(b)
+        b = QPushButton("Auto-route the dashed connections")
+        b.setToolTip("Draws a wire for every dashed line (pads with the same net), keeping clear of other "
+                     "wires, holes and the edge")
+        b.clicked.connect(self.auto_route)
+        lay.addWidget(b)
         v.addWidget(box)
 
         box, lay = _step(5, "Move & rotate")
@@ -489,6 +519,11 @@ class PcbEditor(QWidget):
         self.e_check = QLabel("")
         self.e_check.setWordWrap(True)
         lay.addWidget(self.e_check)
+        self.e_ink = QComboBox()
+        self.e_ink.addItems(list(INK_PRESETS))
+        self.e_ink.setToolTip("Which conductive ink you print with (sets line width, speed and resistance)")
+        self.e_ink.currentTextChanged.connect(lambda name: self.apply_ink_preset(name))
+        lay.addWidget(self.e_ink)
         self.mode_cb = QComboBox()
         for label, key in MODES:
             self.mode_cb.addItem(label, key)
@@ -550,6 +585,10 @@ class PcbEditor(QWidget):
             else:
                 grid.addWidget(b, 1 + (k - 1) // 2, (k - 1) % 2)
         lay.addLayout(grid)
+        b = QPushButton("Auto-route connections")
+        b.setToolTip("Draw a wire for every dashed connection (same-net pads)")
+        b.clicked.connect(self.auto_route)
+        lay.addWidget(b)
         v.addWidget(box)
 
         box, lay = _step("", "New item settings")
@@ -616,6 +655,19 @@ class PcbEditor(QWidget):
             b.clicked.connect(cb)
             row.addWidget(b)
         lay.addLayout(row)
+        row = QHBoxLayout()
+        for label, cb, tip in (("Copy", self.copy_selected, "Ctrl+C"), ("Paste", self.paste, "Ctrl+V"),
+                               ("Duplicate", lambda: (self.copy_selected(), self.paste()), "Ctrl+D")):
+            b = QPushButton(label)
+            b.setToolTip(tip)
+            b.clicked.connect(cb)
+            row.addWidget(b)
+        lay.addLayout(row)
+        tip = QLabel("Shift+click adds to the selection · drag on empty board to select an area · "
+                     "select a wire or the board edge to drag its corners")
+        tip.setObjectName("hint")
+        tip.setWordWrap(True)
+        lay.addWidget(tip)
         v.addWidget(box)
 
         box, lay = _step("", "Print")
@@ -643,9 +695,6 @@ class PcbEditor(QWidget):
             self.side_tabs.setCurrentIndex(0)
         for b, adv in zip(self._mode_btns.buttons(), (False, True), strict=False):
             b.setChecked(adv == self.advanced)
-        if hasattr(self, "adv_mode_cb"):
-            src, dst = (self.mode_cb, self.adv_mode_cb) if on else (self.adv_mode_cb, self.mode_cb)
-            dst.setCurrentIndex(src.currentIndex())
         self._diw_states()
 
     # ------------------------------------------------------------------
@@ -702,7 +751,26 @@ class PcbEditor(QWidget):
         self.d_carbon = QCheckBox("Board is carbon fibre (conducts)")
         self.d_carbon.setChecked(d.substrate_conductive)
         self.d_surface = _spin(0, 500, d.surface_z_mm, 0.1, 2)
-        rows = (("Needle", self.d_nozzle, "nozzle"), ("Line width", self.d_lw, "line_width"),
+        self.d_early = _spin(0, 10, d.stop_early_mm, 0.1, 2)
+        self.d_prime = _spin(0, 10, d.prime_e, 0.01, 3, "")
+        self.d_retract = _spin(0, 10, d.retract_e, 0.01, 3, "")
+        self.d_uv = QCheckBox("UV cure between ink layers")
+        self.d_uv_s = _spin(0, 120, d.uv_cure_s, 0.5, 1, " s")
+        self.d_uv_on = QLineEdit(d.uv_cure_on)
+        self.d_uv_off = QLineEdit(d.uv_cure_off)
+        self.d_embed = QSpinBox()
+        self.d_embed.setRange(0, 500)
+        self.d_embed.setSpecialValueText("middle")
+        self.d_ink_preset = QComboBox()
+        self.d_ink_preset.addItems(["(keep)"] + list(INK_PRESETS))
+        self.d_diel_preset = QComboBox()
+        self.d_diel_preset.addItems(["(keep)"] + list(DIELECTRIC_PRESETS))
+        self.d_ink_preset.currentTextChanged.connect(
+            lambda n: n != "(keep)" and self.apply_ink_preset(n))
+        self.d_diel_preset.currentTextChanged.connect(
+            lambda n: n != "(keep)" and self.apply_ink_preset(None, n))
+        rows = (("Ink preset", self.d_ink_preset, "ink_preset"),
+                ("Insulation preset", self.d_diel_preset, "diel_preset"),("Needle", self.d_nozzle, "nozzle"), ("Line width", self.d_lw, "line_width"),
                 ("Layer height", self.d_lh, "layer_height"), ("Ink layers", self.d_cond, "conductor_layers"),
                 ("", self.d_diel_on, "dielectric"), ("Insulation layers", self.d_diel, "dielectric_layers"),
                 ("Insulation margin", self.d_margin, "dielectric_margin"), ("", self.d_enc, "encapsulate"),
@@ -717,7 +785,11 @@ class PcbEditor(QWidget):
                 ("Head offset Y", self.d_oy, "tool_offset"), ("Head offset Z", self.d_oz, "tool_offset"),
                 ("", self.d_pause, "pause_before"), ("Resistivity Ω·mm", self.d_rho, "resistivity"),
                 ("Cure shrink", self.d_cure, "cured_ratio"), ("", self.d_carbon, "carbon"),
-                ("Surface height", self.d_surface, "surface_z"))
+                ("Surface height", self.d_surface, "surface_z"),
+                ("Close valve early", self.d_early, "stop_early"), ("Prime at start", self.d_prime, "prime_e"),
+                ("Retract at end", self.d_retract, "retract_e"), ("", self.d_uv, "uv_cure"),
+                ("UV cure time", self.d_uv_s, "uv_cure_s"), ("UV on command", self.d_uv_on, "uv_on"),
+                ("UV off command", self.d_uv_off, "uv_off"), ("Embed after layer", self.d_embed, "embed_after"))
         self._diw_tips = {}
         for label, w, key in rows:
             tip = DIW_HELP.get(key, "")
@@ -730,7 +802,7 @@ class PcbEditor(QWidget):
                 if hasattr(w, sig):
                     getattr(w, sig).connect(self._run_drc)
                     break
-        for sig in (self.d_mode.currentTextChanged, self.d_diel_on.toggled, self.d_enc.toggled):
+        for sig in (self.d_mode.currentTextChanged, self.d_diel_on.toggled, self.d_enc.toggled, self.d_uv.toggled):
             sig.connect(self._diw_states)
         return box
 
@@ -748,7 +820,14 @@ class PcbEditor(QWidget):
                  (self.d_margin, self.d_diel_on.isChecked(), "Insulation is off."),
                  (self.d_enc_n, self.d_enc.isChecked(), "Covering is off."),
                  (self.d_surface, self.print_mode() == "electronics",
-                  "Only for Electronics only: otherwise the ink goes on the fibre board's top."))
+                  "Only for Electronics only: otherwise the ink goes on the fibre board's top."),
+                 (self.d_early, pneu, "Only for pneumatic (valve) dispensing."),
+                 (self.d_prime, not pneu, "Only for volumetric dispensing."),
+                 (self.d_retract, not pneu, "Only for volumetric dispensing."),
+                 (self.d_uv_s, self.d_uv.isChecked(), "UV cure between layers is off."),
+                 (self.d_uv_on, self.d_uv.isChecked(), "UV cure between layers is off."),
+                 (self.d_uv_off, self.d_uv.isChecked(), "UV cure between layers is off."),
+                 (self.d_embed, self.print_mode() == "embedded", "Only for the Embedded print mode."))
         for w, on, why in rules:
             w.setEnabled(on)
             tip = self._diw_tips.get(w, "")
@@ -774,7 +853,11 @@ class PcbEditor(QWidget):
             e_per_mm3=self.d_epm.value(), tool_select=self.d_tool.text().strip(),
             tool_offset=(self.d_ox.value(), self.d_oy.value(), self.d_oz.value()),
             pause_before=self.d_pause.isChecked(), cured_thickness_ratio=self.d_cure.value(),
-            surface_z_mm=self.d_surface.value())
+            surface_z_mm=self.d_surface.value(), stop_early_mm=self.d_early.value(),
+            prime_e=self.d_prime.value(), retract_e=self.d_retract.value(),
+            uv_cure_between_layers=self.d_uv.isChecked(), uv_cure_s=self.d_uv_s.value(),
+            uv_cure_on=self.d_uv_on.text(), uv_cure_off=self.d_uv_off.text(),
+            embed_after_layer=self.d_embed.value())
 
     # ------------------------------------------------------------------
     # Editing
@@ -830,16 +913,63 @@ class PcbEditor(QWidget):
     def _wire_width(self):
         return self.width_spin.value() if self.advanced else self.e_width.currentData()
 
+    # --- selection (several items; the first one is shown in "Selected") -------
+    @property
+    def _sel(self):
+        return self._sels[0] if getattr(self, "_sels", None) else None
+
+    @_sel.setter
+    def _sel(self, value):
+        self._sels = [value] if value else []
+
+    def _items(self):
+        """The selected items that can be moved / rotated / deleted."""
+        return [s for s in self._sels if s[0] != "outline"]
+
+    def _vertex_target(self):
+        """The outline / wire / zone whose corners have handles, if exactly
+        that one thing is selected."""
+        if len(self._sels) == 1 and self._sels[0][0] in ("outline", "trace", "zone"):
+            return self._sels[0]
+        return None
+
+    def _handle_tol(self):
+        return max(0.4, 6.0 / max(abs(self.canvas.transform().m11()), 1e-6))
+
     def _press(self, x, y, button):
+        rx, ry = x, y
         x, y = self.snap(x, y)
         d = self.design
         t = self._tool
+        mods = QApplication.keyboardModifiers()
+        if t == "select":
+            vt = self._vertex_target()
+            if vt is not None:
+                hit = ed.find_vertex(d, rx, ry, self._handle_tol(), [vt])
+                if hit is not None:
+                    if button == Qt.RightButton:
+                        self.commit(ed.delete_vertex(d, *hit))
+                        return
+                    self._vdrag = hit
+                    return
         if button == Qt.RightButton:
             self._finish()
             return
         if t == "select":
-            self._sel = ed.pick(d, x, y)
-            self._drag_from = (x, y) if self._sel else None
+            got = ed.pick(d, x, y)
+            if got is None and Polygon(d.outline).exterior.distance(Point(rx, ry)) <= self._handle_tol():
+                got = ("outline", None)
+            if mods & Qt.ShiftModifier:
+                if got in self._sels:
+                    self._sels.remove(got)
+                elif got is not None:
+                    self._sels.append(got)
+            elif got is None:
+                self._sels = []
+                self._band = (x, y)
+            elif got not in self._sels:
+                self._sels = [got]
+            self._drag_from = (x, y) if got is not None and got[0] != "outline" else None
             self.redraw()
             self._show_props()
         elif t == "place" and self._place_key:
@@ -867,9 +997,14 @@ class PcbEditor(QWidget):
         sx, sy = self.snap(x, y)
         self._cursor = (sx, sy)
         self.coord_lbl.setText(f"X {sx:.2f}  Y {sy:.2f} mm")
-        if held and self._tool == "select" and self._sel and self._drag_from:
+        if held and getattr(self, "_vdrag", None):
+            self._preview = ed.move_vertex(self.design, *self._vdrag, sx, sy)
+            self.redraw(live=True)
+        elif held and getattr(self, "_band", None):
+            self.redraw(live=True)
+        elif held and self._tool == "select" and self._items() and self._drag_from:
             dx, dy = sx - self._drag_from[0], sy - self._drag_from[1]
-            self._preview = ed.transform(self.design, self._sel, dx, dy) if (dx or dy) else None
+            self._preview = ed.transform_many(self.design, self._items(), dx, dy) if (dx or dy) else None
             self.redraw(live=True)
         elif self._draft or (held and self._tool in ("rect", "rrect")):
             self.redraw(live=True)
@@ -877,6 +1012,20 @@ class PcbEditor(QWidget):
     def _release(self, x, y):
         x, y = self.snap(x, y)
         d = self.design
+        if getattr(self, "_vdrag", None):
+            target, k = self._vdrag
+            self._vdrag = None
+            self._preview = None
+            self.commit(ed.move_vertex(d, target, k, x, y))
+            return
+        if getattr(self, "_band", None):
+            x0, y0 = self._band
+            self._band = None
+            if abs(x - x0) > 0.5 and abs(y - y0) > 0.5:
+                self._sels = ed.select_in_rect(d, x0, y0, x, y)
+            self.redraw()
+            self._show_props()
+            return
         if self._tool in ("rect", "rrect") and self._drag_from:
             x0, y0 = self._drag_from
             self._drag_from = None
@@ -886,29 +1035,55 @@ class PcbEditor(QWidget):
                 ox, oy = min(x0, x), min(y0, y)
                 self.commit(d.model_copy(update=dict(outline=tuple((px + ox, py + oy) for px, py in outline))))
             self.redraw()
-        elif self._tool == "select" and self._sel and self._drag_from:
+        elif self._tool == "select" and self._items() and self._drag_from:
             dx, dy = x - self._drag_from[0], y - self._drag_from[1]
             self._drag_from = None
             self._preview = None
             if abs(dx) > 1e-9 or abs(dy) > 1e-9:
-                self.commit(ed.transform(d, self._sel, dx, dy))
+                self.commit(ed.transform_many(d, self._items(), dx, dy))
             else:
                 self.redraw()
             self._show_props()
 
+    def _double(self, x, y):
+        """Double-click: finish a polyline, or add a bend to the selected
+        wire / zone / outline where its edge was clicked."""
+        if self._draft:
+            self._finish()
+            return
+        vt = self._vertex_target()
+        if self._tool == "select" and vt is not None:
+            seg = ed.find_segment(self.design, x, y, self._handle_tol(), [vt])
+            if seg is not None:
+                sx, sy = self.snap(x, y)
+                self.commit(ed.insert_vertex(self.design, seg[0], seg[1], sx, sy))
+
     def _key(self, key, mods=None):
+        ctrl = mods is not None and bool(mods & Qt.ControlModifier)
+        shift = mods is not None and bool(mods & Qt.ShiftModifier)
         if key in (Qt.Key_Return, Qt.Key_Enter):
             self._finish()
         elif key == Qt.Key_Escape:
             self._draft = []
-            self._sel = None
+            self._sels = []
             self.set_tool("select")
             self._show_props()
         elif key in (Qt.Key_Delete, Qt.Key_Backspace):
             self.delete_selected()
-        elif key == Qt.Key_R:
-            shift = mods is not None and bool(mods & Qt.ShiftModifier)
+        elif key == Qt.Key_R and not ctrl:
             self.rotate_selected(-90 if shift else 90)
+        elif ctrl and key == Qt.Key_C:
+            self.copy_selected()
+        elif ctrl and key == Qt.Key_V:
+            self.paste()
+        elif ctrl and key == Qt.Key_D:
+            self.copy_selected()
+            self.paste()
+        elif ctrl and key == Qt.Key_A:
+            b = Polygon(self.design.outline).bounds
+            self._sels = ed.select_in_rect(self.design, b[0] - 1, b[1] - 1, b[2] + 1, b[3] + 1)
+            self.redraw()
+            self._show_props()
 
     def _finish(self):
         d, pts = self.design, self._draft
@@ -932,17 +1107,47 @@ class PcbEditor(QWidget):
         return ed.pick(self.design, x, y, tol)
 
     def delete_selected(self):
-        if not self._sel:
+        items = self._items()
+        if not items:
             return
-        sel, self._sel = self._sel, None
-        self.commit(ed.delete(self.design, sel))
+        self._sels = []
+        self.commit(ed.delete_many(self.design, items))
         self._show_props()
 
     def rotate_selected(self, angle):
-        if not self._sel or self._sel[0] == "hole":
+        items = self._items()
+        if not items or all(s[0] == "hole" for s in items):
             return
-        self.commit(ed.transform(self.design, self._sel, angle_deg=angle))
+        self.commit(ed.transform_many(self.design, items, angle_deg=angle))
         self._show_props()
+
+    def copy_selected(self):
+        if self._items():
+            self._clipboard = ed.copy_items(self.design, self._items())
+            self.hint.setText(f"Copied {len(self._items())} item(s) · Ctrl+V pastes")
+
+    def paste(self):
+        clip = getattr(self, "_clipboard", None)
+        if not clip:
+            return
+        d, sels = ed.paste_items(self.design, clip)
+        self._sels = sels
+        self.commit(d)
+        self._show_props()
+
+    def auto_route(self):
+        """Draw every missing connection (pads with the same net)."""
+        from cfrp_core.diw.router import auto_route
+        before = len(self.design.traces)
+        d, rep = auto_route(self.design, self.diw_config(), width=self._wire_width())
+        self.commit(d)
+        msg = f"Auto-route: {len(d.traces) - before} wire(s) drawn."
+        if rep["failed"]:
+            msg += f" Could not reach: {', '.join(rep['failed'])} (blocked; move parts or route by hand)."
+        elif not ed_ratsnest(d):
+            msg += " Everything is connected."
+        self.hint.setText(msg)
+        return rep
 
     # ------------------------------------------------------------------
     # Properties of the selection
@@ -959,6 +1164,29 @@ class PcbEditor(QWidget):
             return
         kind, key = self._sel
         d = self.design
+        if kind == "outline":
+            self.prop_box.setTitle("Selected: board outline")
+            lbl = QLabel("Drag a white square to move a corner · double-click an edge to add a corner · "
+                         "right-click a corner to remove it")
+            lbl.setWordWrap(True)
+            self.prop_form.addRow(lbl)
+            self.prop_form.addRow("Corners", QLabel(str(len(d.outline))))
+            return
+        if len(self._items()) > 1:
+            self.prop_box.setTitle(f"Selected: {len(self._items())} items")
+            row = QHBoxLayout()
+            for label, cb in (("⟲ 90°", lambda: self.rotate_selected(90)), ("⟳ 90°", lambda: self.rotate_selected(-90)),
+                              ("Copy", self.copy_selected), ("Delete", self.delete_selected)):
+                b = QPushButton(label)
+                b.clicked.connect(cb)
+                row.addWidget(b)
+            holder = QWidget()
+            holder.setLayout(row)
+            self.prop_form.addRow(holder)
+            lbl = QLabel("Drag any of them to move them all together.")
+            lbl.setObjectName("hint")
+            self.prop_form.addRow(lbl)
+            return
         names = {"part": "Part", "trace": "Wire", "pad": "Pad", "hole": "Hole", "zone": "Area"}
         self.prop_box.setTitle(f"Selected: {names[kind]} {key if kind == 'part' else key + 1}")
         cx, cy = ed.centre(d, self._sel)
@@ -1049,11 +1277,32 @@ class PcbEditor(QWidget):
             t.setScale(0.12)
             t.setTransform(t.transform().scale(1, -1))
             t.setPos(x + 1.0, y + 2.0)
-        if self._sel:
+        keep = []
+        for sel in self._sels:
             try:
-                self._add_geom(ed.geometry(d, self._sel).buffer(0.25), None, QPen(_COL["sel"], 0.15))
+                g = (Polygon(d.outline).exterior.buffer(0.35) if sel[0] == "outline"
+                     else ed.geometry(d, sel).buffer(0.25))
             except (IndexError, KeyError):
-                self._sel = None
+                continue
+            keep.append(sel)
+            self._add_geom(g, None, QPen(_COL["sel"], 0.15))
+        self._sels = keep
+        vt = self._vertex_target()
+        if vt is not None:
+            r = self._handle_tol() * 0.6
+            pts, _ = ed._points(d, vt)
+            for px, py in pts:
+                self.scene.addRect(QRectF(px - r, py - r, 2 * r, 2 * r), QPen(_COL["sel"], 0.08),
+                                   QBrush(QColor("#e8ecff")))
+        if self.show_links.isChecked():
+            pen_l = QPen(QColor(245, 185, 66, 200), 0.12, Qt.DashLine)
+            for link in ed_ratsnest(d):
+                self.scene.addLine(link["a"][0], link["a"][1], link["b"][0], link["b"][1], pen_l)
+        if getattr(self, "_band", None):
+            x0, y0 = self._band
+            x1, y1 = self._cursor
+            self.scene.addRect(QRectF(min(x0, x1), min(y0, y1), abs(x1 - x0), abs(y1 - y0)),
+                               QPen(_COL["sel"], 0.1, Qt.DashLine), QBrush(QColor(91, 141, 239, 30)))
         pen = QPen(_COL["draft"], 0.12, Qt.DashLine)
         if self._draft:
             pts = self._draft + [self._cursor]
@@ -1198,6 +1447,60 @@ class PcbEditor(QWidget):
         if v:
             tr = spiral_coil(v["x"], v["y"], v["r"], v["turns"], v["pitch"], v["width"], v["net"])
             self.commit(self.design.model_copy(update=dict(traces=self.design.traces + (tr,))))
+
+    def apply_ink_preset(self, ink=None, dielectric=None):
+        """Put an ink / insulation preset's values into the ink settings."""
+        cfg = apply_preset(self.diw_config(), ink, dielectric)
+        setters = ((self.d_nozzle, cfg.nozzle_mm), (self.d_lw, cfg.line_width_mm), (self.d_lh, cfg.layer_height_mm),
+                   (self.d_cond, cfg.conductor_layers), (self.d_vc, cfg.speed_conductor_mm_s),
+                   (self.d_vd, cfg.speed_dielectric_mm_s), (self.d_cure, cfg.cured_thickness_ratio),
+                   (self.d_enc_n, cfg.encapsulation_layers), (self.d_uv_s, cfg.uv_cure_s))
+        for w, v in setters:
+            w.blockSignals(True)
+            w.setValue(v)
+            w.blockSignals(False)
+        self.d_rho.setText(f"{cfg.resistivity_ohm_mm:g}")
+        self.d_enc.setChecked(cfg.encapsulate)
+        self.d_uv.setChecked(cfg.uv_cure_between_layers)
+        self._diw_states()
+        self._run_drc()
+
+    def import_dxf_dialog(self, path=None):
+        from cfrp_core.diw.io import import_dxf
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Board outline from DXF", "", "DXF (*.dxf *.DXF)")
+        if not path:
+            return
+        try:
+            d = import_dxf(path, self.design)
+        except Exception as exc:
+            QMessageBox.critical(self, "DXF import failed", str(exc))
+            return
+        self.commit(d)
+        self.fit()
+        self.hint.setText(f"Imported the board outline and {len(d.holes)} hole(s) from {path}.")
+
+    def import_netlist_dialog(self, path=None):
+        from pathlib import Path
+
+        from cfrp_core.diw.io import apply_netlist
+        if not path:
+            path, _ = QFileDialog.getOpenFileName(self, "Netlist", "", "Netlist (*.csv *.txt *.net);;All (*)")
+        if not path:
+            return
+        d, rep = apply_netlist(self.design, Path(path).read_text(encoding="utf-8", errors="replace"))
+        self.commit(d)
+        msg = f"Netlist: {rep['assigned']} pad(s) got their net."
+        if rep["missing"]:
+            msg += f" Not on the board: {', '.join(rep['missing'][:8])}" + (" …" if len(rep["missing"]) > 8 else "")
+        self.hint.setText(msg + " Dashed lines show what still needs wiring; Auto-route draws it.")
+
+    def export_dxf_dialog(self, path=None):
+        from cfrp_core.diw.io import export_dxf
+        if not path:
+            path, _ = QFileDialog.getSaveFileName(self, "Export DXF", "board.dxf", "DXF (*.dxf)")
+        if path:
+            export_dxf(self.design, path)
 
     def print_mode(self) -> str:
         cb = self.adv_mode_cb if getattr(self, "advanced", False) and hasattr(self, "adv_mode_cb") else self.mode_cb
