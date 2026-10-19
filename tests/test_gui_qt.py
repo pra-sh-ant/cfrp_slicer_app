@@ -93,3 +93,43 @@ def test_params_round_trip(panel):
     q = panel.get_params()
     for key in ("shape", "width", "layers", "fill_solid", "layup_seq"):
         assert q[key] == p[key], key
+
+
+# --- results panel / viewer (Phase 30-31) ---------------------------------------
+
+def test_issue_messages_name_their_layers():
+    from gui.results_panel import layers_in
+    assert layers_in("Layer 21 path crosses itself (7 internal intersections).") == [21]
+    assert layers_in("Curvature: 5 point(s) ... on layer(s) [2, 4, 6]; these") == [2, 4, 6]
+    assert layers_in("All good") == []
+
+
+def test_issue_click_requests_its_layer(app):
+    from gui.results_panel import IssuesPanel
+    panel = IssuesPanel()
+    got = []
+    panel.layer_requested.connect(got.append)
+    panel.set_result({"status": "Warning", "messages": ["Layer 7 path crosses itself."]}, ("a note",))
+    panel._clicked(panel._list.item(0))
+    assert got == [7]
+    assert panel._list.count() == 2
+
+
+def test_viewer_builds_ranges_and_modes(app):
+    from cfrp_core import ProcessConfig, slice_part
+    from cfrp_core.config import GeometryConfig
+    from cfrp_core.machine import DEFAULT_MACHINE
+    from gui.toolpath_mesh import MODES
+    from gui.viewer_gl import ViewerGL
+    r = slice_part(ProcessConfig(layers=3, geometry=GeometryConfig(width_mm=50, height_mm=25)))
+    v = ViewerGL(DEFAULT_MACHINE)
+    v.update_scene(r.trajectory, r.target_shapes, r.max_z, 1.2, 0.2, 3.0)
+    assert v.range.values() == (1, 3)
+    v.show_layers(2)
+    a, b, top = v._point_range()
+    assert 0 < a < b and top == a
+    for mode in MODES:
+        v.mode_cb.setCurrentText(mode)
+    v._draw_to(a + 5)
+    assert v.info.text().startswith("L2")
+    v.clear()

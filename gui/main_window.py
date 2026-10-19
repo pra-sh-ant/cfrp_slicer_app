@@ -13,9 +13,11 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMenu,
     QMessageBox,
+    QProgressBar,
     QPushButton,
     QSplitter,
     QStatusBar,
+    QToolBar,
 )
 
 from cfrp_core.machine import DEFAULT_MACHINE
@@ -23,6 +25,7 @@ from cfrp_core.machine import DEFAULT_MACHINE
 from .controls_panel import ControlsPanel
 from .results_panel import ResultsPanel
 from .slicer_worker import SlicerWorker
+from .theme import STYLE
 
 _DEBOUNCE_MS = 500
 _MAX_RECENT = 8
@@ -61,8 +64,8 @@ class MainWindow(QMainWindow):
         splitter = QSplitter(Qt.Horizontal)
 
         self._controls = ControlsPanel()
-        self._controls.setMinimumWidth(320)
-        self._controls.setMaximumWidth(420)
+        self._controls.setMinimumWidth(370)
+        self._controls.setMaximumWidth(520)
 
         self._results = ResultsPanel(self._machine)
 
@@ -70,7 +73,7 @@ class MainWindow(QMainWindow):
         splitter.addWidget(self._results)
         splitter.setStretchFactor(0, 0)
         splitter.setStretchFactor(1, 1)
-        splitter.setSizes([360, 1020])
+        splitter.setSizes([400, 1100])
 
         self.setCentralWidget(splitter)
 
@@ -108,6 +111,29 @@ class MainWindow(QMainWindow):
         act_about = help_menu.addAction("About CFRP Slicer Pro…")
         act_about.triggered.connect(self._show_about)
 
+        # --- toolbar ----------------------------------------------------------
+        tb = QToolBar("Main")
+        tb.setMovable(False)
+        tb.setToolButtonStyle(Qt.ToolButtonTextOnly)
+        self.addToolBar(tb)
+        self._act_slice = tb.addAction("▶  Slice", self._slice)
+        self._act_slice.setToolTip("Slice now (F5)")
+        self._act_auto = tb.addAction("Auto-slice")
+        self._act_auto.setCheckable(True)
+        self._act_auto.setChecked(self._settings.value("autoSlice", True, type=bool))
+        self._act_auto.setToolTip("Re-slice automatically whenever a setting changes")
+        self._act_auto.toggled.connect(lambda on: self._settings.setValue("autoSlice", on))
+        tb.addSeparator()
+        tb.addAction("Open STL…", self._controls._browse_stl).setToolTip("Import an STL / OBJ model")
+        tb.addAction("Save G-code…", lambda: self._results.gcode_tab.save_gcode()).setToolTip(
+            "Save the sliced G-code")
+        tb.addAction("Export CSV…", lambda: self._results.gcode_tab.save_csv()).setToolTip(
+            "Export the trajectory as CSV")
+        tb.addSeparator()
+        tb.addAction("Calibration…", self._generate_calibration).setToolTip(
+            "Write the calibration coupons for these settings")
+        self._toolbar = tb
+
         # Escape cancels a running slice from anywhere in the window
         esc = QShortcut(QKeySequence("Escape"), self)
         esc.activated.connect(self._cancel_slice)
@@ -122,41 +148,16 @@ class MainWindow(QMainWindow):
         self._cancel_btn.setFixedWidth(70)
         self._cancel_btn.setVisible(False)
         self._cancel_btn.clicked.connect(self._cancel_slice)
+        self._busy = QProgressBar()
+        self._busy.setRange(0, 0)
+        self._busy.setFixedWidth(120)
+        self._busy.setVisible(False)
+        sb.addPermanentWidget(self._busy)
         sb.addPermanentWidget(self._cancel_btn)
         self.setStatusBar(sb)
 
-        # --- dark theme -----------------------------------------------------
-        self.setStyleSheet("""
-            QMainWindow, QWidget { background: #12121e; color: #d0d0e0; }
-            QGroupBox { border: 1px solid #2e2e44; border-radius: 4px;
-                         margin-top: 8px; font-weight: bold; color: #9898b8; }
-            QGroupBox::title { subcontrol-origin: margin; left: 8px; top: 4px; }
-            QScrollArea { border: none; }
-            QDoubleSpinBox, QSpinBox, QComboBox, QLineEdit {
-                background: #1e1e30; border: 1px solid #3a3a54;
-                border-radius: 3px; color: #d0d0e0; padding: 2px 4px; }
-            QDoubleSpinBox:focus, QSpinBox:focus, QComboBox:focus, QLineEdit:focus {
-                border-color: #5b6ee1; }
-            QPushButton { background: #2a2a44; border: 1px solid #4a4a6a;
-                           border-radius: 4px; padding: 4px 12px; color: #c8c8e8; }
-            QPushButton:hover { background: #3a3a5a; }
-            QPushButton:disabled { color: #555570; }
-            QTabBar::tab { background: #1e1e30; border: 1px solid #3a3a54;
-                            padding: 4px 12px; color: #9898b8; }
-            QTabBar::tab:selected { background: #2a2a44; color: #d0d0f0;
-                                    border-bottom: 2px solid #5b6ee1; }
-            QSplitter::handle { background: #2a2a44; width: 2px; }
-            QLabel { color: #c0c0d8; }
-            QPlainTextEdit { background: #0e0e1a; color: #a8f0a8; font-family: Consolas; }
-            QSlider::groove:horizontal { background: #2a2a40; height: 4px; border-radius: 2px; }
-            QSlider::handle:horizontal { background: #5b6ee1; width: 12px; height: 12px;
-                                          border-radius: 6px; margin: -4px 0; }
-            QStatusBar { background: #0e0e1a; color: #7070a0; font-size: 11px; }
-            QMenuBar { background: #0e0e1a; color: #c0c0d8; }
-            QMenuBar::item:selected { background: #2a2a44; }
-            QMenu { background: #1a1a2e; color: #c0c0d8; border: 1px solid #3a3a54; }
-            QMenu::item:selected { background: #2a2a44; }
-        """)
+        # --- theme ----------------------------------------------------------
+        self.setStyleSheet(STYLE)
 
         # --- debounce timer -------------------------------------------------
         self._timer = QTimer()
@@ -181,7 +182,10 @@ class MainWindow(QMainWindow):
         super().closeEvent(event)
 
     def _schedule_slice(self):
-        self._timer.start(_DEBOUNCE_MS)
+        if self._act_auto.isChecked():
+            self._timer.start(_DEBOUNCE_MS)
+        else:
+            self._status_lbl.setText("Settings changed: press Slice (F5).")
 
     def _retire_worker(self):
         """Cancel the running worker and keep a reference until its thread
@@ -204,6 +208,7 @@ class MainWindow(QMainWindow):
         layup = self._controls.get_layup()
         self._status_lbl.setText("Slicing…")
         self._cancel_btn.setVisible(True)
+        self._busy.setVisible(True)
 
         self._worker = SlicerWorker(params, layup, self._machine)
         self._worker.finished.connect(self._on_finished)
@@ -212,10 +217,12 @@ class MainWindow(QMainWindow):
 
     def _cancel_slice(self):
         self._retire_worker()
+        self._busy.setVisible(False)
         self._cancel_btn.setVisible(False)
         self._status_lbl.setText("Cancelled.")
 
     def _on_finished(self, result):
+        self._busy.setVisible(False)
         self._cancel_btn.setVisible(False)
         self._results.update(result)
         n = len(result.trajectory)
@@ -225,6 +232,7 @@ class MainWindow(QMainWindow):
         )
 
     def _on_failed(self, msg: str):
+        self._busy.setVisible(False)
         self._cancel_btn.setVisible(False)
         self._results.set_error(msg)
         self._status_lbl.setText(f"Failed: {msg[:80]}")

@@ -1,18 +1,22 @@
-"""Right-side results panel: validation banner + tabs for 3D view, G-code,
-and a statistics dashboard.
+"""Right-side results panel: issue list + tabs for 3D view, dashboard and
+G-code.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QFont
+import re
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QColor, QFont
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
-    QSlider,
     QTabWidget,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
@@ -21,38 +25,115 @@ from cfrp_core.machine import MachineProfile
 
 from .viewer_gl import ViewerGL
 
+_STATUS_STYLE = {
+    "Pass": ("#143d22", "#4ade80"),
+    "Warning": ("#3d3014", "#fbbf24"),
+    "Fail": ("#3d1414", "#f87171"),
+    "Error": ("#3d1414", "#f87171"),
+    "": ("#2d2d40", "#9090a0"),
+}
 
-class ValidationBanner(QLabel):
+
+def layers_in(message: str) -> list[int]:
+    """Layer numbers a message names ('layer 12', 'layer(s) [3, 5]')."""
+    m = re.search(r"[Ll]ayer\(s\)\s*\[([\d,\s]+)", message)
+    if m:
+        return [int(x) for x in m.group(1).split(",") if x.strip()]
+    return [int(x) for x in re.findall(r"[Ll]ayer\s+(\d+)", message)]
+
+
+class IssuesPanel(QWidget):
+    """Status pill + summary; expands into the list of warnings, errors and
+    notes. Clicking an issue that names a layer emits `layer_requested`."""
+
+    layer_requested = Signal(int)
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWordWrap(True)
-        self.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self.setMinimumHeight(36)
-        self.setStyleSheet("padding: 6px 10px; border-radius: 4px; font-size: 12px;")
-        self.clear_status()
+        lay = QVBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(2)
+        head = QHBoxLayout()
+        self._pill = QLabel("")
+        self._pill.setObjectName("statusPill")
+        self._summary = QLabel("No slice yet.")
+        self._summary.setWordWrap(True)
+        self._toggle = QToolButton()
+        self._toggle.setCheckable(True)
+        self._toggle.setArrowType(Qt.DownArrow)
+        self._toggle.setToolTip("Show / hide the issue list")
+        self._toggle.toggled.connect(self._show_list)
+        head.addWidget(self._pill)
+        head.addWidget(self._summary, 1)
+        head.addWidget(self._toggle)
+        lay.addLayout(head)
+        self._list = QListWidget()
+        self._list.setObjectName("issues")
+        self._list.setWordWrap(True)
+        self._list.setMaximumHeight(170)
+        self._list.itemClicked.connect(self._clicked)
+        self._list.setVisible(False)
+        lay.addWidget(self._list)
+        self._set_pill("")
+
+    def _set_pill(self, status):
+        bg, fg = _STATUS_STYLE.get(status, _STATUS_STYLE[""])
+        self._pill.setText(f"  {status or '—'}  ")
+        self._pill.setStyleSheet(f"background:{bg};color:{fg};border-radius:9px;padding:2px 6px;"
+                                 f"font-weight:bold;")
+
+    def _show_list(self, on):
+        self._toggle.setArrowType(Qt.UpArrow if on else Qt.DownArrow)
+        self._list.setVisible(on)
+
+    def _add(self, kind, text):
+        icon = {"error": "✖", "warning": "⚠", "info": "ℹ", "ok": "✔"}[kind]
+        color = {"error": "#f87171", "warning": "#fbbf24", "info": "#93c5fd", "ok": "#4ade80"}[kind]
+        layers = layers_in(text)
+        suffix = "   → click to show layer" if layers else ""
+        item = QListWidgetItem(f"{icon}  {text}{suffix}")
+        item.setForeground(QColor(color))
+        item.setData(Qt.UserRole, layers[0] if layers else None)
+        item.setToolTip(text)
+        self._list.addItem(item)
+
+    def set_result(self, validation, notes=(), info=()):
+        self._list.clear()
+        status = validation.get("status", "")
+        msgs = list(validation.get("messages", []))
+        kind = "error" if status == "Fail" else "warning"
+        problems = [m for m in msgs if not m.startswith("✅")]
+        for m in problems:
+            self._add(kind, m)
+        for m in list(notes) + list(info):
+            self._add("info", m)
+        if not problems:
+            self._add("ok", msgs[0].lstrip("✅ ") if msgs else "All checks passed.")
+        self._set_pill(status)
+        n = len(problems)
+        first = problems[0] if problems else (msgs[0].lstrip("✅ ") if msgs else "All checks passed.")
+        more = f"  (+{n - 1} more)" if n > 1 else ""
+        notes_n = len(notes) + len(info)
+        self._summary.setText((first[:160] + ("…" if len(first) > 160 else "")) + more
+                              + (f"   ·  {notes_n} note(s)" if notes_n else ""))
+        self._toggle.setChecked(n > 0)
+
+    def set_error(self, msg):
+        self._list.clear()
+        self._add("error", msg)
+        self._set_pill("Error")
+        self._summary.setText(msg.splitlines()[0][:200] if msg else "Error")
+        self._toggle.setChecked(True)
 
     def clear_status(self):
-        self.setText("No slice yet.")
-        self.setStyleSheet("padding: 6px 10px; border-radius: 4px; font-size: 12px;"
-                           "background: #2d2d40; color: #9090a0;")
+        self._list.clear()
+        self._set_pill("")
+        self._summary.setText("No slice yet.")
 
-    def set_status(self, val: dict):
-        status = val["status"]
-        msgs = val.get("messages", [])
-        text = " · ".join(msgs) if msgs else status
-        if status == "Pass":
-            style = "background: #143d22; color: #4ade80;"
-        elif status == "Warning":
-            style = "background: #3d3014; color: #fbbf24;"
-        else:
-            style = "background: #3d1414; color: #f87171;"
-        self.setText(f"[{status}]  {text}")
-        self.setStyleSheet(f"padding: 6px 10px; border-radius: 4px; font-size: 12px; {style}")
-
-    def set_error(self, msg: str):
-        self.setText(f"[Error]  {msg}")
-        self.setStyleSheet("padding: 6px 10px; border-radius: 4px; font-size: 12px;"
-                           "background: #3d1414; color: #f87171;")
+    def _clicked(self, item):
+        layer = item.data(Qt.UserRole)
+        if layer is not None:
+            self.layer_requested.emit(int(layer))
 
 
 class DashboardTab(QScrollArea):
@@ -64,10 +145,10 @@ class DashboardTab(QScrollArea):
         self._layout.setSpacing(8)
         self._layout.setAlignment(Qt.AlignTop)
         self.setWidget(inner)
-        self._labels: list[QLabel] = []
+        self._labels: list[QWidget] = []
 
     def update_stats(self, trajectory: list[dict], gcode: str,
-                     constraint_notes, info_notes, print_stats: dict | None = None):
+                     constraint_notes, info_notes, print_stats: dict | None = None, extra_rows=()):
         for lbl in self._labels:
             lbl.deleteLater()
         self._labels = []
@@ -106,7 +187,7 @@ class DashboardTab(QScrollArea):
             else:
                 time_str = f"{secs}s"
             rows += [
-                ("─" * 20, ""),          # separator
+                ("─" * 20, ""),
                 ("Print time", time_str),
                 ("Fiber length", f"{fl / 1000:.2f} m  ({fl:.0f} mm)"),
                 ("Fiber mass", f"{fm * 1000:.1f} mg  ({fm:.4f} g)"),
@@ -118,6 +199,7 @@ class DashboardTab(QScrollArea):
                                        f"{print_stats['worst_coverage'] * 100:.1f} %)"),
                     ("Tow overlap", f"{print_stats['overlap'] * 100:.1f} %"),
                 ]
+        rows += list(extra_rows)
 
         for key, val in rows:
             if key.startswith("─"):
@@ -129,8 +211,9 @@ class DashboardTab(QScrollArea):
                 continue
             row = QHBoxLayout()
             k = QLabel(f"<b>{key}</b>")
-            k.setMinimumWidth(120)
+            k.setMinimumWidth(130)
             v = QLabel(val)
+            v.setTextInteractionFlags(Qt.TextSelectableByMouse)
             row.addWidget(k)
             row.addWidget(v)
             row.addStretch()
@@ -148,76 +231,28 @@ class DashboardTab(QScrollArea):
 
 
 class ViewerTab(QWidget):
+    """The 3D viewer (layer range, scrubber and colour modes live inside it)."""
+
     def __init__(self, machine: MachineProfile, parent=None):
         super().__init__(parent)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
-
-        # Layer isolation row
-        ctrl_row = QHBoxLayout()
-        ctrl_row.setSpacing(6)
-        ctrl_row.addWidget(QLabel("Layer:"))
-        self._slider = QSlider(Qt.Horizontal)
-        self._slider.setMinimum(0)
-        self._slider.setMaximum(0)
-        self._slider.setValue(0)
-        self._slider.setToolTip("0 = show all layers; drag to isolate one layer")
-        ctrl_row.addWidget(self._slider, stretch=1)
-        self._layer_lbl = QLabel("all")
-        self._layer_lbl.setFixedWidth(36)
-        self._layer_lbl.setStyleSheet("color:#80c0ff;font-weight:bold;")
-        ctrl_row.addWidget(self._layer_lbl)
-
-        # Part stats mini-bar
-        self._stats_lbl = QLabel("")
-        self._stats_lbl.setStyleSheet("color:#606080;font-size:10px;")
-        ctrl_row.addWidget(self._stats_lbl)
-        layout.addLayout(ctrl_row)
-
         self._viewer = ViewerGL(machine)
         layout.addWidget(self._viewer, stretch=1)
 
-        self._full_traj = []
-        self._full_shapes = []
-        self._max_z = 1.0
-        self._max_layer = 1
+    @property
+    def viewer(self):
+        return self._viewer
 
-        self._slider.valueChanged.connect(self._on_layer_changed)
+    def update_view(self, trajectory, target_shapes, max_z, config=None, extra=None):
+        kw = {}
+        if config is not None:
+            kw = dict(bead_width=float(config.track_gap_mm), bead_height=float(config.layer_height_mm),
+                      r_min=float(config.min_radius_mm))
+        self._viewer.update_scene(trajectory, target_shapes, max_z, extra=extra, **kw)
 
-    def update_view(self, trajectory, target_shapes, max_z):
-        self._full_traj = trajectory
-        self._full_shapes = target_shapes
-        self._max_z = max_z
-        self._max_layer = max(p.get('layer', 1) for p in trajectory) if trajectory else 1
-        self._slider.blockSignals(True)
-        self._slider.setMaximum(self._max_layer)
-        self._slider.setValue(0)
-        self._slider.blockSignals(False)
-        self._layer_lbl.setText("all")
-        if trajectory:
-            xs = [p['x'] for p in trajectory]
-            ys = [p['y'] for p in trajectory]
-            self._stats_lbl.setText(
-                f"{len(trajectory):,} pts  ·  "
-                f"X {min(xs):.0f}–{max(xs):.0f}  "
-                f"Y {min(ys):.0f}–{max(ys):.0f}  "
-                f"Z 0–{max_z:.1f} mm  ·  "
-                f"{self._max_layer} layers"
-            )
-        else:
-            self._stats_lbl.setText("")
-        self._viewer.update_scene(trajectory, target_shapes, max_z)
-
-    def _on_layer_changed(self, val):
-        if val == 0:
-            self._layer_lbl.setText("all")
-            self._viewer.update_scene(self._full_traj, self._full_shapes, self._max_z)
-        else:
-            self._layer_lbl.setText(str(val))
-            traj = [p for p in self._full_traj if p.get('layer', 1) == val]
-            shapes = [s for s in self._full_shapes if len(s) > 2 and s[2] == val]
-            self._viewer.update_scene(traj, shapes, self._max_z)
+    def show_layer(self, layer):
+        self._viewer.show_layers(layer)
 
 
 class GcodeTab(QWidget):
@@ -226,9 +261,9 @@ class GcodeTab(QWidget):
         layout = QVBoxLayout(self)
 
         btn_row = QHBoxLayout()
-        self._save_btn = QPushButton("💾  Save G-code…")
+        self._save_btn = QPushButton("Save G-code…")
         self._save_btn.setEnabled(False)
-        self._csv_btn = QPushButton("📄  Export CSV…")
+        self._csv_btn = QPushButton("Export CSV…")
         self._csv_btn.setEnabled(False)
         btn_row.addWidget(self._save_btn)
         btn_row.addWidget(self._csv_btn)
@@ -243,19 +278,24 @@ class GcodeTab(QWidget):
 
         self._gcode = ""
         self._trajectory: list[dict] = []
-        self._save_btn.clicked.connect(self._save_gcode)
-        self._csv_btn.clicked.connect(self._save_csv)
+        self._save_btn.clicked.connect(self.save_gcode)
+        self._csv_btn.clicked.connect(self.save_csv)
 
     def set_gcode(self, gcode: str, layers: int, trajectory: list[dict] | None = None):
         self._gcode = gcode
         self._trajectory = trajectory or []
         self._editor.setPlainText(gcode)
         self._save_btn.setEnabled(bool(gcode))
-        self._save_btn.setText(f"💾  Save G-code  ({layers}L)")
+        self._save_btn.setText(f"Save G-code  ({layers}L)…")
         self._csv_btn.setEnabled(bool(self._trajectory))
 
-    def _save_gcode(self):
+    def has_gcode(self):
+        return bool(self._gcode)
+
+    def save_gcode(self):
         from PySide6.QtWidgets import QFileDialog
+        if not self._gcode:
+            return
         path, _ = QFileDialog.getSaveFileName(
             self, "Save G-code", "CFRP_toolpath.gcode",
             "G-code files (*.gcode);;All files (*)"
@@ -264,7 +304,7 @@ class GcodeTab(QWidget):
             with open(path, 'w', encoding='utf-8', newline='\n') as f:
                 f.write(self._gcode)
 
-    def _save_csv(self):
+    def save_csv(self):
         import csv
 
         from PySide6.QtWidgets import QFileDialog
@@ -301,7 +341,7 @@ class ResultsPanel(QWidget):
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(4)
 
-        self.banner = ValidationBanner()
+        self.banner = IssuesPanel()
         layout.addWidget(self.banner)
 
         self._tabs = QTabWidget()
@@ -313,19 +353,30 @@ class ResultsPanel(QWidget):
         self._tabs.addTab(self._dash_tab, "Dashboard")
         self._tabs.addTab(self._gcode_tab, "G-code")
         layout.addWidget(self._tabs, stretch=1)
+        self.banner.layer_requested.connect(self._show_layer)
 
-    def update(self, result):
-        self.banner.set_status(result.validation)
-        self._viewer_tab.update_view(
-            result.trajectory, result.target_shapes, result.max_z
-        )
-        self._gcode_tab.set_gcode(
-            result.gcode, result.config.layers, trajectory=result.trajectory
-        )
+    @property
+    def viewer(self):
+        return self._viewer_tab.viewer
+
+    @property
+    def gcode_tab(self):
+        return self._gcode_tab
+
+    def _show_layer(self, layer):
+        self._tabs.setCurrentWidget(self._viewer_tab)
+        self._viewer_tab.show_layer(layer)
+
+    def update(self, result, extra=None, extra_rows=(), extra_notes=()):
+        self.banner.set_result(result.validation, result.constraint_notes,
+                               tuple(result.info) + tuple(extra_notes))
+        self._viewer_tab.update_view(result.trajectory, result.target_shapes, result.max_z,
+                                     config=result.config, extra=extra)
+        self._gcode_tab.set_gcode(result.gcode, result.config.layers, trajectory=result.trajectory)
         self._dash_tab.update_stats(
             result.trajectory, result.gcode,
             result.constraint_notes, result.info,
-            print_stats=result.stats,
+            print_stats=result.stats, extra_rows=extra_rows,
         )
 
     def set_error(self, msg: str):

@@ -5,6 +5,26 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 31 — 3D viewer; Phase 30 remainder — toolbar, issues, theme)
+- Viewer rebuilt (`gui/viewer_gl.py`, `gui/toolpath_mesh.py`, `gui/range_slider.py`):
+  toolpaths as shaded tubes with the bead's elliptical cross-section in GPU
+  buffers, custom Blinn-Phong shader (key light + headlight + hemispheric
+  ambient, specular), 4x MSAA. The stroke is ordered by layer, so the dual-handle
+  layer range slider and the move scrubber only change the drawn index range;
+  lower layers optionally stay visible, dimmed. Colour modes: feature (fibre,
+  ramp, anchor, bridge, pump floor, DIW kinds), speed, layer, height, flow,
+  **bend radius** (red below r_min, count in the legend), **fibre direction**,
+  tool. Playback in real print time (1x-500x) with a nozzle marker, click a
+  point to inspect it, perspective/orthographic, view keys 0-6/F, PNG export.
+  Shape-preserving decimation replaces every-n-th-point sampling; falls back to
+  lines if the shader cannot compile. The camera re-frames only when the part
+  moves or resizes.
+- Validation banner replaced by an issue list (status pill, summary, warnings,
+  notes); clicking an issue that names a layer shows that layer.
+- Toolbar: Slice, Auto-slice toggle (remembered), Open STL, Save G-code, Export
+  CSV, Calibration; busy indicator while slicing; new dark theme in which
+  greyed-out settings read as disabled.
+
 ### Added (Phase 30 — option states, greyed-out settings, new controls panel)
 - `cfrp_core.capabilities`: `field_states` / `infill_states` say which settings and
   patterns apply to a setup and why not (read off the builders; e.g. layup is
