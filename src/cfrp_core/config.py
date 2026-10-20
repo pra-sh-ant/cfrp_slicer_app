@@ -177,11 +177,20 @@ class MaterialConfig(_Frozen):
     fiber_weight_g_per_mm: float = 0.55 / (math.pi * 39)
     # Legacy configs stored the computed constant directly; when set it wins.
     e_const_override: float | None = None
+    # UV dose the resin needs to cure as it is laid (Phase 45); with the
+    # head's LED irradiance and spot length it caps the print speed.
+    # 0 = no cure cap.
+    cure_dose_mj_cm2: float = 0.0
 
     @field_validator("fiber_weight_g_per_mm")
     @classmethod
     def _weight_positive(cls, v: float) -> float:
         return _require(v, "Fiber Weight", unit=" g/mm")
+
+    @field_validator("cure_dose_mj_cm2")
+    @classmethod
+    def _dose(cls, v: float) -> float:
+        return _require(v, "Cure Dose", strict=False, unit=" mJ/cm²")
 
 
 class KinematicsConfig(_Frozen):
@@ -235,6 +244,10 @@ class GcodeConfig(_Frozen):
     """Start-sequence settings. Feedrates are mm/min (G-code units)."""
 
     uv_pwm: int = 225
+    # The UV LED at the head, as measured at uv_pwm (Phase 45 cure cap):
+    # irradiance on the tow and the length of tow it lights. 0 = not set.
+    uv_irradiance_mw_cm2: float = 0.0
+    uv_spot_mm: float = 0.0
     purge_e: float = 15.0
     purge_f_mm_min: float = 60.0
     travel_f_mm_min: float = 600.0
@@ -253,6 +266,13 @@ class GcodeConfig(_Frozen):
     @classmethod
     def _purge_e(cls, v: float) -> float:
         return _require(v, "Purge Amount", strict=False)
+
+    @field_validator("uv_irradiance_mw_cm2", "uv_spot_mm")
+    @classmethod
+    def _uv_head(cls, v: float, info) -> float:
+        name, unit = (("UV Irradiance", " mW/cm²") if info.field_name == "uv_irradiance_mw_cm2"
+                      else ("UV Spot Length", " mm"))
+        return _require(v, name, strict=False, unit=unit)
 
 
 # --- Whole process -----------------------------------------------------------

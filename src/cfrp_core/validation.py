@@ -7,6 +7,7 @@ import numpy as np
 from shapely.geometry import LineString, Polygon
 
 from .config import ProcessConfig
+from .constraints import cure_speed
 from .geometry import dedupe_path
 from .geometry._common import count_crossings, local_bend_radii
 from .machine import DEFAULT_MACHINE, MachineProfile, check_bounds
@@ -80,6 +81,18 @@ def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfi
 
     # 0. Print-volume bounds
     errors.extend(f"Out-of-bounds: {msg}" for msg in check_bounds(trajectory, machine))
+
+    # 0b. UV cure (Phase 45): no point faster than the dose allows
+    cure = cure_speed(config)
+    if cure is not None:
+        fast = [pt for pt in trajectory if float(pt.get('v', 0.0)) > cure * 1.01]
+        if fast:
+            layers = sorted(set(pt.get('layer', 1) for pt in fast))
+            errors.append(
+                f"UV cure: {len(fast)} point(s) on layer(s) {layers} run faster than the "
+                f"{cure:.2f} mm/s at which the resin still gets its cure dose (up to "
+                f"{max(float(pt['v']) for pt in fast):.2f} mm/s)."
+            )
 
     # 1. Pump-stall floor engagement
     floored_pts = [pt for pt in trajectory if pt.get('pump_floored')]

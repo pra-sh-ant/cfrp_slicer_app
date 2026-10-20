@@ -28,6 +28,22 @@ class ResolvedConfig:
     notes: tuple[str, ...]
 
 
+def cure_speed(config: ProcessConfig) -> float | None:
+    """The fastest the tow may move and still get the resin's cure dose
+    under the head's UV LED (mm/s), or None while any of the three is unset.
+
+    A point of tow is lit for spot / v seconds, so its dose is
+    irradiance x spot / v: v <= irradiance [mW/cm²] x spot [mm] / dose
+    [mJ/cm²] (mW/mJ = 1/s). Assumes even light over the spot and a dose that
+    adds up linearly (no oxygen inhibition, no dark cure)."""
+    dose = float(config.material.cure_dose_mj_cm2)
+    irr = float(config.gcode.uv_irradiance_mw_cm2)
+    spot = float(config.gcode.uv_spot_mm)
+    if dose <= 0 or irr <= 0 or spot <= 0:
+        return None
+    return irr * spot / dose
+
+
 def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
     """Return the adjusted config plus one plain-language note per adjustment."""
     notes: list[str] = []
@@ -48,6 +64,23 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
             )
 
     kin_update = {}
+    # UV cure cap (Phase 45): no speed above what still cures the resin.
+    cure = cure_speed(config)
+    if cure is not None:
+        for field, label in (("v_max_mm_s", "Print Speed (Max)"), ("v_overhang_mm_s", "Overhang Speed"),
+                             ("v_z_mm_s", "Z Pull Speed")):
+            if float(getattr(k, field)) > cure:
+                kin_update[field] = cure
+                notes.append(f"{label} limited to {cure:.2f} mm/s by the UV cure: "
+                             f"{float(config.gcode.uv_irradiance_mw_cm2):g} mW/cm² over "
+                             f"{float(config.gcode.uv_spot_mm):g} mm gives the "
+                             f"{float(config.material.cure_dose_mj_cm2):g} mJ/cm² the resin needs "
+                             f"up to that speed.")
+        max_speed = min(max_speed, cure)
+    elif any(float(v) > 0 for v in (config.material.cure_dose_mj_cm2, config.gcode.uv_irradiance_mw_cm2,
+                                    config.gcode.uv_spot_mm)):
+        notes.append("UV cure speed cap off: set Cure Dose, UV Irradiance and UV Spot Length (all three) "
+                     "to use it.")
     minimum_speed = float(k.v_min_mm_s)
     if minimum_speed > max_speed:
         kin_update["v_min_mm_s"] = max_speed
@@ -134,11 +167,11 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
     zigzag_layers = config.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45)
     keep_turns = config.zigzag_respect_radius or config.strict_bend_radius
     if zigzag_layers and min_radius > 0 and track_gap < 2.0 * min_radius and keep_turns:
-        k = max(1, math.ceil(2.0 * min_radius / track_gap - 1e-9))
+        step = max(1, math.ceil(2.0 * min_radius / track_gap - 1e-9))
         notes.append(
             f"{config.infill_type}: turns kept at the {min_radius:.1f} mm min bend radius: lines "
-            f"{k * track_gap:.2f} mm apart (every {k}th line), each layer at the same angle shifted "
-            f"{track_gap:.2f} mm, so {k} such layers fill the area once."
+            f"{step * track_gap:.2f} mm apart (every {step}th line), each layer at the same angle shifted "
+            f"{track_gap:.2f} mm, so {step} such layers fill the area once."
         )
     elif zigzag_layers and min_radius > 0 and track_gap < 2.0 * min_radius:
         notes.append(
@@ -148,5 +181,5 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
             f"{2.0 * min_radius:.1f} mm, avoids this."
         )
     if kin_update:
-        update["kinematics"] = k.model_copy(update=kin_update)
+        update["kinematics"] = config.kinematics.model_copy(update=kin_update)
     return ResolvedConfig(config.model_copy(update=update), tuple(notes))

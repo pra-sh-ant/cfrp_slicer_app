@@ -154,6 +154,14 @@ HELP = {
 
     # --- G-code start -------------------------------------------------------------------------
     "uv": "UV light brightness while printing (0-255).",
+    "uv_irradiance": "UV light power reaching the tow at the UV Intensity above, measured with a UV "
+                     "radiometer at the needle tip (mW/cm²). With UV Spot Length and the resin's Cure "
+                     "Dose it caps the print speed so every mm of tow gets its dose. Not set = no cap.",
+    "uv_spot": "Length of tow the UV light covers along the path at the needle (mm). The tow is lit "
+               "for Spot Length / speed seconds. Not set = no cure cap.",
+    "cure_dose": "UV dose the resin needs to cure as it is laid (mJ/cm², from the resin data sheet or "
+                 "a cure test). With UV Irradiance and UV Spot Length it caps every speed at Irradiance x "
+                 "Spot Length / Dose; the notes give the cap. Off = no cap.",
     "purge_e": "How much resin is pushed out before the print to clear the needle.",
     "purge_f": "How fast that purge is pushed.",
     "travel_f": "Speed of the first move to the start point.",

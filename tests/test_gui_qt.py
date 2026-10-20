@@ -555,6 +555,10 @@ def test_viewer_shows_cavities_apart_from_mesh_problems(app):
                    markers=((10.0, 10.0, 0.2, "open edge"), (20.0, 20.0, 0.4, "cavity"), (30.0, 20.0, 0.4, "cavity")))
     assert v.problems_chk.text() == "Problems (1)" and v.cavities_chk.text() == "Cavities (2)"
     assert not v.cavities_chk.isHidden()
+    assert v.overhangs_chk.isHidden()
+    v.update_scene(r.trajectory, r.target_shapes, r.max_z, markers=((5.0, 5.0, 0.4, "overhang"),))
+    assert v.overhangs_chk.text() == "Overhangs (1)" and not v.overhangs_chk.isHidden()
+    assert v.problems_chk.isHidden()
     v.update_scene(r.trajectory, r.target_shapes, r.max_z)
     assert v.cavities_chk.isHidden()
 
@@ -582,3 +586,12 @@ def test_layer_recipe_fields(panel):
     from cfrp_core import from_legacy_dict
     cfg = from_legacy_dict(p)
     assert cfg.geometry.bolt_holes == (1, 3) and cfg.geometry.drill_holes == (2,)
+
+
+def test_cure_fields_round_trip(panel):
+    panel.load_params({"cure_dose": 250.0, "uv_irradiance": 400.0, "uv_spot": 5.0})
+    p = panel.get_params()
+    assert (p["cure_dose"], p["uv_irradiance"], p["uv_spot"]) == (250.0, 400.0, 5.0)
+    from cfrp_core import from_legacy_dict
+    from cfrp_core.constraints import cure_speed
+    assert cure_speed(from_legacy_dict(p)) == 8.0

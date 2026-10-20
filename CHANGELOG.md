@@ -5,6 +5,42 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 45, first part: UV cure speed cap, overhang map)
+- **UV cure speed cap.** New settings: **Cure Dose** (`cure_dose`, mJ/cm²,
+  Material, saved with the fibre/resin profile), **UV Irradiance**
+  (`uv_irradiance`, mW/cm², at the UV Intensity set) and **UV Spot Length**
+  (`uv_spot`, mm of tow the light covers), both under G-code Start and saved
+  with the machine profile. All three default to off. When all three are set,
+  a point of tow is lit for spot / v seconds and gets irradiance x spot / v.
+  Every speed is therefore capped at irradiance x spot / dose: Print Speed
+  (Max), the Mushroom's Overhang and Z Pull speeds, and Min Bend Speed and the
+  Pump-Stall Floor under the cap. The cap applies to every part kind
+  (`constraints.cure_speed`, applied before the speed planner, whose loops are
+  unchanged), and the notes give it ("Print Speed (Max) limited to 8.00 mm/s
+  by the UV cure: 400 mW/cm² over 5 mm gives the 250 mJ/cm² the resin needs up
+  to that speed"). If only some of the three are set, a note says the cap is
+  off. Validation fails any point faster than 1.01 x the cap. The model assumes
+  even light over the spot and a dose that adds up linearly (no oxygen
+  inhibition, no dark cure); measure irradiance at the needle tip.
+- **Overhang map** (`geometry.mesh_slicer.support_map`, STL Import): the
+  areas of each printed slice farther than half a track from what the slice
+  below holds (a tow may sit half its width past the edge below). Spots
+  narrower than one track are left out. The first filled slice lies on the
+  bed. A note lists the largest (a 20 x 20 mm stem under a 40 x 40 mm cap,
+  0.5 mm layers: "Overhangs: 1 layer(s) have areas with nothing under them,
+  where the fibre is laid on nothing: 1151 mm² at layer 5 (z 2.20 mm)"), and
+  blue markers show them in the 3D view (Overhangs toggle).
+- Fixed: a capped speed (Min Bend Speed or Pump-Stall Floor above Print Speed)
+  on a zigzag part with Strict Bend Radius or radius-keeping turns crashed the
+  constraint step (a loop variable shadowed the kinematics settings).
+
+### Not yet done (Phase 45)
+- The fibre still crosses overhangs like any other area: straight anchored
+  runs at the overhang speed, spans too long to lay left out, and the
+  needle-access check are open. Also open: recipes per STL slice (edge rings
+  on thin walls, bores), Load Direction, height ranges, and material-driven
+  recipes.
+
 ### Added (Phase 44, second part: layer recipe, hole wraps, drill-after holes)
 - **Edge Rings** (`edge_rings`, 0 to 5, off by default; flat parts in one piece,
   on zigzag and Fermat layers): that many rings along the outline, bending round

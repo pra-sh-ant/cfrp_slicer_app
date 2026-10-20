@@ -313,6 +313,11 @@ class Legend(QWidget):
 # ---------------------------------------------------------------------------
 # Viewer widget
 # ---------------------------------------------------------------------------
+
+def _marker_group(marker):
+    """'cavity', 'overhang', or None for a mesh problem spot."""
+    return marker[3] if marker[3] in ("cavity", "overhang") else None
+
 class ViewerGL(QWidget):
     """Toolbar + GL view + layer range slider + legend + move scrubber."""
 
@@ -409,6 +414,13 @@ class ViewerGL(QWidget):
         self.cavities_chk.toggled.connect(self._show_problems)
         self.cavities_chk.setVisible(False)
         bar.addWidget(self.cavities_chk)
+        self.overhangs_chk = QCheckBox("Overhangs")
+        self.overhangs_chk.setChecked(True)
+        self.overhangs_chk.setToolTip("Blue dots on areas of a slice with nothing under them: the fibre "
+                                      "there is laid on nothing (the notes list each layer)")
+        self.overhangs_chk.toggled.connect(self._show_problems)
+        self.overhangs_chk.setVisible(False)
+        bar.addWidget(self.overhangs_chk)
         bar.addStretch()
         _btn("Save image…", "Save the view as PNG", self.save_screenshot, 90)
         outer.addLayout(bar)
@@ -481,6 +493,7 @@ class ViewerGL(QWidget):
         self._start = None
         self._problems = None
         self._cavities = None
+        self._overhangs = None
         self._markers = ()
         if self._view is not None:
             self._draw_bed()
@@ -540,6 +553,9 @@ class ViewerGL(QWidget):
         self._cavities = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(1.0, 0.65, 0.0, 1), size=9)
         self._cavities.setVisible(False)
         self._view.addItem(self._cavities)
+        self._overhangs = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(0.25, 0.55, 1.0, 1), size=9)
+        self._overhangs.setVisible(False)
+        self._view.addItem(self._overhangs)
 
     # ------------------------------------------------------------------
     # Scene update
@@ -556,20 +572,20 @@ class ViewerGL(QWidget):
         for the see-through overlay (None = extrude the first outline).
         `prepared`: a toolpath_mesh.Prepared built off the UI thread for
         this trajectory (its meshes are used if the display mode still
-        matches). `markers`: (x, y, z, kind) problem spots of the mesh, and
-        (kind "cavity") spots no layer fills."""
+        matches). `markers`: (x, y, z, kind) problem spots of the mesh,
+        (kind "cavity") spots no layer fills and (kind "overhang") areas
+        with nothing under them."""
         self._r_min = float(r_min)
         self._part_tris = part_mesh
         self._part_top = float(max_z or 0.0)
         self._reset_measure()
         self._outlines = list(target_shapes or [])
         self._markers = tuple(markers or ())
-        n_mesh = sum(1 for m in self._markers if m[3] != "cavity")
-        n_cav = len(self._markers) - n_mesh
-        self.problems_chk.setVisible(bool(n_mesh))
-        self.problems_chk.setText(f"Problems ({n_mesh})")
-        self.cavities_chk.setVisible(bool(n_cav))
-        self.cavities_chk.setText(f"Cavities ({n_cav})")
+        for chk, name, kind in ((self.problems_chk, "Problems", None), (self.cavities_chk, "Cavities", "cavity"),
+                                (self.overhangs_chk, "Overhangs", "overhang")):
+            n = sum(1 for m in self._markers if _marker_group(m) == kind)
+            chk.setVisible(bool(n))
+            chk.setText(f"{name} ({n})")
         self._show_problems()
         self._prepared = prepared if prepared is not None and extra is None else None
         if self._prepared is not None:
@@ -887,9 +903,10 @@ class ViewerGL(QWidget):
     def _show_problems(self, *_):
         if self._problems is None:
             return
-        for item, chk, pick in ((self._problems, self.problems_chk, lambda m: m[3] != "cavity"),
-                                (self._cavities, self.cavities_chk, lambda m: m[3] == "cavity")):
-            pts = [m[:3] for m in self._markers if pick(m)]
+        for item, chk, kind in ((self._problems, self.problems_chk, None),
+                                (self._cavities, self.cavities_chk, "cavity"),
+                                (self._overhangs, self.overhangs_chk, "overhang")):
+            pts = [m[:3] for m in self._markers if _marker_group(m) == kind]
             if pts:
                 item.setData(pos=np.array(pts, dtype=np.float32))
             item.setVisible(bool(pts) and chk.isChecked())
