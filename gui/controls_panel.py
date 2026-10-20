@@ -785,7 +785,8 @@ class ControlsPanel(QWidget):
             "anchor_length": anchor,
             "min_radius": self.min_r_spin.value(),
             "v_z": vz,
-            "v_overhang": v_overhang,
+            "v_overhang": (v_overhang if is_flat_specialty
+                           else self.v_overhang_spin.value() if shape == "STL Import" else 0.0),
             "dwell": dwell,
             "uv": self.uv_spin.value(),
             "uv_irradiance": self.uv_irr_spin.value(),

@@ -7,6 +7,7 @@ import math
 from collections import Counter
 
 import numpy as np
+import shapely
 from shapely.ops import unary_union
 
 from .. import geometry as geo
@@ -141,6 +142,19 @@ def _mesh_report_notes(report, slices, layer_height):
     if report.get('subtractive'):
         info.append(f"{report['subtractive']} inward-facing body(ies) were treated as cavities.")
     return warnings, info
+
+
+def _overhang_cap(path, polys, v_overhang, v_max):
+    """Per-point speed ceiling: Overhang Speed where the path lies over an
+    overhang of this slice (nothing under it), else v_max; None when the
+    slice has no overhang or Overhang Speed is not slower."""
+    if not polys or not path or not 0.0 < v_overhang < v_max:
+        return None
+    xy = np.asarray(path, dtype=np.float64).reshape(-1, 2)
+    over = shapely.contains_xy(unary_union(polys), xy[:, 0], xy[:, 1])
+    if not over.any():
+        return None
+    return np.where(over, v_overhang, v_max)
 
 
 def _overhang_report(overhangs, slices, limit=200):
@@ -341,7 +355,11 @@ def build_stl_laminate(config: ProcessConfig):
             raw_path, r_min, [h for p in islands for h in hole_keepouts(p)], gap * 0.25)
         raw_path = strict.repair(raw_path, unary_union(islands), keep_head=1 if last_pt is not None else 0)
         strict.record(i + 1, raw_path)
-        layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
+        cap = _overhang_cap(raw_path, overhangs[i], float(config.kinematics.v_overhang_mm_s), kin.v_max)
+        layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin, v_cap=cap)
+        if cap is not None:
+            for pt, c in zip(layer_trajectory, cap, strict=False):
+                pt['overhang'] = bool(c < kin.v_max)
         _mark_anchor(layer_trajectory, anchor_n)
         if len(islands) > 1:
             flag_bridges(layer_trajectory, unary_union(islands), gap, skip=anchor_n + 1)

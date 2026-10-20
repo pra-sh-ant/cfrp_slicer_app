@@ -149,7 +149,8 @@ HELP = {
 
     # --- mushroom ----------------------------------------------------------------------------
     "v_z": "Speed of the overhang test's vertical pull.",
-    "v_overhang": "Speed on the overhang test's sticking-out disc.",
+    "v_overhang": "Speed on the overhang test's sticking-out disc, and on an imported model wherever the "
+                  "fibre crosses an area with nothing under it (Overhangs in the 3D view).",
     "dwell": "Pause at the top of the overhang test's stem so the UV light can cure it.",
 
     # --- G-code start -------------------------------------------------------------------------

@@ -49,3 +49,17 @@ def test_stl_overhangs_are_noted_and_marked(tmp_path):
     block = _boxes_stl(tmp_path / "b.stl", [(0, 0, 0, 40, 30, 2.0)])
     res = slice_part(from_legacy_dict(dict(cfg, stl_path=block)))
     assert not any(n.startswith("Overhangs:") for n in res.info)
+
+
+def test_fibre_over_an_overhang_runs_at_overhang_speed(tmp_path):
+    path = _boxes_stl(tmp_path / "t.stl", [(10, 10, 0, 30, 30, 2.0), (0, 0, 2.0, 40, 40, 3.0)])
+    cfg = dict(shape="STL Import", stl_path=path, layer_height=0.5, infill_type="Archimedean (Concentric Spiral)",
+               fill_solid=True, v_overhang=2.0)
+    res = slice_part(from_legacy_dict(cfg))
+    over = [p for p in res.trajectory if p.get("overhang")]
+    assert over and max(p["v"] for p in over) <= 2.0 + 1e-9
+    assert {p["layer"] for p in over} == {5}
+    assert max(p["v"] for p in res.trajectory if p["layer"] == 5 and not p.get("overhang")) > 2.0
+    # a block has no overhang: nothing slowed
+    block = _boxes_stl(tmp_path / "b.stl", [(0, 0, 0, 40, 30, 2.0)])
+    assert not any(p.get("overhang") for p in slice_part(from_legacy_dict(dict(cfg, stl_path=block))).trajectory)

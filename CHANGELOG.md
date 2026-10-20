@@ -30,14 +30,19 @@ outputs identical are listed under "Internal".
   0.5 mm layers: "Overhangs: 1 layer(s) have areas with nothing under them,
   where the fibre is laid on nothing: 1151 mm² at layer 5 (z 2.20 mm)"), and
   blue markers show them in the 3D view (Overhangs toggle).
+- **Overhang Speed on STL parts.** Points of a slice that lie over its
+  overhangs are capped at Overhang Speed (`v_overhang`, until now only the
+  Mushroom's) and flagged `overhang` in the trajectory. The cap is passed to the
+  speed planner per point (`calculate_trajectory(v_cap=...)`), and its loops
+  are unchanged. Without overhangs the paths are unchanged (goldens).
 - Fixed: a capped speed (Min Bend Speed or Pump-Stall Floor above Print Speed)
   on a zigzag part with Strict Bend Radius or radius-keeping turns crashed the
   constraint step (a loop variable shadowed the kinematics settings).
 
 ### Not yet done (Phase 45)
-- The fibre still crosses overhangs like any other area: straight anchored
-  runs at the overhang speed, spans too long to lay left out, and the
-  needle-access check are open. Also open: recipes per STL slice (edge rings
+- The fibre crosses overhangs along its normal pattern, only slower: straight
+  runs anchored at both ends, at the angle that makes spans shortest, spans too
+  long to lay left out, and the needle-access check are open. Also open: recipes per STL slice (edge rings
   on thin walls, bores), Load Direction, height ranges, and material-driven
   recipes.
 
