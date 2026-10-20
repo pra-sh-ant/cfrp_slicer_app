@@ -42,8 +42,10 @@ outputs identical are listed under "Internal".
 - `tools/validation_sweep.py --strict`; CI runs it (quick).
 - Measured (validation sweep, 1262 cases, 1040 of them flat): strict off, 702
   flat cases warn of 710,348 tight points in all (up to 3,899 in one part); strict
-  on, no bend under 0.98 x r_min in any case, climbs included, no Fail and no
-  crash. Sweep time 4 min 45 s -> 9 min 36 s.
+  on, every flat case passes: no bend under 0.98 x r_min, climbs included, no
+  crossing (3 with strict off), no Fail and no crash. The 16 warnings left are Z
+  shells and the Mushroom, where strict does not apply. Sweep time 4 min 45 s ->
+  9 min 26 s.
 
 ### Known limits (Phase 43)
 - Strict zigzag layers cover about 15 % of a layer each (lines 2 x r_min apart);
