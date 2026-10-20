@@ -296,8 +296,10 @@ def field_states(p: dict) -> dict[str, OptionState]:
     else:
         s["seam_stagger"] = _off("Only for round Z shells and flat Archimedean parts (it twists the "
                                  "spiral so each layer's seam moves round).")
-    for key in ("v_z", "v_overhang", "dwell"):
+    for key in ("v_z", "dwell"):
         s[key] = ON if family == "mushroom" else mushroom_only
+    s["v_overhang"] = (ON if family in ("mushroom", "stl")
+                       else _off("Only for the Mushroom and STL Import (fibre over an overhang)."))
     return s
 
 

@@ -504,7 +504,10 @@ class ControlsPanel(QWidget):
                                       _spin(1e-5, 1, 0.0001, 0.00115, 5, "g/mm³"))
         self.weight_spin = self._add(sec, "weight", "Fiber Weight",
                                      _spin(1e-5, 1, 0.00001, round(0.55 / (math.pi * 39), 6), 6, "g/mm"))
-        for w in (self.needle_spin, self.lh_spin, self.emult_spin, self.density_spin, self.weight_spin):
+        self.dose_spin = self._add(sec, "cure_dose", "Cure Dose", _spin(0, 100000, 10, 0.0, 1, "mJ/cm²"))
+        self.dose_spin.setSpecialValueText("off")
+        for w in (self.needle_spin, self.lh_spin, self.emult_spin, self.density_spin, self.weight_spin,
+                  self.dose_spin):
             w.valueChanged.connect(self._emit)
 
     # ------------------------------------------------------------------
@@ -537,6 +540,12 @@ class ControlsPanel(QWidget):
 
         sec = self._section("G-code Start")
         self.uv_spin = self._add(sec, "uv", "UV Intensity (PWM)", _ispin(0, 255, 225))
+        self.uv_irr_spin = self._add(sec, "uv_irradiance", "UV Irradiance",
+                                     _spin(0, 100000, 10, 0.0, 1, "mW/cm²"))
+        self.uv_spot_spin = self._add(sec, "uv_spot", "UV Spot Length", _spin(0, 100, 0.5, 0.0, 2, "mm"))
+        for w in (self.uv_irr_spin, self.uv_spot_spin):
+            w.setSpecialValueText("not set")
+            w.valueChanged.connect(self._emit)
         self.purge_e_spin = self._add(sec, "purge_e", "Purge Amount (E)", _spin(0, 100, 1, 15.0, 1))
         self.purge_f_spin = self._add(sec, "purge_f", "Purge Speed", _spin(1, 3000, 10, 60.0, 0, "mm/min"))
         self.travel_f_spin = self._add(sec, "travel_f", "Approach Speed", _spin(1, 3000, 10, 600.0, 0, "mm/min"))
@@ -762,6 +771,7 @@ class ControlsPanel(QWidget):
             "e_mult": self.emult_spin.value(),
             "density": self.density_spin.value(),
             "weight": self.weight_spin.value(),
+            "cure_dose": self.dose_spin.value(),
             "v_max": self.vmax_spin.value(),
             "v_min": vmin,
             "accel": accel,
@@ -775,9 +785,12 @@ class ControlsPanel(QWidget):
             "anchor_length": anchor,
             "min_radius": self.min_r_spin.value(),
             "v_z": vz,
-            "v_overhang": v_overhang,
+            "v_overhang": (v_overhang if is_flat_specialty
+                           else self.v_overhang_spin.value() if shape == "STL Import" else 0.0),
             "dwell": dwell,
             "uv": self.uv_spin.value(),
+            "uv_irradiance": self.uv_irr_spin.value(),
+            "uv_spot": self.uv_spot_spin.value(),
             "purge_e": self.purge_e_spin.value(),
             "purge_f": self.purge_f_spin.value(),
             "travel_f": self.travel_f_spin.value(),
@@ -915,6 +928,9 @@ class ControlsPanel(QWidget):
         _set(self.v_overhang_spin, "v_overhang")
         _set(self.dwell_spin, "dwell")
         _set(self.uv_spin, "uv", int)
+        _set(self.uv_irr_spin, "uv_irradiance")
+        _set(self.uv_spot_spin, "uv_spot")
+        _set(self.dose_spin, "cure_dose")
         _set(self.purge_e_spin, "purge_e")
         _set(self.purge_f_spin, "purge_f")
         _set(self.travel_f_spin, "travel_f")

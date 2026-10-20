@@ -54,6 +54,7 @@ _DEFAULTS = {
     "stl_closing_radius": 0.049, "stl_stitch": 5.0,
     "bed_x": 180.0, "bed_y": 220.0, "z_max": 200.0, "bed_margin": 1.0,
     "uv": 225, "purge_e": 15.0, "purge_f": 60.0, "travel_f": 600.0,
+    "cure_dose": 0.0, "uv_irradiance": 0.0, "uv_spot": 0.0,
 }
 
 

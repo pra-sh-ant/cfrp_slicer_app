@@ -386,3 +386,33 @@ def islands(region, min_area: float = 0.0) -> list[Polygon]:
     polys = list(region.geoms) if region.geom_type == 'MultiPolygon' else [region]
     polys = [p for p in polys if p.geom_type == 'Polygon' and p.area > max(min_area, 0.0)]
     return sorted(polys, key=lambda p: p.area, reverse=True)
+
+
+def support_map(regions, gap: float, rest: float | None = None) -> list[list[Polygon]]:
+    """Per slice, the areas with nothing under them (overhangs): parts of
+    `regions[i]` farther than `rest` (default half a track: a tow may sit half
+    its width beyond the edge below) from what slice i-1 holds. The first
+    filled slice lies on the bed; a slice over an empty one (None) has nothing
+    under it.
+    Spots narrower than one track are left out (a tow there rests on its
+    neighbours). Each list holds the overhang polygons, largest first."""
+    rest = 0.5 * gap if rest is None else float(rest)
+    out: list[list[Polygon]] = []
+    below, on_bed = None, True             # slices before the first filled one are empty
+    for reg in regions:
+        if reg is None or reg.is_empty:
+            out.append([])
+            below = None
+            continue
+        if on_bed:
+            on_bed = False
+            out.append([])
+        else:
+            free = reg if below is None else reg.difference(below.buffer(rest, join_style=1))
+            # open by half a track: slivers along edges are not overhangs
+            free = free.buffer(-0.5 * gap, join_style=1).buffer(0.5 * gap, join_style=1).intersection(reg)
+            polys = [p for p in getattr(free, "geoms", [free])
+                     if p.geom_type == "Polygon" and p.area >= gap * gap]
+            out.append(sorted(polys, key=lambda p: -p.area))
+        below = reg
+    return out

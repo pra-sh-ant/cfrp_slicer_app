@@ -69,7 +69,7 @@ class SliceResult:
     info: tuple[str, ...]                 # other notes (e.g. bed auto-positioning)
     stats: dict = None                    # print_time_s, fiber_length_mm, fiber_mass_g
     bed_shift: tuple = (0.0, 0.0)         # XY added by fit_trajectory_to_bed
-    markers: tuple = ()                   # (x, y, z, kind): where an STL mesh is broken; kind "cavity": a spot no layer fills
+    markers: tuple = ()                   # (x, y, z, kind): where an STL mesh is broken; "cavity": a spot no layer fills; "overhang": nothing under it
 
 
 def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> SliceResult:

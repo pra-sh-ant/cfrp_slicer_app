@@ -52,6 +52,9 @@ _FIELD_MAP = {
     "dwell": ("kinematics", "dwell_s"),
     # G-code start sequence
     "uv": ("gcode", "uv_pwm"),
+    "uv_irradiance": ("gcode", "uv_irradiance_mw_cm2"),
+    "uv_spot": ("gcode", "uv_spot_mm"),
+    "cure_dose": ("material", "cure_dose_mj_cm2"),
     "purge_e": ("gcode", "purge_e"),
     "purge_f": ("gcode", "purge_f_mm_min"),
     "travel_f": ("gcode", "travel_f_mm_min"),

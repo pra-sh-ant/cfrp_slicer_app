@@ -147,6 +147,7 @@ Header; `G28 / G92 E0 / G90 / G0 Z15`; purge `G1 F{purge_f} E{purge_e}`, `G4 P15
 |---|---|---|
 | Bounds | outside bed volume | Fail |
 | Pump floor | any `pump_floored` point | Warning |
+| UV cure (Phase 45; Cure Dose, UV Irradiance and UV Spot Length all set) | any point faster than 1.01 × irradiance × spot / dose | Fail |
 | Seam jump | XY distance at `layer_start` > gap | Fail |
 | Ramp angle | steeper than `transition_angle + 2°` | Warning |
 | Self-crossing | not simple and > 3 repeated points (0.01 mm) | Warning |

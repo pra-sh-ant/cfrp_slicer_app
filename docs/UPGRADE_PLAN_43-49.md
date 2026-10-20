@@ -27,7 +27,7 @@ Request (2026-10-20), in short:
 |---|---|---|
 | 43 | Bend radius everywhere | done (see CHANGELOG) |
 | 44 | Mixed patterns in one layer, wrapped holes, cavity check | in progress: cavity check, Fill Pockets, layer recipe (edge rings, hole wraps, bolt and drill-after holes; opt-in) done; open: every bolt hole wrapped, Auto trying recipes, lines into leftover slivers, per-hole canvas settings, property test (see CHANGELOG) |
-| 45 | STL: mixed patterns per slice | planned |
+| 45 | STL: mixed patterns per slice | in progress: UV cure speed cap, overhang map, overhang speed done; anchored straight runs over overhangs, recipes per slice, load direction, height ranges open |
 | 46 | Three workspaces | planned |
 | 47 | A tool and a cure per material, coordinated | planned |
 | 48 | Accuracy and reliability | planned |
