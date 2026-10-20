@@ -17,7 +17,9 @@ src/cfrp_core/            UI-free slicing library (no Qt or other UI imports)
   machine.py              MachineProfile (+ data/machine_profiles/default.json),
                           fit_trajectory_to_bed, check_bounds
   geometry/               _common (fillet, inset rings, resample, blend, dedupe),
-                          outlines, archimedean, fermat, serpentine, laminate, revolve
+                          outlines, archimedean, fermat, serpentine, laminate, revolve,
+                          strict (Dubins repairs and joins), zones (layer recipe pieces:
+                          edge rings, hole bands, wraps into / out of a hole)
   kinematics.py           speed planner (vectorised; exact accel/decel scans), lru-cached
   layers/                 layer loops, one module per kind of part:
     common.py             KinematicsParams, lead-in anchors, plan_layer, seam trims, append_layer
@@ -29,6 +31,8 @@ src/cfrp_core/            UI-free slicing library (no Qt or other UI imports)
                           by holes): multi_island_layer, flag_bridges
     auto.py               Auto (Best Fit): candidates per layer, scored on the fibre
                           rules (crossings, holes, tight bends, coverage)
+    recipe.py             layer recipe (Phase 44): which hole each layer wraps, the plain
+                          layer instead where the recipe's pieces cross, notes
     revolve.py            build_revolve_shell (helical shells, spiral Z)
   trajectory.py           TrajectoryPoint (the point dict's keys) + check_trajectory
   hints.py                fix_hint: plain-language fix for each check message
@@ -85,8 +89,12 @@ slice_part(config, machine)
  │               geometry.base_polygon, printable_boundary + laminate_layer
  │                   -> archimedean_path | fermat_spiral_path | oriented_serpentine
  │                      | corner_step_path
+ │               layers.recipe.Recipe.layer (Edge Rings, Wrap Holes): zones.recipe_layer
+ │                   = edge rings + laminate_layer core + wrap, joined by
+ │                   strict.smooth_join (else zones._join along the zones' edges)
  │               layers.add_lead_in_anchor (layer 1), enforce_min_radius_clear,
- │               plan_layer, append_layer
+ │               StrictBends.repair (Strict Bend Radius: geometry.strict),
+ │               plan_layer, append_layer (strict_climb when strict)
  ├─ STL:       layers.build_stl_laminate
  │               mesh_slicer.slice_mesh_regions, stl_skins + plan_layers,
  │               _stl_layer_path (pattern fallbacks, islands in one stroke)

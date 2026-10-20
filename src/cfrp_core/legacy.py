@@ -31,6 +31,8 @@ _FIELD_MAP = {
     "stl_stitch": ("geometry", "stl_stitch_mm"),
     "custom_outline": ("geometry", "custom_outline"),
     "custom_holes": ("geometry", "custom_holes"),
+    "bolt_holes": ("geometry", "bolt_holes"),
+    "drill_holes": ("geometry", "drill_holes"),
     # material
     "needle_dia": ("material", "needle_dia_mm"),
     "e_mult": ("material", "e_multiplier"),
@@ -74,6 +76,11 @@ _FIELD_MAP = {
     "solid_top_layers": (None, "solid_top_layers"),
     "zigzag_respect_radius": (None, "zigzag_respect_radius"),
     "fill_centre": (None, "fill_centre"),
+    "strict_bend_radius": (None, "strict_bend_radius"),
+    "fill_pockets": (None, "fill_pockets"),
+    "edge_rings": (None, "edge_rings"),
+    "hole_rings": (None, "hole_rings"),
+    "wrap_holes": (None, "wrap_holes"),
 }
 
 
@@ -120,6 +127,23 @@ def parse_pa_table(text) -> tuple[tuple[float, float], ...]:
     return tuple(pairs)
 
 
+def parse_hole_list(text) -> tuple[int, ...]:
+    """'1, 3' -> (1, 3) (hole numbers, as drawn); a list passes through.
+    Raises ValueError naming the bad entry."""
+    if not isinstance(text, str):
+        return tuple(int(k) for k in (text or ()))
+    out = []
+    for item in text.replace(";", ",").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            out.append(int(item))
+        except ValueError:
+            raise ValueError(f"Hole number {item!r} must be a whole number, e.g. 1, 3") from None
+    return tuple(out)
+
+
 def to_nested(d: dict, layup=None) -> dict:
     """Legacy flat dict -> nested dict ready for ProcessConfig validation."""
     nested: dict = {"geometry": {}, "material": {}, "kinematics": {}, "gcode": {}}
@@ -129,6 +153,12 @@ def to_nested(d: dict, layup=None) -> dict:
         section, field = _FIELD_MAP[key]
         if field == "pressure_advance_table":
             value = parse_pa_table(value)
+        if field in ("bolt_holes", "drill_holes"):
+            try:
+                value = parse_hole_list(value)
+            except ValueError as exc:      # named by the GUI label, so the field is marked
+                raise ValueError(f"{'Bolt Holes' if field == 'bolt_holes' else 'Drill After Curing'}: "
+                                 f"{exc}") from None
         if field == "first_layer_infill" and value in ("", "Same as other layers", "N/A"):
             value = None
         (nested[section] if section else nested)[field] = value

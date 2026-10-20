@@ -358,4 +358,4 @@ def test_mesh_problems_are_marked_where_they_are(tmp_path):
         assert min(xs) - 3 <= x <= max(xs) + 3
     assert any("marked in the 3D view" in n for n in res.info)
     clean = _slice(_stl(tmp_path, "whole", trimesh.creation.cylinder(radius=25, height=6, sections=96)))
-    assert clean.markers == ()
+    assert [m for m in clean.markers if m[3] != "cavity"] == []        # cavities are marked too (Phase 44)

@@ -74,12 +74,29 @@ def ring_from(poly, start):
     return [tuple(start)] + after + before + [tuple(start)]
 
 
-def _entry_route(entry_from, path, corridor, allowed=None, gap=1.0, min_rad=0.0):
+def _entry_route(entry_from, path, corridor, allowed=None, gap=1.0, min_rad=0.0, wide=False):
     """Points along `corridor`'s ring from entry_from towards path[0], used
     only when the straight jump entry_from -> path[0] crosses `path` and the
     detour crosses it less (a corridor narrower than the U-turns would cut
     through them instead). With holes, a route must stay inside `allowed`
-    (where fibre may lie; default the corridor)."""
+    (where fibre may lie; default the corridor).
+
+    `wide` (lines 2·r_min apart): their U-turns reach out to the corridor,
+    so a route along `allowed`'s own ring (the wall loop just laid,
+    retraced) is tried too, and kept if it crosses fewer lines."""
+    route = _corridor_route(entry_from, path, corridor, allowed, gap, min_rad)
+    if not wide or allowed is None or allowed.is_empty or allowed.geom_type != 'Polygon' or len(path) < 3:
+        return route
+    line = LineString(path)
+    along = arc_along_ring(allowed, entry_from, path[0])
+    if _crossing_count(LineString([tuple(entry_from)] + along + [path[0]]), line) < \
+            _crossing_count(LineString([tuple(entry_from)] + [tuple(q) for q in route] + [path[0]]), line):
+        return along
+    return route
+
+
+def _corridor_route(entry_from, path, corridor, allowed, gap, min_rad):
+    """_entry_route along the corridor (or the margin rings round holes)."""
     if corridor.is_empty or corridor.geom_type != 'Polygon' or len(path) < 3:
         return []
     line = LineString(path)
@@ -114,18 +131,19 @@ def _entry_route(entry_from, path, corridor, allowed=None, gap=1.0, min_rad=0.0)
     return []
 
 
-def _with_centre(path, region, gap, outward, last_pt, again=None):
+def _with_centre(path, region, gap, outward, last_pt, again=None, line=None):
     """`path` with the hollow in its middle filled: after an inward spiral
     ends there; or, before an outward one, starting next to where the last
     layer ended (so the climb does not cut across the new lines), the spiral
     re-started (`again(hint)`) where the fill ends. Not on a first layer
     that starts in the middle (its anchor does), and not where the way in
-    would cross the new lines (that layer keeps its middle open)."""
+    would cross the new lines (that layer keeps its middle open).
+    `line`: Strict Bend Radius, one line of the fill (centre_fill)."""
     if not outward:
-        return dedupe_path(list(path) + centre_fill(path, region, gap, at_end=True))
+        return dedupe_path(list(path) + centre_fill(path, region, gap, at_end=True, line=line))
     if last_pt is None:
         return path
-    fill = centre_fill(path, region, gap, anchor=last_pt)
+    fill = centre_fill(path, region, gap, anchor=last_pt, line=line)
     if not fill:
         return path
     spiral = (again(fill[-1]) if again is not None else None) or path
@@ -186,7 +204,7 @@ def max_track_count(base_poly, track_gap, min_radius, infill_type, include_bound
 
 def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_layer,
                    include_boundary, angle, layer_idx=0, last_pt=None, last_dir=None, lead_in=0.0,
-                   seam_turn=0.0, line_spacing=None, line_offset=0.0, fill_centre=False):
+                   seam_turn=0.0, line_spacing=None, line_offset=0.0, fill_centre=False, strict=False):
     """2D path for one layer of a flat part.
 
     Even layers spiral outside-in, odd layers inside-out. With
@@ -202,7 +220,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     radius; see oriented_serpentine). `fill_centre`: Archimedean and
     Corner-Step, fill the hollow the rings leave in the middle
     (serpentine.centre_fill; not on an inside-out first layer, which starts
-    there with its anchor).
+    there with its anchor). `strict` (Strict Bend Radius): Fill Centre lays
+    one line per layer, moving across the hollow from layer to layer.
     """
     check_gap_radius(track_gap, min_radius)
     gap = track_gap
@@ -222,7 +241,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             def again(hint):
                 return corner_step_path(base_poly, gap, min_rad, tracks_per_layer, outward=True,
                                         seam_hint=hint)[0]
-            path = _with_centre(path, base_poly, gap, layer_idx % 2 != 0, last_pt, again)
+            path = _with_centre(path, base_poly, gap, layer_idx % 2 != 0, last_pt, again,
+                                line=layer_idx if strict else None)
         if last_pt:
             path = [last_pt] + path
         return path
@@ -271,7 +291,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             def again(hint):
                 return archimedean_path(infill_bounds, gap, min_rad, track_count=tracks_per_layer,
                                         start_from_inside=True, seam_hint=hint, seam_turn=seam_turn)[0]
-            infill_path = _with_centre(infill_path, infill_bounds, gap, is_outward, last_pt, again)
+            infill_path = _with_centre(infill_path, infill_bounds, gap, is_outward, last_pt, again,
+                                       line=layer_idx if strict else None)
     elif infill_type == FERMAT:
         # Enter where the previous layer ended. (Entering diametrically
         # opposite, as before, left the jump from the previous end as a
@@ -325,7 +346,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             corridor = largest_polygon(wall_poly.buffer(-gap, join_style=1) if include_boundary else wall_poly)
 
             def entry(p):
-                route = _entry_route(entry_from, p, corridor, allowed=wall_poly, gap=gap, min_rad=min_rad)
+                route = _entry_route(entry_from, p, corridor, allowed=wall_poly, gap=gap, min_rad=min_rad,
+                                     wide=line_spacing is not None)
                 hits = (count_crossings([tuple(entry_from)] + [tuple(q) for q in route] + list(p))
                         - count_crossings(p)) if holed else 0
                 return (hits, cost(p)), route

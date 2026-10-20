@@ -116,6 +116,13 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
                 f"below the {min_radius:.1f} mm min bend radius) on every layer of a "
                 f"{wall_band:.1f} mm shell wall; using Archimedean (no reversals) instead."
             )
+        elif config.strict_bend_radius:
+            notes.append(
+                f"Fermat spiral (Strict Bend Radius): the centre turn between adjacent tracks "
+                f"({track_gap / 2.0:.2f} mm radius) becomes a loop at the {min_radius:.1f} mm min bend "
+                f"radius into the unfilled middle, or the spiral turns a ring earlier where there is no "
+                f"room."
+            )
         else:
             notes.append(
                 f"Fermat spiral: its centre U-turn joins adjacent tracks, at most "
@@ -125,7 +132,8 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
     # Line patterns turn 180 deg between adjacent lines one gap apart; the
     # widest such turn is a semicircle of radius gap/2.
     zigzag_layers = config.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45)
-    if zigzag_layers and min_radius > 0 and track_gap < 2.0 * min_radius and config.zigzag_respect_radius:
+    keep_turns = config.zigzag_respect_radius or config.strict_bend_radius
+    if zigzag_layers and min_radius > 0 and track_gap < 2.0 * min_radius and keep_turns:
         k = max(1, math.ceil(2.0 * min_radius / track_gap - 1e-9))
         notes.append(
             f"{config.infill_type}: turns kept at the {min_radius:.1f} mm min bend radius: lines "

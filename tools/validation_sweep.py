@@ -2,6 +2,7 @@
 
     python tools/validation_sweep.py [results.json]
     python tools/validation_sweep.py --quick       # CI: a fifteenth of the cases, exit 1 on Fail/crash
+    python tools/validation_sweep.py --strict      # every case with Strict Bend Radius on
 
 Prints each warning/error category with how many cases hit it and on which
 shapes/infills; writes every case's status, messages and notes to the JSON.
@@ -9,6 +10,7 @@ Base values are the GUI defaults. Takes a few minutes (8 processes).
 """
 import itertools
 import json
+import math
 import re
 import sys
 import time
@@ -59,6 +61,22 @@ def cases():
         yield dict(shape=shape, infill_type=inf, layers=4, layup_seq="0, 90", zigzag_respect_radius=keep)
     for shape, inf in itertools.product(FLAT, (INFILLS[0], INFILLS[4])):
         yield dict(shape=shape, infill_type=inf, layers=4, fill_solid=True, fill_centre=True)
+    # Layer recipe (Phase 44): edge rings; hole wraps on a 60 x 40 plate with four holes
+    for shape, inf in itertools.product(FLAT, INFILLS[1:4]):
+        yield dict(shape=shape, infill_type=inf, layers=4, layup_seq="0, 90", fill_solid=True, edge_rings=2)
+    for inf, edge, wrap, r in itertools.product(INFILLS[1:4], (0, 2), (False, True), (1.6, 4.0)):
+        if edge or wrap:
+            yield dict(PLATE, custom_holes=_holes(r), infill_type=inf, layers=4, layup_seq="0, 90",
+                       fill_solid=True, edge_rings=edge, wrap_holes=wrap)
+
+
+PLATE = dict(shape="Custom Outline", custom_outline=[(0.0, 0.0), (60.0, 0.0), (60.0, 40.0), (0.0, 40.0)],
+             start_x=40.0, start_y=40.0)
+
+
+def _holes(r):
+    return [[(x + r * math.cos(k * math.pi / 8), y + r * math.sin(k * math.pi / 8)) for k in range(16)]
+            for x, y in ((10.0, 10.0), (50.0, 10.0), (10.0, 30.0), (50.0, 30.0))]
 
 
 def norm(msg):
@@ -67,10 +85,12 @@ def norm(msg):
     return m[:110]
 
 
-def run(over):
+def run(over, strict=False):
     from cfrp_core import DEFAULT_MACHINE, from_legacy_dict, slice_part
     cfg = dict(BASE)
     cfg.update(over)
+    if strict:
+        cfg["strict_bend_radius"] = True
     layup = [float(x) for x in cfg["layup_seq"].split(",")]
     t = time.time()
     try:
@@ -86,8 +106,9 @@ if __name__ == "__main__":
     cs = list(cases())
     if "--quick" in sys.argv:
         cs = cs[::15]
+    strict = "--strict" in sys.argv
     with ProcessPoolExecutor(8) as ex:
-        results = list(ex.map(run, cs, chunksize=4))
+        results = list(ex.map(run, cs, [strict] * len(cs), chunksize=4))
     out = args[0] if args else "validation_sweep.json"
     if "--quick" not in sys.argv:
         Path(out).write_text(json.dumps(results, default=str), encoding="utf-8")

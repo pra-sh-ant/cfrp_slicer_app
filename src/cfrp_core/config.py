@@ -133,6 +133,11 @@ class GeometryConfig(_Frozen):
     # e.g. a structural PCB drawn in the editor.
     custom_outline: tuple[tuple[float, float], ...] = ()
     custom_holes: tuple[tuple[tuple[float, float], ...], ...] = ()
+    # Layer recipe (Phase 44), by hole number (1 = the first hole drawn):
+    # bolt holes are wrapped first at layer changes; drill-after holes are
+    # printed over and drilled after curing (drilling cuts the fibre there).
+    bolt_holes: tuple[int, ...] = ()
+    drill_holes: tuple[int, ...] = ()
 
     @field_validator("stl_scale")
     @classmethod
@@ -303,6 +308,27 @@ class ProcessConfig(_Frozen):
     # (no ring fits inside twice the bend radius) with short back-and-forth
     # lines. Their turns are tighter than the bend radius (slowed, reported).
     fill_centre: bool = False
+    # Strict bend radius (Phase 43): no fibre bend tighter than min_radius_mm
+    # anywhere -- zigzag turns, joins, the Fermat centre turn, Fill Centre
+    # lines and layer climbs. A bend that cannot be kept is replaced by a
+    # curve at the radius, or that spot is left empty and reported; the audit
+    # fails on any bend under 0.98·r_min. Off = tight bends are slowed and
+    # warned. The GUI turns it on for new projects; saved files keep theirs.
+    strict_bend_radius: bool = False
+    # Fill Pockets (Phase 44): spots every layer below left empty are filled
+    # first -- Auto (Best Fit) scores covering them double, so layers take
+    # turns instead of all leaving the same spots (a cavity through the
+    # laminate). Flat parts.
+    fill_pockets: bool = False
+    # Layer recipe (Phase 44), flat parts with a zigzag or Fermat core:
+    # `edge_rings` rings along the outline (bending round the holes) before /
+    # after the core; with `wrap_holes` an inward layer ends by spiralling
+    # into a hole's `hole_rings` rings and the next layer starts by spiralling
+    # out of them, so that hole gets full laps in two layers (bolt holes
+    # first; every hole when none is marked). 0 / off = today's layers.
+    edge_rings: int = 0
+    hole_rings: int = 2
+    wrap_holes: bool = False
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")
@@ -350,6 +376,13 @@ class ProcessConfig(_Frozen):
     def _skins(cls, v: int) -> int:
         if not 0 <= v <= 1000:
             raise ValueError("Solid Bottom / Top Layers must be between 0 and 1000.")
+        return v
+
+    @field_validator("edge_rings", "hole_rings")
+    @classmethod
+    def _rings(cls, v: int) -> int:
+        if not 0 <= v <= 5:
+            raise ValueError("Edge Rings and Hole Rings must be between 0 and 5.")
         return v
 
     @field_validator("seam_stagger_deg")

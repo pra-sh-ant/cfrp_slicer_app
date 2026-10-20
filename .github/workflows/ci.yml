@@ -7,6 +7,9 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    env:
+      # The audits print non-ASCII (°, ↓); the Windows console default (cp1252) cannot.
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
@@ -33,6 +36,10 @@ jobs:
       - name: Audit - every shape x pattern x setting (quick)
         shell: pwsh
         run: python tools/validation_sweep.py --quick
+
+      - name: Audit - the same with Strict Bend Radius (quick; a bend under r_min fails)
+        shell: pwsh
+        run: python tools/validation_sweep.py --quick --strict
 
       - name: Audit - layer-to-layer planning (quick)
         shell: pwsh

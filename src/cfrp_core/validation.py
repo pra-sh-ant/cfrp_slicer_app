@@ -32,6 +32,40 @@ def _z_chunks(pts3, z_tol):
 _count_crossings = count_crossings
 
 
+def _strict_bend_message(trajectory, keep, pts, tight, min_rad):
+    """'Bend radius: N point(s) bend tighter than ... layer 3 (climb),
+    layer 5 (turn)': each run of tight points named by what bent -- a
+    climb (layer-to-layer ramp), a turn (the path turns back, 150° or
+    more) or a join (any other kink)."""
+    idx = np.nonzero(tight)[0]
+    runs, cur = [], [idx[0]]
+    for v in idx[1:]:
+        if v - cur[-1] <= 3:
+            cur.append(v)
+        else:
+            runs.append(cur)
+            cur = [v]
+    runs.append(cur)
+    seg = np.diff(pts, axis=0)
+    heading = np.arctan2(seg[:, 1], seg[:, 0])
+    named = []
+    for run in runs:
+        pts_k = [keep[v + 1] for v in run]
+        layer = trajectory[pts_k[0]].get('layer', 1)
+        if any(trajectory[k].get('is_transition') for k in pts_k):
+            kind = "climb"
+        else:
+            a, b = max(run[0] - 3, 0), min(run[-1] + 4, len(heading) - 1)
+            turn = np.abs(np.diff(np.unwrap(heading[a:b + 1]))).sum() if b > a else 0.0
+            kind = "turn" if math.degrees(turn) >= 150.0 else "join"
+        item = f"layer {layer} ({kind})"
+        if item not in named:
+            named.append(item)
+    shown = ", ".join(named[:8]) + (f" and {len(named) - 8} more" if len(named) > 8 else "")
+    return (f"Bend radius (strict): {len(idx)} point(s) bend tighter than the {min_rad:g} mm min bend "
+            f"radius: {shown}.")
+
+
 def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE,
                         target_shapes=None) -> dict:
     """Check bed bounds, pump-floor engagement, seam jumps, ramp angle and
@@ -136,7 +170,14 @@ def validate_trajectory(trajectory, config: ProcessConfig, machine: MachineProfi
         transition = np.array([bool(trajectory[k].get('is_transition')) for k in keep[1:-1]], dtype=bool)
         # 2% slack: fillets are arcs at exactly min_rad; sampling them, and
         # seam cut points inserted mid-arc, read up to ~1.7% under.
-        tight = (local_bend_radii(pts) < min_rad * 0.98) & ~transition if len(pts) > 2 else np.zeros(0, bool)
+        g = config.geometry
+        strict = bool(config.strict_bend_radius) and not g.is_revolve and not g.is_specialty
+        tight = local_bend_radii(pts) < min_rad * 0.98 if len(pts) > 2 else np.zeros(0, bool)
+        if strict and tight.any():
+            # Strict Bend Radius: every bend counts, climbs included.
+            errors.append(_strict_bend_message(trajectory, keep, pts, tight, min_rad))
+            tight = np.zeros(0, bool)
+        tight = tight & ~transition if len(tight) else tight
         if tight.any():
             tight_layers = sorted({trajectory[keep[i + 1]].get('layer', 1) for i in np.nonzero(tight)[0]})
             shown = tight_layers[:8] + (["..."] if len(tight_layers) > 8 else [])

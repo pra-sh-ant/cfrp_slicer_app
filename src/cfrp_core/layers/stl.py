@@ -17,6 +17,7 @@ from ..geometry.mesh_slicer import load_stl, open_edges, slice_mesh_regions
 from . import auto
 from .common import (
     KinematicsParams,
+    StrictBends,
     _end_direction,
     _mark_anchor,
     _ramp_min_run,
@@ -37,7 +38,17 @@ from .planning import (
 
 
 def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, last_dir=None,
-                    fallbacks=None, lead_in=0.0, spacing=None, offset=0.0):
+                    fallbacks=None, lead_in=0.0, spacing=None, offset=0.0, strict=None):
+    """_stl_layer_raw, repaired for Strict Bend Radius when `strict` (a
+    StrictBends) is on."""
+    path = _stl_layer_raw(islands, config, angle, layer_idx, last_pt, last_dir, fallbacks, lead_in, spacing, offset)
+    if strict is None or not strict.on:
+        return path
+    return strict.repair(path, unary_union(islands), keep_head=1 if last_pt is not None else 0)
+
+
+def _stl_layer_raw(islands, config: ProcessConfig, angle, layer_idx, last_pt, last_dir=None,
+                   fallbacks=None, lead_in=0.0, spacing=None, offset=0.0):
     """2D path for one sliced layer. A lone island goes through the normal
     flat-laminate generator. Where the chosen pattern cannot work on this
     slice it falls back instead of dropping the layer (each counted in
@@ -64,6 +75,7 @@ def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, l
             angle, layer_idx=layer_idx, last_pt=last_pt, last_dir=last_dir,
             lead_in=lead_in if kind in (ARCHIMEDEAN, CORNER_STEP) else 0.0,
             line_spacing=spacing, line_offset=offset, fill_centre=config.fill_centre,
+            strict=config.strict_bend_radius,
         )
 
     if pattern == ARCHIMEDEAN:
@@ -206,6 +218,8 @@ def build_stl_laminate(config: ProcessConfig):
     variants = {}
     shifts = ZigzagShifts(config)
     decided, chosen = {}, []                       # Auto: (parity, angle, outline) -> (pattern, angle)
+    strict = StrictBends(config)
+    prev_zone = None
 
     def layer_config(plan):
         """config with this layer's pattern and fill (cached per pair)."""
@@ -248,13 +262,17 @@ def build_stl_laminate(config: ProcessConfig):
                        sum(len(getattr(p, 'interiors', ())) for p in islands))
                 holes = [h.buffer(-0.1) for p in islands for h in hole_keepouts(p)]
 
-                def generate(pattern, angle, peek=False, plan=plan, islands=islands, last_pt=last_pt,
+                def generate(pattern, angle, peek=False, raw=False, plan=plan, islands=islands, last_pt=last_pt,
                              last_dir=last_dir):
                     sp, off = shifts.next(pattern, plan.index, angle, peek=peek)
                     cfg = variants.setdefault((pattern, True), config.model_copy(
                         update=dict(infill_type=pattern, fill_solid=True)))
                     return _stl_layer_path(islands, cfg, angle, plan.index, last_pt, last_dir, Counter(),
-                                           lead_in=0.0, spacing=sp, offset=off)
+                                           lead_in=0.0, spacing=sp, offset=off,
+                                           strict=None if raw else strict)
+
+                def repair(path, region=region, keep=1 if last_pt is not None else 0):
+                    return strict.repair(path, region, keep_head=keep)
                 reused = None
                 if sig in decided:
                     pattern, angle, cov = decided[sig]
@@ -265,9 +283,10 @@ def build_stl_laminate(config: ProcessConfig):
                         raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0)
                         chosen.append((i + 1, reused))
                 if reused is None:
-                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, peek=True),
+                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, peek=True, raw=strict.on),
                                                    auto.candidates_for(region, current_angle), region, holes,
-                                                   gap, r_min, last_pt)
+                                                   gap, r_min, last_pt, strict=strict.on,
+                                                   repair=repair if strict.on else None)
                     if choice is None:
                         continue
                     shifts.next(choice.pattern, plan.index, choice.angle)
@@ -277,12 +296,14 @@ def build_stl_laminate(config: ProcessConfig):
             else:
                 spacing, offset = shifts.next(plan.pattern, plan.index, current_angle)
                 raw_path = _stl_layer_path(islands, layer_config(plan), current_angle, plan.index, last_pt,
-                                           last_dir, fallbacks, lead_in=lead, spacing=spacing, offset=offset)
+                                           last_dir, fallbacks, lead_in=lead, spacing=spacing, offset=offset,
+                                           strict=strict)
         except ValueError:
             continue
         if not raw_path:
             continue
 
+        strict.record(i + 1, raw_path)
         anchor_n = 0
         if not trajectory and lead:
             anchor_n = _points_within(raw_path, float(config.anchor_length_mm))
@@ -293,11 +314,19 @@ def build_stl_laminate(config: ProcessConfig):
 
         raw_path = enforce_min_radius_clear(
             raw_path, r_min, [h for p in islands for h in hole_keepouts(p)], gap * 0.25)
+        raw_path = strict.repair(raw_path, unary_union(islands), keep_head=1 if last_pt is not None else 0)
+        strict.record(i + 1, raw_path)
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
         _mark_anchor(layer_trajectory, anchor_n)
         if len(islands) > 1:
             flag_bridges(layer_trajectory, unary_union(islands), gap, skip=anchor_n + 1)
-        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run)
+        zone = None
+        if strict.on:
+            here = printable.buffer(gap / 2.0 + 0.2)
+            zone = here if prev_zone is None else here.union(prev_zone)
+            prev_zone = here
+        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run,
+                     strict=strict.climb(zone))
 
         if layer_trajectory:
             last_pt = (layer_trajectory[-1]['x'], layer_trajectory[-1]['y'])
@@ -330,4 +359,6 @@ def build_stl_laminate(config: ProcessConfig):
     info.extend(dict.fromkeys(p.note for p in plans if p.note))
     if chosen:
         info.append(auto.summary(chosen))
+    if strict.note():
+        info.append(strict.note())
     return trajectory, target_shapes, max_z, warnings, info, markers

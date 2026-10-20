@@ -158,6 +158,26 @@ def _margin_rings(poly, gap):
     return rings
 
 
+_RINGS: dict = {}       # id(ring) -> (ring, vertices, distance along the ring at each)
+
+
+def _along(ring, at):
+    """Points at distances `at` along `ring`, as line_interpolate_point
+    gives them. GEOS walks the ring from its start for every point (most of
+    the time of a layer recipe's zigzag core, whose margin rings have many
+    vertices); here the walk is done once per ring."""
+    hit = _RINGS.get(id(ring))
+    if hit is None or hit[0] is not ring:
+        if len(_RINGS) > 256:
+            _RINGS.clear()
+        xy = shapely.get_coordinates(ring)
+        cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(xy, axis=0).T))])
+        hit = _RINGS[id(ring)] = (ring, xy, cum)
+    _, xy, cum = hit
+    at = np.clip(at, 0.0, cum[-1])
+    return np.column_stack([np.interp(at, cum, xy[:, 0]), np.interp(at, cum, xy[:, 1])])
+
+
 def _routes(a, b, poly, rings, reach, step=0.75, roadmap=None):
     """Candidate connectors from a to b, each the points after a up to b:
     straight if that stays on the part, and along every margin ring within
@@ -177,8 +197,11 @@ def _routes(a, b, poly, rings, reach, step=0.75, roadmap=None):
         for sign in (1.0, -1.0):
             span = ((t1 - t0) * sign) % length
             n = max(2, int(span / step))
-            pts = [ring.interpolate((t0 + sign * span * k / n) % length).coords[0] for k in range(n + 1)]
-            out.append(pts + [tuple(b)])
+            # all of a route's points in one call (point by point, this was
+            # most of Auto's time on a plate with holes)
+            at = (t0 + sign * span * np.arange(n + 1) / n) % length
+            xy = _along(ring, at)
+            out.append([tuple(q) for q in xy.tolist()] + [tuple(b)])
     if not out and roadmap is not None:
         detour = roadmap(a, b)
         if detour:
@@ -489,7 +512,7 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False, spacing
     return list(final_line.coords)
 
 
-def centre_fill(path, region, gap, at_end=True, anchor=None):
+def centre_fill(path, region, gap, at_end=True, anchor=None, line=None):
     """Back-and-forth lines over the hollow a spiral leaves in its middle
     (its innermost ring can be no narrower than twice the bend radius),
     starting next to the path's end (at_end), or next to `anchor` when
@@ -499,7 +522,11 @@ def centre_fill(path, region, gap, at_end=True, anchor=None):
     the lines stop, so every turn joins lines of about the same length and
     stays inside. Their half-circle turns (radius gap/2) are tighter than
     the bend radius, which validation reports. [] when there is no hollow
-    wider than a track there."""
+    wider than a track there.
+
+    `line` (Strict Bend Radius): only one of those lines, with no turns:
+    the middle one for line 0, then outwards on alternate sides, so that
+    layers numbered 0, 1, 2 ... fill the hollow together."""
     if len(path) < 2 or region.is_empty:
         return []
     forward = at_end or anchor is not None
@@ -553,6 +580,10 @@ def centre_fill(path, region, gap, at_end=True, anchor=None):
     if not groups:
         return []
     lines = max(groups, key=lambda g: sum(ln.length for ln in g))
+    if line is not None:
+        mid = (len(lines) - 1) / 2.0
+        order = sorted(range(len(lines)), key=lambda k: (abs(k - mid), k))
+        lines = [lines[order[int(line) % len(lines)]]]
     options = []
     for order in (lines, lines[::-1]):
         for direction in (1, -1):

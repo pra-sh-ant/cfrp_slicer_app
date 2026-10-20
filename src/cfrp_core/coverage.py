@@ -78,3 +78,85 @@ def coverage_summary(per_layer: dict[int, dict]) -> dict:
         "worst_layer": worst, "worst_coverage": per_layer[worst]["coverage"],
         "first_layer": first, "first_coverage": per_layer[first]["coverage"],
     }
+
+
+def _layer_tow(points, half):
+    strips = [shapely.make_valid(LineString(run).buffer(half, cap_style='flat', join_style=1))
+              for run in _runs(points)]
+    return unary_union(strips) if strips else None
+
+
+def cavity_map(trajectory, target_shapes, track_gap: float, run: int | None = None, holes=None) -> dict:
+    """Spots of the part that no layer fills: empty in `run` consecutive
+    layers (None: in every layer). Layers stack, so such a spot is a cavity
+    through the laminate.
+
+    Returns {"share": 0..1 of the part, "area_mm2", "layers": n judged,
+    "spots": [{"area_mm2", "x", "y", "first", "last", "where"}]}, spots
+    largest first; "where" is "next to hole k" (`holes`: polygons in the
+    order the outline lists them; default the part's own), "at the edge" or
+    "inside". Spots under one track width squared are left out (slivers
+    between neighbouring tows)."""
+    half = float(track_gap) / 2.0
+    by_layer: dict[int, list] = {}
+    for pt in trajectory:
+        by_layer.setdefault(pt.get('layer', 1), []).append(pt)
+    layers = []
+    for _z, shape, layer in sorted(target_shapes, key=lambda t: t[2]):
+        if shape is None or shape.is_empty:
+            continue
+        region = shape.buffer(half, join_style=1)
+        tow = _layer_tow(by_layer.get(layer, []), half)
+        empty = region if tow is None else region.difference(tow)
+        layers.append((layer, region, empty))
+    if not layers:
+        return {"share": 0.0, "area_mm2": 0.0, "layers": 0, "spots": []}
+    n = len(layers) if run is None else max(1, min(int(run), len(layers)))
+    found = []                                  # (geometry, first layer, last layer)
+    for start in range(len(layers) - n + 1):
+        window = layers[start:start + n]
+        common = window[0][2]
+        for _, _, empty in window[1:]:
+            common = common.intersection(empty)
+            if common.is_empty:
+                break
+        if not common.is_empty:
+            found.append((common, window[0][0], window[-1][0]))
+    part = layers[0][1]
+    if holes is None:
+        holes = [shapely.geometry.Polygon(r) for g in getattr(part, 'geoms', [part]) for r in g.interiors]
+    near_hole = max(3.0 * float(track_gap), 3.0)
+    spots = []
+    covered = None
+    for geom, first, last in found:
+        # tidy hairline slivers, then split into separate spots
+        geom = geom.buffer(-0.05).buffer(0.05)
+        for g in getattr(geom, 'geoms', [geom]):
+            if g.geom_type != 'Polygon' or g.area < float(track_gap) ** 2:
+                continue
+            c = g.representative_point()
+            dist = [h.exterior.distance(g) for h in holes]
+            if dist and min(dist) <= near_hole:
+                where = f"next to hole {dist.index(min(dist)) + 1}"
+            elif part.exterior.distance(g) <= 2.0 * float(track_gap) if hasattr(part, 'exterior') else False:
+                where = "at the edge"
+            else:
+                where = "inside"
+            spots.append({"area_mm2": float(g.area), "x": float(c.x), "y": float(c.y),
+                          "first": int(first), "last": int(last), "where": where})
+            covered = g if covered is None else covered.union(g)
+    spots.sort(key=lambda s: -s["area_mm2"])
+    area = float(covered.area) if covered is not None else 0.0
+    return {"share": area / max(part.area, 1e-9), "area_mm2": area, "layers": n, "spots": spots}
+
+
+def cavity_note(m: dict) -> str:
+    """One line for the notes from cavity_map's result."""
+    n = m.get("layers", 0)
+    if not m.get("spots"):
+        return f"Cavities: no spot of the part is empty in all {n} layers."
+    spots = m["spots"]
+    shown = ", ".join(f"{s['area_mm2']:.0f} mm² {s['where']}" for s in spots[:3])
+    more = f" and {len(spots) - 3} smaller" if len(spots) > 3 else ""
+    return (f"Cavities: {100.0 * m['share']:.1f} % of the part ({m['area_mm2']:.0f} mm²) is empty in all {n} "
+            f"layers, a void through the laminate: {shown}{more}. Marked in the 3D view (Cavities).")

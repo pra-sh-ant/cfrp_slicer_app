@@ -54,6 +54,9 @@ def test_zigzag_greys_out_tracks_and_shows_a_caution(panel):
     panel.infill_cb.setCurrentText("Oriented Serpentine")
     assert not _enabled(panel, "tracks_per_layer")
     assert _enabled(panel, "layup_seq")
+    # New projects have Strict Bend Radius on: the caution says how zigzags keep it.
+    assert not panel.infill_hint.isHidden() and "Strict Bend Radius" in panel.infill_hint.text()
+    panel.strict_chk.setChecked(False)
     assert not panel.infill_hint.isHidden() and "U-turns" in panel.infill_hint.text()
 
 
@@ -525,3 +528,57 @@ def test_editor_layers_tab_sets_each_ink_layer(editor):
     editor.d_covers.setCurrentIndex(editor.d_covers.findData("board"))
     assert editor.diw_config().insulation_coverage == "board"
     editor.load_diw_config(DiwConfig())
+
+
+def test_strict_bend_radius_on_for_new_projects_off_for_old_files(panel):
+    # Phase 43 (D1): a new panel has it on; a file saved before the setting
+    # existed opens with it off (prints as it did); a file with it keeps it.
+    assert panel.get_params()["strict_bend_radius"] is True
+    old = {k: v for k, v in panel.get_params().items() if k != "strict_bend_radius"}
+    assert panel.load_params(old) == []
+    assert panel.get_params()["strict_bend_radius"] is False
+    assert panel.load_params(dict(old, strict_bend_radius=True)) == []
+    assert panel.get_params()["strict_bend_radius"] is True
+    panel.infill_cb.setCurrentText("Oriented Serpentine")
+    assert not _enabled(panel, "zigzag_respect_radius")       # strict already keeps zigzag turns
+    panel.shape_cb.setCurrentText("Hollow Cylinder (Z)")
+    assert not _enabled(panel, "strict_bend_radius")
+
+
+def test_viewer_shows_cavities_apart_from_mesh_problems(app):
+    from cfrp_core import ProcessConfig, slice_part
+    from cfrp_core.machine import DEFAULT_MACHINE
+    from gui.viewer_gl import ViewerGL
+    r = slice_part(ProcessConfig())
+    v = ViewerGL(DEFAULT_MACHINE)
+    v.update_scene(r.trajectory, r.target_shapes, r.max_z,
+                   markers=((10.0, 10.0, 0.2, "open edge"), (20.0, 20.0, 0.4, "cavity"), (30.0, 20.0, 0.4, "cavity")))
+    assert v.problems_chk.text() == "Problems (1)" and v.cavities_chk.text() == "Cavities (2)"
+    assert not v.cavities_chk.isHidden()
+    v.update_scene(r.trajectory, r.target_shapes, r.max_z)
+    assert v.cavities_chk.isHidden()
+
+
+def test_fill_pockets_greyed_out_unless_auto_with_layers(panel):
+    panel.infill_cb.setCurrentText("Archimedean (Concentric Spiral)")
+    assert not _enabled(panel, "fill_pockets")
+    panel.infill_cb.setCurrentText("Auto (Best Fit)")
+    panel.layers_spin.setValue(4)
+    assert _enabled(panel, "fill_pockets")
+
+
+def test_layer_recipe_fields(panel):
+    panel.infill_cb.setCurrentText("Archimedean (Concentric Spiral)")
+    assert not _enabled(panel, "edge_rings") and not _enabled(panel, "wrap_holes")
+    panel.infill_cb.setCurrentText("Oriented Serpentine")
+    panel.layers_spin.setValue(2)
+    assert _enabled(panel, "edge_rings")
+    assert not _enabled(panel, "wrap_holes")                  # a rectangle has no holes
+    panel.load_params({"edge_rings": 2, "wrap_holes": True, "hole_rings": 3, "bolt_holes": [1, 3],
+                       "drill_holes": "2"})
+    p = panel.get_params()
+    assert (p["edge_rings"], p["wrap_holes"], p["hole_rings"]) == (2, True, 3)
+    assert (p["bolt_holes"], p["drill_holes"]) == ("1, 3", "2")
+    from cfrp_core import from_legacy_dict
+    cfg = from_legacy_dict(p)
+    assert cfg.geometry.bolt_holes == (1, 3) and cfg.geometry.drill_holes == (2,)

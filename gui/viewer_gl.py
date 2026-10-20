@@ -402,6 +402,13 @@ class ViewerGL(QWidget):
         self.problems_chk.toggled.connect(self._show_problems)
         self.problems_chk.setVisible(False)
         bar.addWidget(self.problems_chk)
+        self.cavities_chk = QCheckBox("Cavities")
+        self.cavities_chk.setChecked(True)
+        self.cavities_chk.setToolTip("Orange dots where no layer lays fibre: a void through the whole "
+                                     "laminate (the notes list each spot)")
+        self.cavities_chk.toggled.connect(self._show_problems)
+        self.cavities_chk.setVisible(False)
+        bar.addWidget(self.cavities_chk)
         bar.addStretch()
         _btn("Save image…", "Save the view as PNG", self.save_screenshot, 90)
         outer.addLayout(bar)
@@ -473,6 +480,7 @@ class ViewerGL(QWidget):
         self._nozzle = None
         self._start = None
         self._problems = None
+        self._cavities = None
         self._markers = ()
         if self._view is not None:
             self._draw_bed()
@@ -529,6 +537,9 @@ class ViewerGL(QWidget):
         self._problems = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(1.0, 0.33, 0.18, 1), size=9)
         self._problems.setVisible(False)
         self._view.addItem(self._problems)
+        self._cavities = gl.GLScatterPlotItem(pos=np.zeros((1, 3)), color=(1.0, 0.65, 0.0, 1), size=9)
+        self._cavities.setVisible(False)
+        self._view.addItem(self._cavities)
 
     # ------------------------------------------------------------------
     # Scene update
@@ -545,15 +556,20 @@ class ViewerGL(QWidget):
         for the see-through overlay (None = extrude the first outline).
         `prepared`: a toolpath_mesh.Prepared built off the UI thread for
         this trajectory (its meshes are used if the display mode still
-        matches). `markers`: (x, y, z, kind) problem spots of the mesh."""
+        matches). `markers`: (x, y, z, kind) problem spots of the mesh, and
+        (kind "cavity") spots no layer fills."""
         self._r_min = float(r_min)
         self._part_tris = part_mesh
         self._part_top = float(max_z or 0.0)
         self._reset_measure()
         self._outlines = list(target_shapes or [])
         self._markers = tuple(markers or ())
-        self.problems_chk.setVisible(bool(self._markers))
-        self.problems_chk.setText(f"Problems ({len(self._markers)})")
+        n_mesh = sum(1 for m in self._markers if m[3] != "cavity")
+        n_cav = len(self._markers) - n_mesh
+        self.problems_chk.setVisible(bool(n_mesh))
+        self.problems_chk.setText(f"Problems ({n_mesh})")
+        self.cavities_chk.setVisible(bool(n_cav))
+        self.cavities_chk.setText(f"Cavities ({n_cav})")
         self._show_problems()
         self._prepared = prepared if prepared is not None and extra is None else None
         if self._prepared is not None:
@@ -871,9 +887,12 @@ class ViewerGL(QWidget):
     def _show_problems(self, *_):
         if self._problems is None:
             return
-        if self._markers:
-            self._problems.setData(pos=np.array([m[:3] for m in self._markers], dtype=np.float32))
-        self._problems.setVisible(bool(self._markers) and self.problems_chk.isChecked())
+        for item, chk, pick in ((self._problems, self.problems_chk, lambda m: m[3] != "cavity"),
+                                (self._cavities, self.cavities_chk, lambda m: m[3] == "cavity")):
+            pts = [m[:3] for m in self._markers if pick(m)]
+            if pts:
+                item.setData(pos=np.array(pts, dtype=np.float32))
+            item.setVisible(bool(pts) and chk.isChecked())
 
     def _show_part(self, on=None):
         if self._view is None:

@@ -7,6 +7,7 @@ against it. Input is the flat parameter dict front ends already produce
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .config import (
@@ -23,6 +24,7 @@ from .config import (
 INFILL_PATTERNS = (ARCHIMEDEAN, FERMAT, ORIENTED_SERPENTINE, DIAGONAL_45, CORNER_STEP, AUTO)
 SPIRALS = (ARCHIMEDEAN, FERMAT, CORNER_STEP)
 ZIGZAGS = (ORIENTED_SERPENTINE, DIAGONAL_45)
+RECIPE_CORES = (*ZIGZAGS, FERMAT)        # layers the layer recipe shapes (layers/recipe.py)
 
 STL = "STL Import"
 CUSTOM = "Custom Outline"
@@ -64,10 +66,18 @@ def _num(p: dict, key: str, default: float) -> float:
         return default
 
 
-def _u_turn_caution(p: dict) -> str:
+def _u_turn_caution(p: dict, pattern: str = "") -> str:
     """Why a pattern that turns back between adjacent tracks will show
-    curvature warnings, or '' when the gap allows a turn at r_min."""
+    curvature warnings (or, with Strict Bend Radius, what it does instead),
+    or '' when the gap allows a turn at r_min."""
     gap, r = _num(p, "track_gap", 1.2), _num(p, "min_radius", 3.0)
+    if r > 0 and gap < 2.0 * r and p.get("strict_bend_radius", False):
+        if pattern == FERMAT:
+            return (f"Strict Bend Radius: the turn between the spiral's two arms ({gap / 2:g} mm radius) "
+                    f"becomes a loop at the {r:g} mm min bend radius, or the spiral turns a ring earlier.")
+        k = max(1, math.ceil(2.0 * r / gap - 1e-9))
+        return (f"Strict Bend Radius: zigzag lines are {k * gap:g} mm apart so their turns keep the "
+                f"{r:g} mm min bend radius; {k} layers at one angle fill the area once.")
     if r > 0 and gap < 2.0 * r:
         return (f"U-turns between tracks {gap:g} mm apart are at most {gap / 2:g} mm radius, below the "
                 f"{r:g} mm min bend radius: they are slowed and reported as curvature warnings. "
@@ -83,6 +93,7 @@ def infill_states(p: dict) -> dict[str, OptionState]:
         return {name: _off("The Mushroom overhang test has a fixed path (spiral base, stem, disc).")
                 for name in INFILL_PATTERNS}
     caution = _u_turn_caution(p)
+    strict = bool(p.get("strict_bend_radius", False))
     states = {}
     for name in INFILL_PATTERNS:
         if name == AUTO:
@@ -100,7 +111,8 @@ def infill_states(p: dict) -> dict[str, OptionState]:
                 states[name] = _off("Z shells are concentric rings only (Archimedean or Fermat).")
             continue
         if name in (FERMAT, *ZIGZAGS) and caution:
-            states[name] = OptionState(True, caution, caution=True)
+            why = _u_turn_caution(p, name) if strict else caution
+            states[name] = OptionState(True, why, caution=True)
         else:
             states[name] = ON
     return states
@@ -137,6 +149,9 @@ def field_states(p: dict) -> dict[str, OptionState]:
         s["include_boundary"] = _off("Z shells and the Mushroom have no separate boundary pass.")
     elif infill == CORNER_STEP:
         s["include_boundary"] = _off("Corner-Step's outer ring already runs along the boundary.")
+    elif (_recipe_layers(p, family) == "all" and int(_num(p, "edge_rings", 0)) > 0
+          and not (shape == CUSTOM and p.get("stl_islands") == "all")):    # (pieces: no recipe)
+        s["include_boundary"] = _off("Edge Rings already run along the outline.")
     else:
         s["include_boundary"] = ON
     stl_only = _off("Only for STL Import.")
@@ -208,8 +223,40 @@ def field_states(p: dict) -> dict[str, OptionState]:
                         else _off("Only for Archimedean and Corner-Step on flat and STL parts (the rings "
                                   "leave the middle open; zigzags fill it anyway)."))
     zz = (infill in (*ZIGZAGS, AUTO) or p.get("first_layer_infill") in (*ZIGZAGS, AUTO)) and family in ("flat", "stl")
-    s["zigzag_respect_radius"] = (ON if zz else _off("Only for zigzag patterns (Oriented Serpentine, "
-                                                      "45° Diagonal Hatch) on flat and STL parts."))
+    if p.get("strict_bend_radius", False) and family in ("flat", "stl"):
+        s["zigzag_respect_radius"] = _off("Strict Bend Radius already keeps every zigzag turn at the min "
+                                          "bend radius.")
+    else:
+        s["zigzag_respect_radius"] = (ON if zz else _off("Only for zigzag patterns (Oriented Serpentine, "
+                                                          "45° Diagonal Hatch) on flat and STL parts."))
+    auto = infill == AUTO or p.get("first_layer_infill") == AUTO
+    s["fill_pockets"] = (ON if auto and family == "flat" and layers > 1
+                         else _off("Only for Auto (Best Fit) on flat parts with more than one layer: it "
+                                   "chooses each layer's pattern by what the layers below left empty."))
+    # --- layer recipe (Phase 44) ---------------------------------------------
+    recipe = _recipe_layers(p, family)
+    s["edge_rings"] = (ON if recipe else _off("Only for flat parts with a zigzag (Oriented Serpentine, 45° "
+                                               "Diagonal Hatch) or Fermat pattern, on this or the first "
+                                               "layer."))
+    wrap = bool(p.get("wrap_holes", False))
+    if not recipe:
+        s["wrap_holes"] = s["edge_rings"]
+    elif shape != CUSTOM:
+        s["wrap_holes"] = _off("Only for the Custom Outline: other flat shapes have no holes.")
+    elif layers <= 1:
+        s["wrap_holes"] = _off("A wrap takes two layers: one spirals into the hole, the next out of it.")
+    else:
+        s["wrap_holes"] = ON
+    for key in ("hole_rings", "bolt_holes"):
+        if not s["wrap_holes"].enabled:
+            s[key] = s["wrap_holes"]
+        else:
+            s[key] = ON if wrap else _off("Only with Wrap Holes.")
+    s["drill_holes"] = ON if shape == CUSTOM else _off("Only for the Custom Outline (its holes are numbered "
+                                                       "in drawing order).")
+    s["strict_bend_radius"] = (ON if family in ("flat", "stl")
+                               else _off("Only for flat and STL parts: Z shells and the Mushroom have "
+                                         "their own fixed paths."))
     for key in ("stl_closing_radius", "stl_stitch"):
         s[key] = ON if family == "stl" else stl_only
 
@@ -252,6 +299,18 @@ def field_states(p: dict) -> dict[str, OptionState]:
     for key in ("v_z", "v_overhang", "dwell"):
         s[key] = ON if family == "mushroom" else mushroom_only
     return s
+
+
+def _recipe_layers(p: dict, family: str) -> str:
+    """Which layers the layer recipe can shape: "all", "some" (the first
+    layer / skins or the main pattern only) or "" (none): flat parts, zigzag
+    or Fermat layers."""
+    if family != "flat":
+        return ""
+    main = p.get("infill_type", ARCHIMEDEAN) in RECIPE_CORES
+    first = p.get("first_layer_infill")
+    skin = main if first in (None, "", "Same as other layers") else first in RECIPE_CORES
+    return "all" if main and skin else ("some" if main or skin else "")
 
 
 def first_enabled(states: dict[str, OptionState], preferred: str) -> str:

@@ -25,12 +25,28 @@ def base_polygon(geometry: GeometryConfig, track_gap, min_radius):
     elif shape == "Circle":
         poly = Point(w / 2.0, h / 2.0).buffer(w / 2.0)
     elif shape == "Custom Outline":
-        holes = [hole for hole in geometry.custom_holes if len(hole) >= 3]
+        # drill-after holes are printed over (listed to drill after curing)
+        holes = [hole for k, hole in enumerate(geometry.custom_holes, start=1)
+                 if len(hole) >= 3 and k not in geometry.drill_holes]
         poly = orient(largest_polygon(Polygon(geometry.custom_outline, holes).buffer(0)), 1.0)
     else:
         poly = Polygon()
 
     return translate(poly, xoff=geometry.start_x_mm, yoff=geometry.start_y_mm).buffer(0)
+
+
+def drawn_holes(geometry: GeometryConfig) -> dict:
+    """{hole number: Polygon} of a Custom Outline's holes as drawn (1 =
+    first), placed like the outline; drill-after holes left out."""
+    if geometry.shape != "Custom Outline":
+        return {}
+    out = {}
+    for k, hole in enumerate(geometry.custom_holes, start=1):
+        if len(hole) >= 3 and k not in geometry.drill_holes:
+            poly = Polygon(hole).buffer(0)
+            if not poly.is_empty:
+                out[k] = translate(poly, xoff=geometry.start_x_mm, yoff=geometry.start_y_mm)
+    return out
 
 
 def printable_boundary(base_poly, track_gap, min_radius):

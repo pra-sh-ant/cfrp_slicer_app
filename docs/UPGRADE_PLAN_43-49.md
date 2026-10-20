@@ -25,8 +25,8 @@ Request (2026-10-20), in short:
 
 | Phase | Topic | State |
 |---|---|---|
-| 43 | Bend radius everywhere | planned |
-| 44 | Mixed patterns in one layer, wrapped holes, cavity check | planned |
+| 43 | Bend radius everywhere | done (see CHANGELOG) |
+| 44 | Mixed patterns in one layer, wrapped holes, cavity check | in progress: cavity check, Fill Pockets, layer recipe (edge rings, hole wraps, bolt and drill-after holes; opt-in) done; open: every bolt hole wrapped, Auto trying recipes, lines into leftover slivers, per-hole canvas settings, property test (see CHANGELOG) |
 | 45 | STL: mixed patterns per slice | planned |
 | 46 | Three workspaces | planned |
 | 47 | A tool and a cure per material, coordinated | planned |
@@ -206,8 +206,15 @@ the viewer, the canvas (per-hole settings).
 
 *Done when:*
 - On the 60 × 40 plate with four M3 holes (Fill Solid, 4 layers), the part of
-  the plate empty in every layer drops from 12 % to under 4 %. The rest is the
-  rings that r_min forbids, listed per hole.
+  the plate empty in every layer drops from 12 % to under 4 % with Strict Bend
+  Radius off. The rest is the rings that r_min forbids, listed per hole.
+- *Restated 2026-10-20 (option 1: strict stays on by default).* With Strict Bend
+  Radius on (r_min 3 mm, gap 1.2 mm) that target cannot be met: the rings' hollow
+  centre (about 2 × r_min wide) takes one line per layer, reachable only going
+  forwards, and no ring bends round an M3 hole closer than r_min. With strict on
+  the cavity check must list every spot left empty in all layers, and every spot
+  it lists must lie in the ring centre or next to a hole; wrapped bolt holes
+  must have no such spot within their hole rings.
 - With at least twice as many layers as holes, every bolt hole gets full wraps.
 - No crossings, no bend under r_min and no fibre over a hole.
 - Sweep cases for each recipe and a property test on random holed outlines pass.
