@@ -37,6 +37,10 @@ jobs:
         shell: pwsh
         run: python tools/validation_sweep.py --quick
 
+      - name: Audit - the same with Strict Bend Radius (quick; a bend under r_min fails)
+        shell: pwsh
+        run: python tools/validation_sweep.py --quick --strict
+
       - name: Audit - layer-to-layer planning (quick)
         shell: pwsh
         run: python tools/multilayer_audit.py --quick

@@ -554,6 +554,20 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
             return None
         return p1, math.atan2(ahead[1][1] - p1[1], ahead[1][0] - p1[0]), walk(ahead, 3.0), rest
 
+    landed = {}
+
+    def landing_crossings(d, head):
+        """Crossings of the landing segment's kept piece with the layer's
+        later track: a cut on the straight hop from the last layer's end to
+        where this one starts keeps the rest of that hop, which can cross
+        the layer's lines."""
+        if d not in landed:
+            piece = np.asarray(head[:2], dtype=np.float64)
+            length = float(np.linalg.norm(piece[1] - piece[0]))
+            j = tree.query(shapely.linestrings(piece), predicate='crosses')
+            landed[d] = int(np.count_nonzero(cum[j] > d + length + 1e-6))
+        return landed[d]
+
     pairs = sorted(((t[0] + d, ti, d) for ti, t in enumerate(tails) for d in heads), key=lambda q: q[0])
     tail_geo, head_geo = {}, {}
     best = None
@@ -598,6 +612,7 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
                 cos = np.abs(np.einsum('ij,ij->i', dd[i[later]], dirs[j[later]]))
                 crossings = int(np.count_nonzero(cos < math.cos(math.radians(5.0))))
             crossings += int(line.crosses(LineString(head[:2])))     # the landing segment's kept piece
+            crossings += landing_crossings(d, head)
             short = int(line.length < min_run - 1e-6)
             score = (outside, tight, crossings, short)
             if best is None or score < best[0]:

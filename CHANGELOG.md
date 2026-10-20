@@ -5,6 +5,59 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 43: Strict Bend Radius)
+- **Strict Bend Radius** (`strict_bend_radius`, Pattern & Layers): no fibre bend
+  tighter than the min bend radius anywhere. The core default is off, so saved
+  projects and the golden outputs are unchanged; the GUI turns it on for new
+  projects and off for files saved without the setting (decision D1). Greyed out
+  for Z shells and the Mushroom, whose paths are fixed.
+- `geometry/strict.py`: every bend under r_min in a layer path is replaced by the
+  shortest curve that never bends tighter (a Dubins path: arcs at 1.03 x r_min and
+  straight lines) between a point before it and a point after it. The curve must
+  stay on the part (0.4 gap in from edges and holes), cross no fibre of the layer
+  and keep half a gap off it, except where the old stretch already lay on that
+  fibre. Where no curve fits, a longer stretch is skipped, or the layer starts
+  later or ends earlier. The notes say what was left out: "Left empty because of
+  the bend radius: 12 mm² on layer 2, ...". This covers zigzag turns, joins
+  between runs, entry routes, island bridges, wall lane changes and the Fermat
+  centre turn (a loop at the radius into the middle, or a ring earlier).
+- **Strict climbs** (`layers.common.strict_climb`): the ramp between layers is a
+  Dubins curve between a cut in the last layer's tail and one in the new layer's
+  head, both at vertices or inside straight segments (a cut mid-arc reads ~2 %
+  under the radius). Cut pairs are tried, least fibre dropped first (up to 1500),
+  until the curve stays on the part, keeps every bend of the join at r_min,
+  crosses none of the new layer's fibre on its upper half (where it is at the new
+  layer's height) and is long enough for the transition angle.
+- Zigzags use the radius-keeping spacing (lines ceil(2 r_min / gap) gaps apart,
+  shifted each layer); Fill Centre lays one line per layer, moving across the
+  hollow; Auto (Best Fit) rejects candidates with a tight bend and repairs its
+  candidates best first, stopping when none left can beat the best.
+- Audit: with strict on, any bend under 0.98 x r_min, climbs included, is a Fail
+  naming each layer and what bent: "layer 3 (climb), layer 5 (turn)" (turn: 150°
+  or more; else join).
+- Widely spaced zigzags with a wall loop (strict, or Zigzag Turns at Min Bend
+  Radius): the step from the wall into the zigzag may retrace the wall ring; the
+  corridor route ran into U-turns that reach out to it (60 x 60 square: 2
+  crossings -> 0).
+- `tools/validation_sweep.py --strict`; CI runs it (quick).
+- Measured (validation sweep, 1262 cases, 1040 of them flat): strict off, 702
+  flat cases warn of 710,348 tight points in all (up to 3,899 in one part); strict
+  on, no bend under 0.98 x r_min in any case, climbs included, no Fail and no
+  crash. Sweep time 4 min 45 s -> 9 min 36 s.
+
+### Known limits (Phase 43)
+- Strict zigzag layers cover about 15 % of a layer each (lines 2 x r_min apart);
+  five layers at one angle fill the area once. Strict Fill Centre needs about
+  five layers for a 6 mm wide hollow (135 x 25 plate, Auto: 95 % -> 83 % per
+  layer).
+- Acute corners (triangles) lose a little coverage where no curve fits (60 mm
+  triangle, Corner-Step solid: 87 % -> 80 %).
+- A join that cannot be rounded is skipped and reported; no other run order is
+  tried (the plan's "another order").
+- Slicing is slower: 0.9 s -> 3.0 s for a 60 x 40 plate (Auto, solid, 4 layers);
+  the climb search is the main cost on widely spaced hatches (135 mm circle, 4
+  layers: 0.5 s -> 6.7 s).
+
 ### Internal (clean app folder)
 - The retired Streamlit front end (`legacy/streamlit/`) and its `streamlit-ui`
   extra are removed; the PySide6 app is the only front end.
