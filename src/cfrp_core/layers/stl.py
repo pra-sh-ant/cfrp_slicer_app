@@ -262,13 +262,17 @@ def build_stl_laminate(config: ProcessConfig):
                        sum(len(getattr(p, 'interiors', ())) for p in islands))
                 holes = [h.buffer(-0.1) for p in islands for h in hole_keepouts(p)]
 
-                def generate(pattern, angle, peek=False, plan=plan, islands=islands, last_pt=last_pt,
+                def generate(pattern, angle, peek=False, raw=False, plan=plan, islands=islands, last_pt=last_pt,
                              last_dir=last_dir):
                     sp, off = shifts.next(pattern, plan.index, angle, peek=peek)
                     cfg = variants.setdefault((pattern, True), config.model_copy(
                         update=dict(infill_type=pattern, fill_solid=True)))
                     return _stl_layer_path(islands, cfg, angle, plan.index, last_pt, last_dir, Counter(),
-                                           lead_in=0.0, spacing=sp, offset=off, strict=strict)
+                                           lead_in=0.0, spacing=sp, offset=off,
+                                           strict=None if raw else strict)
+
+                def repair(path, region=region, keep=1 if last_pt is not None else 0):
+                    return strict.repair(path, region, keep_head=keep)
                 reused = None
                 if sig in decided:
                     pattern, angle, cov = decided[sig]
@@ -279,9 +283,10 @@ def build_stl_laminate(config: ProcessConfig):
                         raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0)
                         chosen.append((i + 1, reused))
                 if reused is None:
-                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, peek=True),
+                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, peek=True, raw=strict.on),
                                                    auto.candidates_for(region, current_angle), region, holes,
-                                                   gap, r_min, last_pt, strict=strict.on)
+                                                   gap, r_min, last_pt, strict=strict.on,
+                                                   repair=repair if strict.on else None)
                     if choice is None:
                         continue
                     shifts.next(choice.pattern, plan.index, choice.angle)

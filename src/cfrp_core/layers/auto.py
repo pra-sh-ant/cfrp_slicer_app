@@ -75,12 +75,34 @@ def measure(path, part, holes, gap, r_min, last_pt=None):
     return coverage, tight, count_crossings(pts), jump
 
 
-def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=False):
+def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=False, repair=None):
     """Best of `candidates` [(pattern, angle)]: `generate(pattern, angle)`
     returns a path (or None / raises ValueError when it cannot). Returns
     (Choice, path), or (None, None) if nothing could be laid. `strict`
-    (Strict Bend Radius): a candidate with any bend under r_min is out."""
+    (Strict Bend Radius): a candidate with any bend under r_min is out.
+
+    `repair` (Strict Bend Radius): makes a generated path keep r_min. It is
+    costly, so candidates are first judged unrepaired and repaired best
+    first; a repair only leaves fibre out, so one whose unrepaired score
+    (tight bends not counted) cannot beat the best repaired one so far is
+    never repaired."""
+    if repair is not None:
+        return _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, repair)
     best = None
+    for pattern, angle in candidates:
+        try:
+            path = generate(pattern, angle)
+        except ValueError:
+            continue
+        best = _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict)
+    return best if best is not None else (None, None)
+
+
+_REPAIR_SLACK = 0.01        # a repair's curve may cover a little more than the stretch it replaced
+
+
+def _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, repair):
+    raw = []
     for pattern, angle in candidates:
         try:
             path = generate(pattern, angle)
@@ -91,13 +113,33 @@ def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=F
         m = measure(path, part, holes, gap, r_min, last_pt)
         if m is None:
             continue
-        coverage, tight, crossings, jump = m
-        if strict and _strict_tight(path, r_min, last_pt):
-            continue
-        score = coverage - TIGHT_WEIGHT * tight - CROSSING_COST * crossings - JUMP_COST * jump
-        if best is None or score > best[0].score + 1e-9:
-            best = (Choice(pattern, angle, coverage, tight, crossings, score), path)
+        coverage, _, _, jump = m
+        raw.append((coverage + _REPAIR_SLACK - JUMP_COST * jump, pattern, angle, path))
+    raw.sort(key=lambda r: -r[0])
+    best = None
+    for bound, pattern, angle, path in raw:
+        if best is not None and bound <= best[0].score + 1e-9:
+            break
+        best = _better(best, pattern, angle, repair(path), part, holes, gap, r_min, last_pt, True)
     return best if best is not None else (None, None)
+
+
+def _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict):
+    """`best` or this candidate, whichever scores higher."""
+    if not path or len(path) < 2:
+        return best
+    m = measure(path, part, holes, gap, r_min, last_pt)
+    if m is None:
+        return best
+    coverage, tight, crossings, jump = m
+    if strict:
+        if _strict_tight(path, r_min, last_pt):
+            return best
+        tight = 0.0             # only the join to the last layer, which the climb replaces
+    score = coverage - TIGHT_WEIGHT * tight - CROSSING_COST * crossings - JUMP_COST * jump
+    if best is None or score > best[0].score + 1e-9:
+        return (Choice(pattern, angle, coverage, tight, crossings, score), path)
+    return best
 
 
 def _strict_tight(path, r_min, last_pt):

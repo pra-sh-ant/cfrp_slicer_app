@@ -90,15 +90,23 @@ def build_flat_laminate(config: ProcessConfig):
         current_angle = layup_sequence[i % len(layup_sequence)]
         max_z = layer_z
 
-        def generate(pattern, angle, solid, peek=False, plan=plan, last_pt=last_pt, last_dir=last_dir):
+        keep = 1 if last_pt is not None else 0
+
+        def repair(path, keep=keep):
+            return strict.repair(path, fill_region, keep_head=keep)
+
+        def generate(pattern, angle, solid, peek=False, raw=False, plan=plan, last_pt=last_pt,
+                     last_dir=last_dir):
+            """The layer's path for this pattern (repaired for Strict Bend
+            Radius unless `raw`)."""
             spacing, offset = shifts.next(pattern, plan.index, angle, peek=peek)
             if multi:
                 key = (pattern, solid)
                 if key not in variants:
                     variants[key] = config.model_copy(update=dict(infill_type=pattern, fill_solid=solid))
-                return strict.repair(multi_island_layer(pieces, variants[key], angle, plan.index, last_pt,
-                                                        spacing=spacing, offset=offset),
-                                     fill_region, keep_head=1 if last_pt is not None else 0)
+                path = multi_island_layer(pieces, variants[key], angle, plan.index, last_pt,
+                                          spacing=spacing, offset=offset)
+                return path if raw else repair(path)
             count = (_fill_track_count(fill_poly, config, pattern) if solid else config.tracks_per_layer)
             path = geo.laminate_layer(
                 fill_poly, gap, r_min, pattern, count, g.include_boundary, angle, layer_idx=plan.index,
@@ -106,7 +114,7 @@ def build_flat_laminate(config: ProcessConfig):
                 seam_turn=turn, line_spacing=spacing, line_offset=offset, fill_centre=config.fill_centre,
                 strict=strict.on,
             )
-            return strict.repair(path, fill_region, keep_head=1 if last_pt is not None else 0)
+            return path if raw else repair(path)
 
         try:
             if plan.pattern == AUTO:
@@ -124,9 +132,10 @@ def build_flat_laminate(config: ProcessConfig):
                         raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0)
                         chosen.append((i + 1, reused))
                 if reused is None:
-                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, True, peek=True),
+                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, True, peek=True, raw=strict.on),
                                                    auto.candidates_for(fill_poly, current_angle),
-                                                   base_poly, holes, gap, r_min, last_pt, strict=strict.on)
+                                                   base_poly, holes, gap, r_min, last_pt, strict=strict.on,
+                                                   repair=repair if strict.on else None)
                     if choice is None:
                         raise ValueError("no pattern fits this layer.")
                     shifts.next(choice.pattern, plan.index, choice.angle)
@@ -148,7 +157,7 @@ def build_flat_laminate(config: ProcessConfig):
             anchor_n = len(raw_path) - n_before
 
         raw_path = enforce_min_radius_clear(raw_path, r_min, hole_keepouts(base_poly), gap * 0.25)
-        raw_path = strict.repair(raw_path, fill_region, keep_head=1 if last_pt is not None else 0)
+        raw_path = repair(raw_path)
         strict.record(i + 1, raw_path)
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
         _mark_anchor(layer_trajectory, anchor_n)

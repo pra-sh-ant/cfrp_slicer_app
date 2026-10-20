@@ -83,24 +83,22 @@ def dubins_points(p0, h0, word, params, r, step=_STEP):
     """Points of one Dubins word after p0, about `step` apart, ending at the
     goal. Returns (points, end heading)."""
     x, y, h = float(p0[0]), float(p0[1]), float(h0)
-    pts = []
+    parts = []
     for kind, s in zip(word, params, strict=True):
         length = s * r
         n = max(1, int(math.ceil(length / step)))
+        f = np.arange(1, n + 1, dtype=np.float64) / n
         if kind == "S":
-            for k in range(1, n + 1):
-                f = length * k / n
-                pts.append((x + f * math.cos(h), y + f * math.sin(h)))
+            parts.append(np.column_stack([x + length * f * math.cos(h), y + length * f * math.sin(h)]))
             x, y = x + length * math.cos(h), y + length * math.sin(h)
             continue
         sign = 1.0 if kind == "L" else -1.0
         cx, cy = x - sign * r * math.sin(h), y + sign * r * math.cos(h)
-        for k in range(1, n + 1):
-            hk = h + sign * s * k / n
-            pts.append((cx + sign * r * math.sin(hk), cy - sign * r * math.cos(hk)))
+        hk = h + sign * s * f
+        parts.append(np.column_stack([cx + sign * r * np.sin(hk), cy - sign * r * np.cos(hk)]))
         h += sign * s
-        x, y = pts[-1]
-    return pts, h
+        x, y = float(parts[-1][-1, 0]), float(parts[-1][-1, 1])
+    return [tuple(q) for q in np.vstack(parts).tolist()], h
 
 
 def dubins_curves(p0, h0, p1, h1, r, step=_STEP):
@@ -206,7 +204,7 @@ def strict_path(path, r_min, allowed, gap, keep_head=0):
     out = StrictPath(path)
     if r_min <= 0 or len(path) < 3:
         return out
-    pts = [(float(x), float(y)) for x, y in path]
+    pts = _dedupe([(float(x), float(y)) for x, y in path])
     original_len = _Path(pts).length
     R = ARC_FACTOR * r_min
     zone = prep(allowed) if allowed is not None and not allowed.is_empty else None
@@ -262,30 +260,22 @@ def _repair(P, pts, sa, sb, R, r_min, zone, gap, head_s, keep):
                 break
             windows.append((sj - si, si, sj))
     windows.sort()
-    for _, si, sj in windows[:_MAX_WINDOWS]:
-        ki, pi, hi = P.at(si)
-        kj, pj, hj = P.at(sj)
-        if kj <= ki and math.dist(pi, pj) < 1e-6:
-            continue
-        exempt = _already_near(P, whole, ki, kj, pi, pj, gap)
-        for curve in dubins_curves(pi, hi, pj, hj, R):
-            line = LineString([pi] + curve)
-            if zone is not None and not zone.covers(line):
+    # Two passes: the shortest curve of every window first, then the
+    # longer ones (loops), which are rarely needed (the Fermat centre turn)
+    # and mostly lie on other fibre.
+    found = {}
+    for first in (True, False):
+        for _, si, sj in windows[:_MAX_WINDOWS]:
+            ki, pi, hi = P.at(si)
+            kj, pj, hj = P.at(sj)
+            if kj <= ki and math.dist(pi, pj) < 1e-6:
                 continue
-            if not line.is_simple:                     # a Dubins loop can cross itself
-                continue
-            if not _clear_of_rest(curve, pi, whole, ki, kj, gap, P.cum, exempt):
-                continue
-            # the kept pieces of the two cut segments
-            ends = [LineString([tuple(P.pts[ki]), pi]) if math.dist(tuple(P.pts[ki]), pi) > 1e-6 else None,
-                    LineString([pj, tuple(P.pts[kj + 1])]) if math.dist(pj, tuple(P.pts[kj + 1])) > 1e-6 else None]
-            if any(e is not None and line.crosses(e) for e in ends):
-                continue
-            new = _dedupe([tuple(q) for q in pts[:ki + 1]] + [pi] + curve[:-1] + [pj]
-                          + [tuple(q) for q in pts[kj + 1:]])
-            if _tight_near(new, r_min, si - _SPLICE_CHECK, si + line.length + _SPLICE_CHECK):
-                continue
-            return new, si + line.length, ("curve", si, sj)
+            if (si, sj) not in found:
+                found[si, sj] = dubins_curves(pi, hi, pj, hj, R)
+            curves = found[si, sj][:1] if first else found[si, sj][1:]
+            done = _try_curves(P, pts, curves, si, sj, ki, kj, pi, pj, r_min, zone, gap, whole)
+            if done is not None:
+                return done
     # Nothing joins round it: start the layer after it, or end before it.
     lost_head = sb + 1.0 - head_s
     lost_tail = total - (sa - 1.0)
@@ -296,6 +286,38 @@ def _repair(P, pts, sa, sb, R, r_min, zone, gap, head_s, keep):
     ki, pi, _ = P.at(max(sa - 1.0, low))
     new = [tuple(q) for q in pts[:ki + 1]] + [pi]
     return _dedupe(new), total + 1.0, ("early end", max(sa - 1.0, low), total)
+
+
+def _try_curves(P, pts, curves, si, sj, ki, kj, pi, pj, r_min, zone, gap, whole):
+    """The first of `curves` (from pi at si to pj at sj) that may replace
+    that stretch: (new points, where to look next, event), or None."""
+    exempt = None
+    for curve in curves:
+        line = LineString([pi] + curve)
+        if zone is not None and not zone.covers(line):
+            continue
+        if not line.is_simple:                     # a Dubins loop can cross itself
+            continue
+        if exempt is None:
+            exempt = _already_near(P, whole, ki, kj, pi, pj, gap)
+        if not _clear_of_rest(curve, pi, whole, ki, kj, gap, P.cum, exempt):
+            continue
+        # the kept pieces of the two cut segments
+        ends = [LineString([tuple(P.pts[ki]), pi]) if math.dist(tuple(P.pts[ki]), pi) > 1e-6 else None,
+                LineString([pj, tuple(P.pts[kj + 1])]) if math.dist(pj, tuple(P.pts[kj + 1])) > 1e-6 else None]
+        if any(e is not None and line.crosses(e) for e in ends):
+            continue
+        # Only the splice changes: dedupe it alone (the rest already is)
+        # and re-check the bends round it on that stretch alone.
+        splice = _dedupe([tuple(pts[ki]), pi] + curve[:-1] + [pj, tuple(pts[kj + 1])])
+        k0 = min(int(np.searchsorted(P.cum, si - _SPLICE_CHECK - 2.0)), ki)
+        k1 = int(np.searchsorted(P.cum, sj + _SPLICE_CHECK + 2.0))
+        local = [tuple(q) for q in pts[k0:ki]] + splice + [tuple(q) for q in pts[kj + 2:k1 + 1]]
+        if _tight_near(local, r_min, si - _SPLICE_CHECK - P.cum[k0], si + line.length + _SPLICE_CHECK - P.cum[k0]):
+            continue
+        new = [tuple(q) for q in pts[:ki]] + splice + [tuple(q) for q in pts[kj + 2:]]
+        return new, si + line.length, ("curve", si, sj)
+    return None
 
 
 def _tight_near(pts, r_min, s0, s1):
