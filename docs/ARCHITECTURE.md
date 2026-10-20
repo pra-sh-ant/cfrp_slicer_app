@@ -86,7 +86,8 @@ slice_part(config, machine)
  │                   -> archimedean_path | fermat_spiral_path | oriented_serpentine
  │                      | corner_step_path
  │               layers.add_lead_in_anchor (layer 1), enforce_min_radius_clear,
- │               plan_layer, append_layer
+ │               StrictBends.repair (Strict Bend Radius: geometry.strict),
+ │               plan_layer, append_layer (strict_climb when strict)
  ├─ STL:       layers.build_stl_laminate
  │               mesh_slicer.slice_mesh_regions, stl_skins + plan_layers,
  │               _stl_layer_path (pattern fallbacks, islands in one stroke)

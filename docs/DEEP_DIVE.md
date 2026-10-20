@@ -9,7 +9,7 @@ The fiber is never cut or lifted, so a part is **one continuous stroke**: no tra
 | Limit | Enforced by |
 |---|---|
 | No cut/lift | One polyline per layer; layers joined by ramps (`layers.append_layer`) or one helical stroke (`build_revolve_shell`) |
-| Min bend radius `r_min` | `geometry._common.fillet` (geometry time), `enforce_min_radius` (post-path), curvature audit in `validation.py` |
+| Min bend radius `r_min` | `geometry._common.fillet` (geometry time), `enforce_min_radius` (post-path), curvature audit in `validation.py`; with Strict Bend Radius also `geometry/strict.py` (every bend under r_min replaced by a Dubins curve or left empty) and strict climbs (`layers.common.strict_climb`), and the audit fails |
 | Fiber only advances with enough resin flow | `kinematics._plan`: `e_mult = max(v/v_max, pump_floor/v_max)` |
 
 Resin is UV-cured as laid: UV on once at start (`M1995 P47`), off at end.

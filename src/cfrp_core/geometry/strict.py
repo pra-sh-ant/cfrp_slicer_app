@@ -1,0 +1,392 @@
+"""Strict bend radius (Phase 43): no fibre bend tighter than r_min.
+
+A bend tighter than r_min (a zigzag U-turn, the Fermat centre turn, a
+join between runs, a lane change) is replaced by the shortest curve whose
+radius never drops below r_min (a Dubins path: arcs of radius R and
+straight lines) between a point before it and a point after it. The curve
+must stay on the part, clear of holes, and must not cross or lie on fibre
+of the same layer. If no such curve exists, the stretch between the two
+points is left empty (a longer piece is skipped), and as a last resort the
+layer starts later or ends earlier. Lengths in mm, angles in radians.
+"""
+from __future__ import annotations
+
+import math
+
+import numpy as np
+import shapely
+from shapely.geometry import LineString
+from shapely.prepared import prep
+
+from ._common import CROSSING_MIN_ANGLE_DEG, local_bend_radii
+
+TIGHT = 0.995          # repair bends under this share of r_min (the audit fails under 0.98)
+ARC_FACTOR = 1.03      # Dubins arcs at 3 % over r_min: sampling and splices read up to ~1 % under
+_STEP = 0.25           # sample spacing of a Dubins curve
+# How far before / after a tight stretch a replacing curve may start / end
+# (the same both ways: an outward layer is an inward one run backwards).
+_REACH = (1.0, 2.0, 3.5, 5.0, 8.0, 12.0, 18.0, 27.0, 40.0, 60.0, 90.0, 135.0, 200.0, 300.0, 450.0, 700.0)
+_MAX_WINDOWS = 160
+_SPLICE_CHECK = 3.0    # mm of path either side of a splice whose bends are re-checked
+_MAX_REPAIRS = 400
+
+
+def _mod2pi(a):
+    return a % (2.0 * math.pi)
+
+
+def dubins_words(p0, h0, p1, h1, r):
+    """Every Dubins word (LSL, RSR, LSR, RSL, RLR, LRL) from p0 heading h0
+    to p1 heading h1 with turning radius r: [(word, (t, p, q))], segment
+    lengths in units of r (arcs: angle turned). Formulas after Shkel and
+    Lumelsky (2001); each word is re-checked by sampling it (dubins_points)."""
+    dx, dy = p1[0] - p0[0], p1[1] - p0[1]
+    D = math.hypot(dx, dy)
+    d = D / r
+    th = math.atan2(dy, dx) if D > 1e-12 else 0.0
+    a, b = _mod2pi(h0 - th), _mod2pi(h1 - th)
+    sa, sb, ca, cb = math.sin(a), math.sin(b), math.cos(a), math.cos(b)
+    cab = math.cos(a - b)
+    out = []
+    tmp = 2.0 + d * d - 2.0 * cab + 2.0 * d * (sa - sb)
+    if tmp >= 0.0:
+        t1 = math.atan2(cb - ca, d + sa - sb)
+        out.append(("LSL", (_mod2pi(-a + t1), math.sqrt(tmp), _mod2pi(b - t1))))
+    tmp = 2.0 + d * d - 2.0 * cab + 2.0 * d * (sb - sa)
+    if tmp >= 0.0:
+        t1 = math.atan2(ca - cb, d - sa + sb)
+        out.append(("RSR", (_mod2pi(a - t1), math.sqrt(tmp), _mod2pi(-b + t1))))
+    tmp = -2.0 + d * d + 2.0 * cab + 2.0 * d * (sa + sb)
+    if tmp >= 0.0:
+        p = math.sqrt(tmp)
+        t1 = math.atan2(-ca - cb, d + sa + sb) - math.atan2(-2.0, p)
+        out.append(("LSR", (_mod2pi(-a + t1), p, _mod2pi(-b + t1))))
+    tmp = d * d - 2.0 + 2.0 * cab - 2.0 * d * (sa + sb)
+    if tmp >= 0.0:
+        p = math.sqrt(tmp)
+        t1 = math.atan2(ca + cb, d - sa - sb) - math.atan2(2.0, p)
+        out.append(("RSL", (_mod2pi(a - t1), p, _mod2pi(b - t1))))
+    tmp = (6.0 - d * d + 2.0 * cab + 2.0 * d * (sa - sb)) / 8.0
+    if abs(tmp) <= 1.0:
+        p = _mod2pi(2.0 * math.pi - math.acos(tmp))
+        t = _mod2pi(a - math.atan2(ca - cb, d - sa + sb) + p / 2.0)
+        out.append(("RLR", (t, p, _mod2pi(a - b - t + p))))
+    tmp = (6.0 - d * d + 2.0 * cab + 2.0 * d * (sb - sa)) / 8.0
+    if abs(tmp) <= 1.0:
+        p = _mod2pi(2.0 * math.pi - math.acos(tmp))
+        t = _mod2pi(-a - math.atan2(ca - cb, d + sa - sb) + p / 2.0)
+        out.append(("LRL", (t, p, _mod2pi(b - a - t + p))))
+    return out
+
+
+def dubins_points(p0, h0, word, params, r, step=_STEP):
+    """Points of one Dubins word after p0, about `step` apart, ending at the
+    goal. Returns (points, end heading)."""
+    x, y, h = float(p0[0]), float(p0[1]), float(h0)
+    pts = []
+    for kind, s in zip(word, params, strict=True):
+        length = s * r
+        n = max(1, int(math.ceil(length / step)))
+        if kind == "S":
+            for k in range(1, n + 1):
+                f = length * k / n
+                pts.append((x + f * math.cos(h), y + f * math.sin(h)))
+            x, y = x + length * math.cos(h), y + length * math.sin(h)
+            continue
+        sign = 1.0 if kind == "L" else -1.0
+        cx, cy = x - sign * r * math.sin(h), y + sign * r * math.cos(h)
+        for k in range(1, n + 1):
+            hk = h + sign * s * k / n
+            pts.append((cx + sign * r * math.sin(hk), cy - sign * r * math.cos(hk)))
+        h += sign * s
+        x, y = pts[-1]
+    return pts, h
+
+
+def dubins_curves(p0, h0, p1, h1, r, step=_STEP):
+    """Every Dubins curve from (p0, h0) to (p1, h1), shortest first: lists
+    of points after p0 ending at p1."""
+    out = []
+    for word, params in dubins_words(p0, h0, p1, h1, r):
+        pts, h = dubins_points(p0, h0, word, params, r, step)
+        if not pts or math.dist(pts[-1], p1) > 1e-3 * max(r, 1.0):
+            continue
+        if abs(math.remainder(h - h1, 2.0 * math.pi)) > 1e-3:
+            continue
+        pts[-1] = (float(p1[0]), float(p1[1]))
+        out.append((sum(params) * r, pts))
+    out.sort(key=lambda c: c[0])
+    return [pts for _, pts in out]
+
+
+def _heading(a, b):
+    return math.atan2(b[1] - a[1], b[0] - a[0])
+
+
+class _Path:
+    """A polyline with its cumulative length, for cutting at a distance."""
+
+    def __init__(self, pts):
+        self.pts = np.asarray(pts, dtype=np.float64).reshape(-1, 2)
+        seg = np.linalg.norm(np.diff(self.pts, axis=0), axis=1)
+        self.cum = np.concatenate([[0.0], np.cumsum(seg)])
+        self.length = float(self.cum[-1])
+
+    def at(self, s):
+        """(segment index k, point, heading of segment k) at distance s."""
+        k = int(np.clip(np.searchsorted(self.cum, s, side='right') - 1, 0, len(self.pts) - 2))
+        a, b = self.pts[k], self.pts[k + 1]
+        seg = self.cum[k + 1] - self.cum[k]
+        f = 0.0 if seg < 1e-12 else min(max((s - self.cum[k]) / seg, 0.0), 1.0)
+        p = a + (b - a) * f
+        return k, (float(p[0]), float(p[1])), _heading(a, b)
+
+
+def tight_clusters(pts, r_min, start=0.0):
+    """[(s_from, s_to)] path distances of runs of vertices bending tighter
+    than TIGHT·r_min, at or after `start`; runs closer than 2·r_min merged."""
+    P = _Path(pts)
+    if len(P.pts) < 3 or r_min <= 0:
+        return []
+    rad = local_bend_radii(P.pts)
+    idx = np.nonzero(rad < TIGHT * r_min)[0] + 1
+    s = P.cum[idx]
+    s = s[s >= start]
+    out = []
+    for v in s.tolist():
+        if out and v - out[-1][1] <= 2.0 * r_min:
+            out[-1][1] = v
+        else:
+            out.append([v, v])
+    return [tuple(c) for c in out]
+
+
+def _segments(pts):
+    arr = np.asarray(pts, dtype=np.float64).reshape(-1, 2)
+    if len(arr) < 2:
+        return None, None, None
+    segs = shapely.linestrings(np.stack([arr[:-1], arr[1:]], axis=1))
+    d = np.diff(arr, axis=0)
+    d /= np.maximum(np.linalg.norm(d, axis=1), 1e-12)[:, None]
+    return shapely.STRtree(segs), segs, d
+
+
+def walk(pts, length):
+    """The leading points of `pts` up to `length` mm of travel, plus the
+    next one (so every bend within `length` is an interior vertex)."""
+    out, run = list(pts[:1]), 0.0
+    for q in pts[1:]:
+        out.append(q)
+        if run >= length:
+            break
+        run += math.dist(out[-2], q)
+    return out
+
+
+class StrictPath(list):
+    """A repaired path: `lost` is how much of the path was left out (mm);
+    `events` [(kind, from mm, to mm)] what each repair did: 'curve' (a
+    Dubins curve replaced that stretch), 'later start', 'early end'."""
+    lost = 0.0
+    repairs = 0
+    events = ()
+
+
+def strict_path(path, r_min, allowed, gap, keep_head=0):
+    """`path` with every bend under TIGHT·r_min replaced by a Dubins curve
+    at ARC_FACTOR·r_min that stays in `allowed` (where fibre may lie),
+    crosses no other fibre of the path and keeps half a gap off it.
+    The first `keep_head` points (the previous layer's end, prepended to
+    keep the stroke continuous) are never changed, and the bend at the last
+    of them is not judged: the layer climb replaces it.
+
+    Bends that cannot be replaced: the stretch round them is skipped by a
+    longer curve, or the layer starts after it (near its start) or ends
+    before it. Returns a StrictPath."""
+    out = StrictPath(path)
+    if r_min <= 0 or len(path) < 3:
+        return out
+    pts = [(float(x), float(y)) for x, y in path]
+    original_len = _Path(pts).length
+    R = ARC_FACTOR * r_min
+    zone = prep(allowed) if allowed is not None and not allowed.is_empty else None
+    keep = max(int(keep_head), 0)
+    head_s = _Path(pts[:keep + 1]).length if keep else 0.0    # where the layer proper starts
+    cursor, repairs, events = head_s + (BEND_GUARD if keep else 0.0), 0, []
+    while repairs < _MAX_REPAIRS:
+        P = _Path(pts)
+        clusters = tight_clusters(pts, r_min, cursor)
+        if not clusters:
+            break
+        sa, sb = clusters[0]
+        repairs += 1
+        fixed = _repair(P, pts, sa, sb, R, r_min, zone, gap, head_s, keep)
+        if fixed is None:
+            break
+        pts, cursor, event = fixed
+        events.append(event)
+    out = StrictPath(pts)
+    out.lost = max(0.0, original_len - _Path(pts).length) if repairs else 0.0
+    out.repairs = repairs
+    out.events = tuple(events)
+    # Anything still tight (a pass limit): end the layer before it.
+    left = tight_clusters(pts, r_min, head_s + (BEND_GUARD if keep else 0.0))
+    if left:
+        P = _Path(pts)
+        k, p, _ = P.at(max(left[0][0] - 1.0, head_s))
+        cut = StrictPath([tuple(q) for q in pts[:k + 1]] + [p])
+        cut.lost = out.lost + (P.length - left[0][0] + 1.0)
+        cut.repairs = repairs
+        cut.events = tuple(events) + (("early end", left[0][0] - 1.0, P.length),)
+        return cut
+    return out
+
+
+BEND_GUARD = 1.0       # mm after the kept head where the climb's own join is not judged
+
+
+def _repair(P, pts, sa, sb, R, r_min, zone, gap, head_s, keep):
+    """Replace the tight stretch [sa, sb]: returns (new points, distance
+    from which to look for the next bend, event)."""
+    total = P.length
+    low = head_s + (BEND_GUARD if keep else 0.0)
+    whole = _segments(pts)
+    windows = []
+    for back in _REACH:
+        si = sa - back
+        if si < low:
+            break
+        for fwd in _REACH:
+            sj = sb + fwd
+            if sj > total - 0.5:
+                break
+            windows.append((sj - si, si, sj))
+    windows.sort()
+    for _, si, sj in windows[:_MAX_WINDOWS]:
+        ki, pi, hi = P.at(si)
+        kj, pj, hj = P.at(sj)
+        if kj <= ki and math.dist(pi, pj) < 1e-6:
+            continue
+        exempt = _already_near(P, whole, ki, kj, pi, pj, gap)
+        for curve in dubins_curves(pi, hi, pj, hj, R):
+            line = LineString([pi] + curve)
+            if zone is not None and not zone.covers(line):
+                continue
+            if not line.is_simple:                     # a Dubins loop can cross itself
+                continue
+            if not _clear_of_rest(curve, pi, whole, ki, kj, gap, P.cum, exempt):
+                continue
+            # the kept pieces of the two cut segments
+            ends = [LineString([tuple(P.pts[ki]), pi]) if math.dist(tuple(P.pts[ki]), pi) > 1e-6 else None,
+                    LineString([pj, tuple(P.pts[kj + 1])]) if math.dist(pj, tuple(P.pts[kj + 1])) > 1e-6 else None]
+            if any(e is not None and line.crosses(e) for e in ends):
+                continue
+            new = _dedupe([tuple(q) for q in pts[:ki + 1]] + [pi] + curve[:-1] + [pj]
+                          + [tuple(q) for q in pts[kj + 1:]])
+            if _tight_near(new, r_min, si - _SPLICE_CHECK, si + line.length + _SPLICE_CHECK):
+                continue
+            return new, si + line.length, ("curve", si, sj)
+    # Nothing joins round it: start the layer after it, or end before it.
+    lost_head = sb + 1.0 - head_s
+    lost_tail = total - (sa - 1.0)
+    if lost_head < lost_tail and sb + 1.0 < total:
+        kj, pj, _ = P.at(sb + 1.0)
+        new = [tuple(q) for q in pts[:max(keep, 0)]] + [pj] + [tuple(q) for q in pts[kj + 1:]]
+        return _dedupe(new), head_s + BEND_GUARD, ("later start", head_s, sb + 1.0)
+    ki, pi, _ = P.at(max(sa - 1.0, low))
+    new = [tuple(q) for q in pts[:ki + 1]] + [pi]
+    return _dedupe(new), total + 1.0, ("early end", max(sa - 1.0, low), total)
+
+
+def _tight_near(pts, r_min, s0, s1):
+    """True if a vertex between path distances s0 and s1 bends under
+    TIGHT·r_min."""
+    Q = _Path(pts)
+    if len(Q.pts) < 3:
+        return False
+    rad = local_bend_radii(Q.pts)
+    s = Q.cum[1:-1]
+    return bool(((rad < TIGHT * r_min) & (s >= s0) & (s <= s1)).any())
+
+
+def _already_near(P, whole, ki, kj, pi, pj, gap):
+    """Segments outside the replaced stretch that already lay near it:
+    (within half a gap -- the new curve may come as near them; within
+    0.1 mm, a retrace such as a spiral's outer lap closing over its own
+    start -- the new curve may also cross them)."""
+    tree = whole[0]
+    none = np.zeros(0, dtype=np.int64)
+    if tree is None:
+        return none, none
+    old = [pi] + [(float(q[0]), float(q[1])) for q in P.pts[ki + 1:kj + 1]] + [pj]
+    if len(old) < 2:
+        return none, none
+    out = []
+    for dist in (0.5 * gap + 0.05, 0.1):
+        j = tree.query(LineString(old), predicate='dwithin', distance=dist)
+        out.append(j[(j < ki) | (j > kj)])
+    return out[0], out[1]
+
+
+def _clear_of_rest(curve, start, whole, ki, kj, gap, cum, exempt=((), ())):
+    """The curve crosses no segment outside the replaced stretch and keeps
+    0.5·gap off them (away from its own two ends). `exempt` (_already_near):
+    segments the old stretch already came that near / retraced."""
+    tree, segs, dirs = whole
+    if tree is None:
+        return True
+    ex = np.zeros(len(dirs), dtype=bool)
+    on = np.zeros(len(dirs), dtype=bool)
+    if len(exempt[0]):
+        ex[np.asarray(exempt[0], dtype=np.int64)] = True
+    if len(exempt[1]):
+        on[np.asarray(exempt[1], dtype=np.int64)] = True
+    arr = np.asarray([start] + list(curve), dtype=np.float64)
+    lines = shapely.linestrings(np.stack([arr[:-1], arr[1:]], axis=1))
+    i, j = tree.query(lines, predicate='crosses')
+    keep = ((j < ki) | (j > kj)) & ~on[j]
+    if keep.any():
+        d = np.diff(arr, axis=0)
+        d /= np.maximum(np.linalg.norm(d, axis=1), 1e-12)[:, None]
+        cos = np.abs(np.einsum('ij,ij->i', d[i[keep]], dirs[j[keep]]))
+        if np.count_nonzero(cos < math.cos(math.radians(CROSSING_MIN_ANGLE_DEG))):
+            return False
+    # Lying on fibre: points of the curve away from its ends closer than
+    # half a gap to segments that are not next to the splice.
+    seg_len = np.linalg.norm(np.diff(arr, axis=0), axis=1)
+    run = np.concatenate([[0.0], np.cumsum(seg_len)])
+    total = run[-1]
+    inner = (run > 1.5 * gap) & (run < total - 1.5 * gap)
+    if not inner.any():
+        return True
+    _, pj = tree.query(shapely.points(arr[inner]), predicate='dwithin', distance=0.5 * gap)
+    if not len(pj):
+        return True
+    near_i = cum[min(ki + 1, len(cum) - 1)]
+    near_j = cum[min(kj, len(cum) - 1)]
+    seg_s = cum[pj]
+    far = (seg_s < near_i - 2.0 * gap) | (seg_s > near_j + 2.0 * gap)
+    far &= ((pj < ki) | (pj > kj)) & ~ex[pj]
+    return not bool(far.any())
+
+
+def _dedupe(pts, tol=0.05):
+    out = [pts[0]]
+    for q in pts[1:]:
+        if math.dist(q, out[-1]) > tol:
+            out.append(q)
+    if len(out) > 1 and math.dist(pts[-1], out[-1]) > 1e-9:
+        out[-1] = pts[-1]
+    return out
+
+
+def lost_area(before, after, region, gap):
+    """mm² of `region` the tow covered on `before` but not on `after`."""
+    if len(before) < 2 or region is None or region.is_empty:
+        return 0.0
+    a = LineString(before).buffer(gap / 2.0).intersection(region)
+    b = LineString(after).buffer(gap / 2.0) if len(after) > 1 else None
+    return float(a.area if b is None else a.difference(b).area)
+
+
+__all__ = ["ARC_FACTOR", "BEND_GUARD", "walk", "TIGHT", "StrictPath", "dubins_curves", "lost_area", "strict_path", "tight_clusters"]

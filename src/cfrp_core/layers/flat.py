@@ -12,6 +12,7 @@ from ..geometry._common import enforce_min_radius_clear, hole_keepouts
 from . import auto
 from .common import (
     KinematicsParams,
+    StrictBends,
     _end_direction,
     _mark_anchor,
     _ramp_min_run,
@@ -80,6 +81,9 @@ def build_flat_laminate(config: ProcessConfig):
     shifts = ZigzagShifts(config)
     holes = [h.buffer(-0.1) for h in hole_keepouts(base_poly)]
     decided, chosen = {}, []                       # Auto: (parity, angle, first) -> (pattern, angle)
+    strict = StrictBends(config)
+    fill_region = unary_union(pieces) if multi else fill_poly
+    climb_zone = printable.buffer(gap / 2.0 + 0.2) if strict.on else None
 
     for i, plan in enumerate(plan_layers(config, config.layers)):
         layer_z = config.z_offset_mm + (i * layer_height)
@@ -92,14 +96,17 @@ def build_flat_laminate(config: ProcessConfig):
                 key = (pattern, solid)
                 if key not in variants:
                     variants[key] = config.model_copy(update=dict(infill_type=pattern, fill_solid=solid))
-                return multi_island_layer(pieces, variants[key], angle, plan.index, last_pt,
-                                          spacing=spacing, offset=offset)
+                return strict.repair(multi_island_layer(pieces, variants[key], angle, plan.index, last_pt,
+                                                        spacing=spacing, offset=offset),
+                                     fill_region, keep_head=1 if last_pt is not None else 0)
             count = (_fill_track_count(fill_poly, config, pattern) if solid else config.tracks_per_layer)
-            return geo.laminate_layer(
+            path = geo.laminate_layer(
                 fill_poly, gap, r_min, pattern, count, g.include_boundary, angle, layer_idx=plan.index,
                 last_pt=last_pt, last_dir=last_dir, lead_in=plan.lead_in if pattern == plan.pattern else 0.0,
                 seam_turn=turn, line_spacing=spacing, line_offset=offset, fill_centre=config.fill_centre,
+                strict=strict.on,
             )
+            return strict.repair(path, fill_region, keep_head=1 if last_pt is not None else 0)
 
         try:
             if plan.pattern == AUTO:
@@ -119,7 +126,7 @@ def build_flat_laminate(config: ProcessConfig):
                 if reused is None:
                     choice, raw_path = auto.choose(lambda p, a: generate(p, a, True, peek=True),
                                                    auto.candidates_for(fill_poly, current_angle),
-                                                   base_poly, holes, gap, r_min, last_pt)
+                                                   base_poly, holes, gap, r_min, last_pt, strict=strict.on)
                     if choice is None:
                         raise ValueError("no pattern fits this layer.")
                     shifts.next(choice.pattern, plan.index, choice.angle)
@@ -131,6 +138,7 @@ def build_flat_laminate(config: ProcessConfig):
         except ValueError as exc:
             raise ValueError(f"Layer {i + 1}: {exc}") from exc
 
+        strict.record(i + 1, raw_path)
         anchor_n = 0
         if i == 0 and plan.lead_in and not multi:
             anchor_n = _points_within(raw_path, float(config.anchor_length_mm))
@@ -140,15 +148,20 @@ def build_flat_laminate(config: ProcessConfig):
             anchor_n = len(raw_path) - n_before
 
         raw_path = enforce_min_radius_clear(raw_path, r_min, hole_keepouts(base_poly), gap * 0.25)
+        raw_path = strict.repair(raw_path, fill_region, keep_head=1 if last_pt is not None else 0)
+        strict.record(i + 1, raw_path)
         layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
         _mark_anchor(layer_trajectory, anchor_n)
         if multi:
             flag_bridges(layer_trajectory, unary_union(pieces), gap, skip=anchor_n + 1)
-        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run)
+        append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run,
+                     strict=strict.climb(climb_zone))
 
         if layer_trajectory:
             last_pt = (layer_trajectory[-1]['x'], layer_trajectory[-1]['y'])
             last_dir = _end_direction(layer_trajectory)
 
     info = [auto.summary(chosen)] if chosen else []
+    if strict.note():
+        info.append(strict.note())
     return trajectory, target_shapes, max_z, info

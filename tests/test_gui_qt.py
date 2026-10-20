@@ -54,6 +54,9 @@ def test_zigzag_greys_out_tracks_and_shows_a_caution(panel):
     panel.infill_cb.setCurrentText("Oriented Serpentine")
     assert not _enabled(panel, "tracks_per_layer")
     assert _enabled(panel, "layup_seq")
+    # New projects have Strict Bend Radius on: the caution says how zigzags keep it.
+    assert not panel.infill_hint.isHidden() and "Strict Bend Radius" in panel.infill_hint.text()
+    panel.strict_chk.setChecked(False)
     assert not panel.infill_hint.isHidden() and "U-turns" in panel.infill_hint.text()
 
 
@@ -525,3 +528,18 @@ def test_editor_layers_tab_sets_each_ink_layer(editor):
     editor.d_covers.setCurrentIndex(editor.d_covers.findData("board"))
     assert editor.diw_config().insulation_coverage == "board"
     editor.load_diw_config(DiwConfig())
+
+
+def test_strict_bend_radius_on_for_new_projects_off_for_old_files(panel):
+    # Phase 43 (D1): a new panel has it on; a file saved before the setting
+    # existed opens with it off (prints as it did); a file with it keeps it.
+    assert panel.get_params()["strict_bend_radius"] is True
+    old = {k: v for k, v in panel.get_params().items() if k != "strict_bend_radius"}
+    assert panel.load_params(old) == []
+    assert panel.get_params()["strict_bend_radius"] is False
+    assert panel.load_params(dict(old, strict_bend_radius=True)) == []
+    assert panel.get_params()["strict_bend_radius"] is True
+    panel.infill_cb.setCurrentText("Oriented Serpentine")
+    assert not _enabled(panel, "zigzag_respect_radius")       # strict already keeps zigzag turns
+    panel.shape_cb.setCurrentText("Hollow Cylinder (Z)")
+    assert not _enabled(panel, "strict_bend_radius")

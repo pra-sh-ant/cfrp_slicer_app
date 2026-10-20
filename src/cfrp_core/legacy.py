@@ -74,6 +74,7 @@ _FIELD_MAP = {
     "solid_top_layers": (None, "solid_top_layers"),
     "zigzag_respect_radius": (None, "zigzag_respect_radius"),
     "fill_centre": (None, "fill_centre"),
+    "strict_bend_radius": (None, "strict_bend_radius"),
 }
 
 

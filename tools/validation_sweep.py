@@ -2,6 +2,7 @@
 
     python tools/validation_sweep.py [results.json]
     python tools/validation_sweep.py --quick       # CI: a fifteenth of the cases, exit 1 on Fail/crash
+    python tools/validation_sweep.py --strict      # every case with Strict Bend Radius on
 
 Prints each warning/error category with how many cases hit it and on which
 shapes/infills; writes every case's status, messages and notes to the JSON.
@@ -67,10 +68,12 @@ def norm(msg):
     return m[:110]
 
 
-def run(over):
+def run(over, strict=False):
     from cfrp_core import DEFAULT_MACHINE, from_legacy_dict, slice_part
     cfg = dict(BASE)
     cfg.update(over)
+    if strict:
+        cfg["strict_bend_radius"] = True
     layup = [float(x) for x in cfg["layup_seq"].split(",")]
     t = time.time()
     try:
@@ -86,8 +89,9 @@ if __name__ == "__main__":
     cs = list(cases())
     if "--quick" in sys.argv:
         cs = cs[::15]
+    strict = "--strict" in sys.argv
     with ProcessPoolExecutor(8) as ex:
-        results = list(ex.map(run, cs, chunksize=4))
+        results = list(ex.map(run, cs, [strict] * len(cs), chunksize=4))
     out = args[0] if args else "validation_sweep.json"
     if "--quick" not in sys.argv:
         Path(out).write_text(json.dumps(results, default=str), encoding="utf-8")

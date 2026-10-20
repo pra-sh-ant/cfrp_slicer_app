@@ -127,7 +127,8 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
         max_z = max((pt['z'] for pt in trajectory), default=float(cfg.z_offset_mm))
 
     stats = _compute_stats(trajectory, cfg, target_shapes)
-    sparse = bool(cfg.zigzag_respect_radius) and cfg.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45)
+    sparse = (bool(cfg.zigzag_respect_radius or cfg.strict_bend_radius)
+              and cfg.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45))
     if g.shape == "STL Import" and stats.get("worst_coverage", 1.0) < 0.5 and not sparse:
         if cfg.fill_solid:
             cause = ("even with Fill Solid: parts of the slices are narrower than the bend radius "

@@ -7,6 +7,7 @@ against it. Input is the flat parameter dict front ends already produce
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from .config import (
@@ -64,10 +65,18 @@ def _num(p: dict, key: str, default: float) -> float:
         return default
 
 
-def _u_turn_caution(p: dict) -> str:
+def _u_turn_caution(p: dict, pattern: str = "") -> str:
     """Why a pattern that turns back between adjacent tracks will show
-    curvature warnings, or '' when the gap allows a turn at r_min."""
+    curvature warnings (or, with Strict Bend Radius, what it does instead),
+    or '' when the gap allows a turn at r_min."""
     gap, r = _num(p, "track_gap", 1.2), _num(p, "min_radius", 3.0)
+    if r > 0 and gap < 2.0 * r and p.get("strict_bend_radius", False):
+        if pattern == FERMAT:
+            return (f"Strict Bend Radius: the turn between the spiral's two arms ({gap / 2:g} mm radius) "
+                    f"becomes a loop at the {r:g} mm min bend radius, or the spiral turns a ring earlier.")
+        k = max(1, math.ceil(2.0 * r / gap - 1e-9))
+        return (f"Strict Bend Radius: zigzag lines are {k * gap:g} mm apart so their turns keep the "
+                f"{r:g} mm min bend radius; {k} layers at one angle fill the area once.")
     if r > 0 and gap < 2.0 * r:
         return (f"U-turns between tracks {gap:g} mm apart are at most {gap / 2:g} mm radius, below the "
                 f"{r:g} mm min bend radius: they are slowed and reported as curvature warnings. "
@@ -83,6 +92,7 @@ def infill_states(p: dict) -> dict[str, OptionState]:
         return {name: _off("The Mushroom overhang test has a fixed path (spiral base, stem, disc).")
                 for name in INFILL_PATTERNS}
     caution = _u_turn_caution(p)
+    strict = bool(p.get("strict_bend_radius", False))
     states = {}
     for name in INFILL_PATTERNS:
         if name == AUTO:
@@ -100,7 +110,8 @@ def infill_states(p: dict) -> dict[str, OptionState]:
                 states[name] = _off("Z shells are concentric rings only (Archimedean or Fermat).")
             continue
         if name in (FERMAT, *ZIGZAGS) and caution:
-            states[name] = OptionState(True, caution, caution=True)
+            why = _u_turn_caution(p, name) if strict else caution
+            states[name] = OptionState(True, why, caution=True)
         else:
             states[name] = ON
     return states
@@ -208,8 +219,15 @@ def field_states(p: dict) -> dict[str, OptionState]:
                         else _off("Only for Archimedean and Corner-Step on flat and STL parts (the rings "
                                   "leave the middle open; zigzags fill it anyway)."))
     zz = (infill in (*ZIGZAGS, AUTO) or p.get("first_layer_infill") in (*ZIGZAGS, AUTO)) and family in ("flat", "stl")
-    s["zigzag_respect_radius"] = (ON if zz else _off("Only for zigzag patterns (Oriented Serpentine, "
-                                                      "45° Diagonal Hatch) on flat and STL parts."))
+    if p.get("strict_bend_radius", False) and family in ("flat", "stl"):
+        s["zigzag_respect_radius"] = _off("Strict Bend Radius already keeps every zigzag turn at the min "
+                                          "bend radius.")
+    else:
+        s["zigzag_respect_radius"] = (ON if zz else _off("Only for zigzag patterns (Oriented Serpentine, "
+                                                          "45° Diagonal Hatch) on flat and STL parts."))
+    s["strict_bend_radius"] = (ON if family in ("flat", "stl")
+                               else _off("Only for flat and STL parts: Z shells and the Mushroom have "
+                                         "their own fixed paths."))
     for key in ("stl_closing_radius", "stl_stitch"):
         s[key] = ON if family == "stl" else stl_only
 

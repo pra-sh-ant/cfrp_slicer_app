@@ -303,6 +303,13 @@ class ProcessConfig(_Frozen):
     # (no ring fits inside twice the bend radius) with short back-and-forth
     # lines. Their turns are tighter than the bend radius (slowed, reported).
     fill_centre: bool = False
+    # Strict bend radius (Phase 43): no fibre bend tighter than min_radius_mm
+    # anywhere -- zigzag turns, joins, the Fermat centre turn, Fill Centre
+    # lines and layer climbs. A bend that cannot be kept is replaced by a
+    # curve at the radius, or that spot is left empty and reported; the audit
+    # fails on any bend under 0.98·r_min. Off = tight bends are slowed and
+    # warned. The GUI turns it on for new projects; saved files keep theirs.
+    strict_bend_radius: bool = False
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")

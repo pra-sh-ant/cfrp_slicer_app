@@ -25,7 +25,7 @@ Request (2026-10-20), in short:
 
 | Phase | Topic | State |
 |---|---|---|
-| 43 | Bend radius everywhere | planned |
+| 43 | Bend radius everywhere | done (see CHANGELOG) |
 | 44 | Mixed patterns in one layer, wrapped holes, cavity check | planned |
 | 45 | STL: mixed patterns per slice | planned |
 | 46 | Three workspaces | planned |

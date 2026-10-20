@@ -149,10 +149,12 @@ def stl_skins(regions, bottom: int, top: int, share: float = 0.2) -> list[bool]:
 
 
 def zigzag_pitch(config: ProcessConfig) -> tuple[float | None, int]:
-    """(line spacing, k) when zigzag turns must keep the bend radius:
+    """(line spacing, k) when zigzag turns must keep the bend radius
+    (Zigzag Turns at Min Bend Radius, or Strict Bend Radius):
     k = ceil(2·r_min / gap) gaps; (None, 1) when off or not needed."""
     gap, r = float(config.track_gap_mm), float(config.min_radius_mm)
-    if not config.zigzag_respect_radius or gap <= 0 or 2.0 * r <= gap * 1.0001:
+    keep = config.zigzag_respect_radius or config.strict_bend_radius
+    if not keep or gap <= 0 or 2.0 * r <= gap * 1.0001:
         return None, 1
     k = max(1, math.ceil(2.0 * r / gap - 1e-9))
     return k * gap, k

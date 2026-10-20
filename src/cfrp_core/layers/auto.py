@@ -75,10 +75,11 @@ def measure(path, part, holes, gap, r_min, last_pt=None):
     return coverage, tight, count_crossings(pts), jump
 
 
-def choose(generate, candidates, part, holes, gap, r_min, last_pt=None):
+def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=False):
     """Best of `candidates` [(pattern, angle)]: `generate(pattern, angle)`
     returns a path (or None / raises ValueError when it cannot). Returns
-    (Choice, path), or (None, None) if nothing could be laid."""
+    (Choice, path), or (None, None) if nothing could be laid. `strict`
+    (Strict Bend Radius): a candidate with any bend under r_min is out."""
     best = None
     for pattern, angle in candidates:
         try:
@@ -91,10 +92,22 @@ def choose(generate, candidates, part, holes, gap, r_min, last_pt=None):
         if m is None:
             continue
         coverage, tight, crossings, jump = m
+        if strict and _strict_tight(path, r_min, last_pt):
+            continue
         score = coverage - TIGHT_WEIGHT * tight - CROSSING_COST * crossings - JUMP_COST * jump
         if best is None or score > best[0].score + 1e-9:
             best = (Choice(pattern, angle, coverage, tight, crossings, score), path)
     return best if best is not None else (None, None)
+
+
+def _strict_tight(path, r_min, last_pt):
+    """True when the path bends under r_min anywhere but at its join to
+    the previous layer's end (the climb replaces that)."""
+    from ..geometry.strict import BEND_GUARD, tight_clusters
+    start = 0.0
+    if last_pt is not None and len(path) > 1 and math.dist(path[0], last_pt) < 1e-6:
+        start = math.dist(path[0], path[1]) + BEND_GUARD
+    return bool(tight_clusters(path, r_min, start))
 
 
 def candidates_for(part, layup_angle):

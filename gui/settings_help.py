@@ -52,6 +52,14 @@ HELP = {
                              "there). On: the turns keep the bend radius instead. Lines are then about twice "
                              "the bend radius apart, and each layer at the same angle is moved over by one "
                              "Track Gap, so a few layers together fill the area.",
+    "strict_bend_radius": "No fibre bend tighter than the min bend radius anywhere: zigzag turns, the joins "
+                          "between runs, the Fermat spiral's centre turn, Fill Centre lines and the climbs "
+                          "between layers. A bend that cannot keep the radius is replaced by a curve at the "
+                          "radius, or that spot is left empty and listed in the notes ('left empty because "
+                          "of the bend radius'). Zigzag lines are then about twice the bend radius apart "
+                          "(a few layers fill the area), Fill Centre lays one line per layer. Off: tight "
+                          "bends are printed slowly and only warned about. On for new projects; projects "
+                          "saved before it existed open with it off.",
     "first_layer_solid": "Make the very first layer completely filled, whatever the other layers do. "
                          "Gives the part a closed, flat base that sticks well to the bed.",
     "first_layer_infill": "Pattern for the first layer and for the solid bottom/top layers. Spirals "

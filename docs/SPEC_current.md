@@ -128,6 +128,7 @@ Results are cached (`lru_cache`).
 2. Trim new head likewise; recompute first remaining point's `dist`.
 3. Ramp in `steps = max(4 if Δz>0 else 1, ⌈L/0.75⌉, ⌈|Δz|/0.05⌉)`, each with `v = v_min`, `e_mult = 1`, `is_transition`; last step = `layer_start`.
 4. Angle = `atan(Δz/Δxy)`.
+5. Strict Bend Radius (Phase 43): the climb is a Dubins curve (arcs at 1.03 or 1.005 × r_min and straight lines) from the tail cut, along its heading, to a head cut, along its heading. Tail cuts from `seam_trim` to `seam_trim + 30` mm, head cuts within 40 % of the layer, both only at vertices or inside straight segments ≥ 3 mm (a cut mid-arc reads ~2 % under the radius). Pairs are tried least fibre dropped first until the curve stays on the layer below or this one, keeps every bend of the join at r_min, crosses none of the new layer's fibre (any angle) or comes within half a gap of it, and is at least the run the transition angle needs. The climb is resampled evenly by length; Z rises linearly.
 
 Lead-in anchor: `P_anchor = P0 − L·(cos θ, sin θ)`, `θ = atan2(P1 − P0)`.
 
@@ -149,6 +150,8 @@ Header; `G28 / G92 E0 / G90 / G0 Z15`; purge `G1 F{purge_f} E{purge_e}`, `G4 P15
 | Seam jump | XY distance at `layer_start` > gap | Fail |
 | Ramp angle | steeper than `transition_angle + 2°` | Warning |
 | Self-crossing | not simple and > 3 repeated points (0.01 mm) | Warning |
+| Curvature | a bend under 0.98 × r_min, judged over 1.5 mm of path, climbs excluded | Warning |
+| Curvature, Strict Bend Radius (flat and STL) | a bend under 0.98 × r_min anywhere, climbs included; the message names each layer and what bent (climb, turn ≥ 150°, join) | Fail |
 
 Fail > Warning > Pass.
 

@@ -489,7 +489,7 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False, spacing
     return list(final_line.coords)
 
 
-def centre_fill(path, region, gap, at_end=True, anchor=None):
+def centre_fill(path, region, gap, at_end=True, anchor=None, line=None):
     """Back-and-forth lines over the hollow a spiral leaves in its middle
     (its innermost ring can be no narrower than twice the bend radius),
     starting next to the path's end (at_end), or next to `anchor` when
@@ -499,7 +499,11 @@ def centre_fill(path, region, gap, at_end=True, anchor=None):
     the lines stop, so every turn joins lines of about the same length and
     stays inside. Their half-circle turns (radius gap/2) are tighter than
     the bend radius, which validation reports. [] when there is no hollow
-    wider than a track there."""
+    wider than a track there.
+
+    `line` (Strict Bend Radius): only one of those lines, with no turns:
+    the middle one for line 0, then outwards on alternate sides, so that
+    layers numbered 0, 1, 2 ... fill the hollow together."""
     if len(path) < 2 or region.is_empty:
         return []
     forward = at_end or anchor is not None
@@ -553,6 +557,10 @@ def centre_fill(path, region, gap, at_end=True, anchor=None):
     if not groups:
         return []
     lines = max(groups, key=lambda g: sum(ln.length for ln in g))
+    if line is not None:
+        mid = (len(lines) - 1) / 2.0
+        order = sorted(range(len(lines)), key=lambda k: (abs(k - mid), k))
+        lines = [lines[order[int(line) % len(lines)]]]
     options = []
     for order in (lines, lines[::-1]):
         for direction in (1, -1):

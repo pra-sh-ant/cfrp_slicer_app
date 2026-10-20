@@ -258,7 +258,7 @@ def _extend_head_for_run(prev_cut, first_cut, layer_trajectory, min_run, max_len
     return first_cut, layer_trajectory
 
 
-def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed, min_run=0.0):
+def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed, min_run=0.0, strict=None):
     """Append one planned layer to `trajectory` (in place), bridged from the
     previous layer by a RAMPED Z-SEAM TRANSITION: trim `seam_trim` mm off the
     previous tail and this head, then fill the gap with a sloped move in
@@ -272,7 +272,17 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed,
 
     Fibre can only be laid forward/up: callers must append layers strictly
     bottom to top.
+
+    `strict` (r_min, zone, gap): Strict Bend Radius. The climb is a curve that
+    never bends under r_min (strict_climb) and stays in `zone`; the head
+    cut moves further into the layer until one fits.
     """
+    if trajectory and layer_trajectory and strict is not None and strict[0] > 0:
+        prev_cut, xy, layer_trajectory = strict_climb(trajectory, layer_trajectory, seam_trim, min_run,
+                                                      strict[0], strict[1], strict[2])
+        _append_ramp(trajectory, prev_cut, xy, layer_trajectory[0]['z'], layer_num, ramp_speed)
+        trajectory.extend(layer_trajectory)
+        return
     if trajectory and layer_trajectory:
         prev_cut = trim_trajectory_tail(trajectory, seam_trim)
         layer_len = sum(float(p.get('dist', 0.0)) for p in layer_trajectory[1:])
@@ -350,3 +360,293 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed,
 
 
 # --- Layer loops -------------------------------------------------------------
+
+
+# --- Strict bend radius (Phase 43) -------------------------------------------
+
+def _append_ramp(trajectory, prev_cut, xy, z_to, layer_num, ramp_speed):
+    """Append a climb along the XY polyline `xy` (points after prev_cut,
+    ending where the layer resumes), resampled evenly by length so its
+    slope is uniform; Z rises linearly to z_to."""
+    import numpy as np
+    pts = np.asarray([(prev_cut['x'], prev_cut['y'])] + list(xy), dtype=np.float64)
+    seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    length = float(cum[-1])
+    dzs = z_to - prev_cut['z']
+    steps = max(4 if abs(dzs) > 1e-9 else 1, int(math.ceil(length / 0.75)), int(math.ceil(abs(dzs) / 0.05)))
+    s = np.linspace(0.0, length, steps + 1)[1:]
+    xs, ys = np.interp(s, cum, pts[:, 0]), np.interp(s, cum, pts[:, 1])
+    for step in range(1, steps + 1):
+        point = {'x': float(xs[step - 1]), 'y': float(ys[step - 1]), 'z': prev_cut['z'] + dzs * step / steps}
+        prior = trajectory[-1]
+        trajectory.append({
+            "x": point['x'], "y": point['y'], "z": point['z'],
+            "dist": float(math.sqrt((point['x'] - prior['x']) ** 2 + (point['y'] - prior['y']) ** 2
+                                    + (point['z'] - prior['z']) ** 2)),
+            "v": ramp_speed, "e_mult": 1.0, "is_transition": True,
+            "layer_start": step == steps, "layer": layer_num,
+        })
+
+
+def _tail_cuts(trajectory, lo, hi):
+    """Where the previous layer's tail may be cut for a strict climb, from
+    lo to hi mm before its end (within 40 % of that layer's run): at
+    vertices, or inside straight segments longer than 3 mm at least 1.5 mm
+    from their ends (a cut mid-arc leaves a short chord that reads ~2 %
+    under the arc's radius). [(t, index, point or None for the vertex)],
+    nearest the end first; at most 10."""
+    target_layer = trajectory[-1].get('layer')
+    run_start = len(trajectory) - 1
+    while run_start > 0:
+        pt = trajectory[run_start - 1]
+        if pt.get('layer') != target_layer or pt.get('is_transition'):
+            break
+        run_start -= 1
+    total = sum(math.hypot(b['x'] - a['x'], b['y'] - a['y'])
+                for a, b in zip(trajectory[run_start:-1], trajectory[run_start + 1:], strict=False))
+    hi = min(hi, 0.4 * total)
+    lo = min(lo, hi)
+    out, travelled = [], 0.0
+    for idx in range(len(trajectory) - 1, run_start, -1):
+        a, b = trajectory[idx - 1], trajectory[idx]
+        seg = math.hypot(b['x'] - a['x'], b['y'] - a['y'])
+        if seg >= 3.0:
+            t = 1.5
+            while t <= seg - 1.5:
+                if lo <= travelled + t <= hi:
+                    f = t / seg
+                    out.append((travelled + t, idx, (b['x'] + (a['x'] - b['x']) * f, b['y'] + (a['y'] - b['y']) * f)))
+                t += 0.5
+        travelled += seg
+        if lo - 1e-9 <= travelled <= hi:
+            out.append((travelled, idx - 1, None))
+        if travelled > hi:
+            break
+    if len(out) > 10:
+        step = (len(out) - 1) / 9.0
+        out = [out[round(i * step)] for i in range(10)]
+    return out
+
+
+def _apply_tail_cut(trajectory, cut):
+    """Cut the trajectory's tail at a _tail_cuts entry; returns the cut
+    point {x, y, z}."""
+    _, idx, point = cut
+    if point is None:
+        del trajectory[idx + 1:]
+        last = trajectory[-1]
+        return {'x': last['x'], 'y': last['y'], 'z': last['z']}
+    a, b = trajectory[idx - 1], trajectory[idx]
+    del trajectory[idx + 1:]
+    trajectory[idx] = dict(b, x=point[0], y=point[1], dist=math.hypot(point[0] - a['x'], point[1] - a['y']))
+    return {'x': point[0], 'y': point[1], 'z': b['z']}
+
+
+def _head_cuts(layer_trajectory, lo, hi):
+    """Distances along the layer where a strict climb may land: vertices,
+    and points of straight segments longer than 3 mm at least 1.5 mm from
+    their ends (every 0.5 mm), between lo and hi; at most ~150."""
+    out, s = [], 0.0
+    for k in range(1, len(layer_trajectory)):
+        a, b = layer_trajectory[k - 1], layer_trajectory[k]
+        seg = math.hypot(b['x'] - a['x'], b['y'] - a['y'])
+        if seg >= 3.0:
+            t = 1.5
+            while t <= seg - 1.5:
+                if lo <= s + t <= hi:
+                    out.append(s + t)
+                t += 0.5
+        s += seg
+        if lo <= s <= hi:
+            out.append(s)
+        if s > hi:
+            break
+    if len(out) > 150:
+        step = len(out) / 150.0
+        out = [out[int(i * step)] for i in range(150)]
+    return out
+
+
+def _cut_at(layer_trajectory, d):
+    """(cut point, remaining points) d mm into the layer; a cut on a vertex
+    keeps the points after it."""
+    s = 0.0
+    for k in range(1, len(layer_trajectory)):
+        a, b = layer_trajectory[k - 1], layer_trajectory[k]
+        seg = math.hypot(b['x'] - a['x'], b['y'] - a['y'])
+        if abs(s + seg - d) < 1e-9:
+            return {'x': b['x'], 'y': b['y'], 'z': b['z']}, list(layer_trajectory[k + 1:])
+        if s + seg > d:
+            break
+        s += seg
+    return trim_path_head(layer_trajectory, d)
+
+
+_CLIMB_PAIRS = 600      # (tail cut, head cut) pairs a strict climb tries at most
+
+
+def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, gap=1.0):
+    """Join the trajectory's end to `layer_trajectory` for Strict Bend
+    Radius: cut the tail (trajectory, in place) and the layer's head, and
+    lay a Dubins curve at ARC_FACTOR·r_min (or 1.005·r_min, which fits
+    between zigzag lines exactly 2·r_min apart) between the two cuts, along
+    their headings. Pairs of cuts (_tail_cuts from seam_trim to 30 mm
+    further, _head_cuts within 40 % of the layer), least fibre dropped
+    first, are tried until a curve stays in `zone`, keeps every bend of the
+    join at r_min, crosses none of the layer's remaining fibre (at any
+    angle) nor comes within half a `gap` of it, and is long enough for the
+    transition angle (min_run); else the best found. Returns (tail cut
+    point, climb XY points ending at the head cut, the layer's remaining
+    points)."""
+    import numpy as np
+    import shapely
+    from shapely.geometry import LineString
+    from shapely.prepared import prep
+
+    from ..geometry._common import local_bend_radii
+    from ..geometry.strict import ARC_FACTOR, TIGHT, dubins_curves, walk
+
+    xy = np.asarray([(p['x'], p['y']) for p in layer_trajectory], dtype=np.float64)
+    tails = _tail_cuts(trajectory, seam_trim, seam_trim + 30.0)
+    if len(xy) < 3 or len(trajectory) < 2 or not tails:
+        prev_cut = trim_trajectory_tail(trajectory, seam_trim)
+        cut, rest = trim_path_head(layer_trajectory, seam_trim)
+        return prev_cut, [(cut['x'], cut['y'])], rest
+    seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
+    layer_len = float(seg.sum())
+    cum = np.concatenate([[0.0], np.cumsum(seg)])
+    tree = shapely.STRtree(shapely.linestrings(np.stack([xy[:-1], xy[1:]], axis=1)))
+    area = prep(zone) if zone is not None and not zone.is_empty else None
+    heads = _head_cuts(layer_trajectory, seam_trim, max(0.4 * layer_len, seam_trim))
+
+    def tail_geometry(cut):
+        """(point, heading, the 3 mm before it) of a tail cut."""
+        _, idx, point = cut
+        if point is None:
+            p0, k = (trajectory[idx]['x'], trajectory[idx]['y']), idx - 1
+        else:
+            p0, k = point, idx - 1
+        back = [p0] + [(trajectory[j]['x'], trajectory[j]['y']) for j in range(k, max(k - 60, -1), -1)]
+        back = [q for n, q in enumerate(back) if n == 0 or math.dist(q, back[n - 1]) > 1e-9]
+        if len(back) < 2:
+            return None
+        h0 = math.atan2(p0[1] - back[1][1], p0[0] - back[1][0])
+        return p0, h0, walk(back, 3.0)[::-1][:-1]
+
+    def head_geometry(d):
+        cut, rest = _cut_at(layer_trajectory, d)
+        if len(rest) < 2:
+            return None
+        p1 = (cut['x'], cut['y'])
+        ahead = [p1] + [(p['x'], p['y']) for p in rest]
+        ahead = [q for n, q in enumerate(ahead) if n == 0 or math.dist(q, ahead[n - 1]) > 1e-9]
+        if len(ahead) < 2:
+            return None
+        return p1, math.atan2(ahead[1][1] - p1[1], ahead[1][0] - p1[0]), walk(ahead, 3.0), rest
+
+    pairs = sorted(((t[0] + d, ti, d) for ti, t in enumerate(tails) for d in heads), key=lambda q: q[0])
+    tail_geo, head_geo = {}, {}
+    best = None
+    for _, ti, d in pairs[:_CLIMB_PAIRS]:
+        if ti not in tail_geo:
+            tail_geo[ti] = tail_geometry(tails[ti])
+        if d not in head_geo:
+            head_geo[d] = head_geometry(d)
+        tg, hg = tail_geo[ti], head_geo[d]
+        if tg is None or hg is None:
+            continue
+        p0, h0, tail_pts = tg
+        p1, h1, head, rest = hg
+        curves = dubins_curves(p0, h0, p1, h1, ARC_FACTOR * r_min) + dubins_curves(p0, h0, p1, h1, 1.005 * r_min)
+        for curve in curves:
+            line = LineString([p0] + curve)
+            outside = int((area is not None and not area.covers(line)) or not line.is_simple)
+            arr = np.asarray([p0] + curve, dtype=np.float64)
+            _, j = tree.query(shapely.linestrings(np.stack([arr[:-1], arr[1:]], axis=1)), predicate='crosses')
+            crossings = int(np.count_nonzero(cum[j] >= d - 1e-6))
+            crossings += int(line.crosses(LineString(head[:2])))     # the landing segment's kept piece
+            # Fibre of this layer laid on the climb: climb points (away from
+            # where it lands) within half a gap of the layer's later track.
+            run = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(arr, axis=0), axis=1))])
+            inner = run < run[-1] - 1.5 * gap
+            if inner.any():
+                _, j = tree.query(shapely.points(arr[inner]), predicate='dwithin', distance=0.5 * gap)
+                crossings += int(np.count_nonzero(cum[j] >= d + 1.5 * gap))
+            joined = np.asarray(tail_pts + [p0] + curve + head[1:], dtype=np.float64)
+            tight = int(bool((local_bend_radii(joined) < TIGHT * r_min).any()))
+            short = int(line.length < min_run - 1e-6)
+            score = (outside, tight, crossings, short)
+            if best is None or score < best[0]:
+                best = (score, ti, curve, rest)
+            if score == (0, 0, 0, 0):
+                break
+        if best is not None and best[0] == (0, 0, 0, 0):
+            break
+    if best is None:
+        prev_cut = trim_trajectory_tail(trajectory, seam_trim)
+        cut, rest = trim_path_head(layer_trajectory, seam_trim)
+        return prev_cut, [(cut['x'], cut['y'])], rest
+    _, ti, curve, rest = best
+    return _apply_tail_cut(trajectory, tails[ti]), curve, rest
+
+
+class StrictBends:
+    """Strict Bend Radius for one layer loop: repairs each layer's path
+    (geometry.strict.strict_path), the zone a climb must stay in, and the
+    area left empty because of the bend radius, per layer."""
+
+    def __init__(self, config: ProcessConfig):
+        self.on = bool(config.strict_bend_radius) and float(config.min_radius_mm) > 0
+        self.r_min = float(config.min_radius_mm)
+        self.gap = float(config.track_gap_mm)
+        self.lost: dict[int, float] = {}
+
+    def allowed(self, region, path):
+        """Where a repair may lay fibre: the layer's region, 0.4 gap in from
+        its edges and holes, plus a corridor round the path's own bridges
+        (segments outside the region, between islands)."""
+        import numpy as np
+        import shapely
+        zone = region.buffer(-0.4 * self.gap, join_style=1)
+        pts = np.asarray(path, dtype=np.float64).reshape(-1, 2)
+        if len(pts) > 1:
+            mid = 0.5 * (pts[1:] + pts[:-1])
+            out = ~shapely.contains_xy(region.buffer(0.5 * self.gap), mid[:, 0], mid[:, 1])
+            if out.any():
+                k = np.nonzero(out)[0]
+                bridges = shapely.linestrings(np.stack([pts[k], pts[k + 1]], axis=1))
+                zone = zone.union(shapely.union_all(shapely.buffer(bridges, 2.0 * self.r_min)))
+        return zone
+
+    def repair(self, path, region, keep_head=0):
+        """The path with no bend under r_min (a StrictPath; `lost_area`
+        set), or the path unchanged when Strict Bend Radius is off."""
+        from ..geometry.strict import StrictPath, lost_area, strict_path
+        if not self.on or not path or len(path) < 3:
+            return path
+        fixed = strict_path(path, self.r_min, self.allowed(region, path), self.gap, keep_head)
+        fixed.lost_area = lost_area(path, fixed, region, self.gap) if fixed.repairs else 0.0
+        return fixed if isinstance(fixed, StrictPath) else path
+
+    def record(self, layer, path):
+        area = float(getattr(path, 'lost_area', 0.0) or 0.0)
+        if self.on and area > 0.5:
+            self.lost[layer] = self.lost.get(layer, 0.0) + area
+
+    def climb(self, region):
+        """`strict` argument for append_layer: (r_min, zone, gap), or None."""
+        if not self.on:
+            return None
+        return self.r_min, region, self.gap
+
+    def note(self) -> str:
+        """'Left empty because of the bend radius: 12 mm² on layer 2, ...' or ''."""
+        if not self.lost:
+            return ""
+        items = sorted(self.lost.items())
+        shown = ", ".join(f"{a:.0f} mm² on layer {k}" for k, a in items[:8])
+        more = f" and {len(items) - 8} more layer(s)" if len(items) > 8 else ""
+        return (f"Left empty because of the bend radius: {shown}{more} (no curve at the "
+                f"{self.r_min:g} mm min bend radius fits there).")
+
