@@ -428,6 +428,8 @@ class ControlsPanel(QWidget):
         self.strict_chk = self._add(sec, "strict_bend_radius", "",
                                     QCheckBox("Strict Bend Radius (no bend under Min Bend Radius)"))
         self.strict_chk.setChecked(True)            # new projects (D1); files without it load it off
+        self.pockets_chk = self._add(sec, "fill_pockets", "",
+                                     QCheckBox("Fill Pockets (layers take turns to fill empty spots)"))
         self.layers_spin = self._add(sec, "layers", "Total Layers", _ispin(1, 500, 1))
         self.first_solid_chk = self._add(sec, "first_layer_solid", "",
                                          QCheckBox("First Layer Solid (fully filled base)"))
@@ -452,6 +454,7 @@ class ControlsPanel(QWidget):
         self.zz_radius_chk.toggled.connect(self._emit)
         self.centre_chk.toggled.connect(self._emit)
         self.strict_chk.toggled.connect(self._emit)
+        self.pockets_chk.toggled.connect(self._emit)
         self.first_solid_chk.toggled.connect(self._emit)
         self.first_infill_cb.currentTextChanged.connect(self._emit)
         self.first_cov_spin.valueChanged.connect(self._emit)
@@ -655,6 +658,7 @@ class ControlsPanel(QWidget):
             "zigzag_respect_radius": self.zz_radius_chk.isChecked(),
             "fill_centre": self.centre_chk.isChecked(),
             "strict_bend_radius": self.strict_chk.isChecked(),
+            "fill_pockets": self.pockets_chk.isChecked(),
             "pa_table": self.pa_table_edit.text(),
             "track_gap": self.gap_spin.value(),
             "min_radius": self.min_r_spin.value(),
@@ -718,6 +722,7 @@ class ControlsPanel(QWidget):
             "zigzag_respect_radius": self.zz_radius_chk.isChecked(),
             "fill_centre": self.centre_chk.isChecked(),
             "strict_bend_radius": self.strict_chk.isChecked(),
+            "fill_pockets": self.pockets_chk.isChecked(),
             "first_layer_solid": self.first_solid_chk.isChecked() and not is_flat_specialty
             and shape not in REVOLVE_SHAPES,
             "first_layer_infill": (None if self.first_infill_cb.currentIndex() <= 0
@@ -838,6 +843,7 @@ class ControlsPanel(QWidget):
             # Saved before Strict Bend Radius existed: keep printing as it did.
             p = dict(p, strict_bend_radius=False)
         _set(self.strict_chk, "strict_bend_radius")
+        _set(self.pockets_chk, "fill_pockets")
         _set(self.first_solid_chk, "first_layer_solid")
         if "first_layer_infill" in p:
             self.first_infill_cb.blockSignals(True)

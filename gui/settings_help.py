@@ -60,6 +60,11 @@ HELP = {
                           "(a few layers fill the area), Fill Centre lays one line per layer. Off: tight "
                           "bends are printed slowly and only warned about. On for new projects; projects "
                           "saved before it existed open with it off.",
+    "fill_pockets": "Auto (Best Fit) only. Spots that every layer so far left empty (the hollow middle of "
+                    "spirals, corners, round holes) stack up into a void through the whole part. On: each "
+                    "layer's pattern is chosen partly by how much of those spots it covers, so layers take "
+                    "turns to fill them. A layer may then cover a little less itself. The notes and the 3D "
+                    "view (Cavities) show the spots left empty in every layer.",
     "first_layer_solid": "Make the very first layer completely filled, whatever the other layers do. "
                          "Gives the part a closed, flat base that sticks well to the bed.",
     "first_layer_infill": "Pattern for the first layer and for the solid bottom/top layers. Spirals "

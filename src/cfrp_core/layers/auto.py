@@ -21,6 +21,7 @@ SPIRAL_CANDIDATES = (ARCHIMEDEAN, CORNER_STEP, FERMAT)
 TIGHT_WEIGHT = 3.0          # one share of the path in tight bends costs three shares of coverage
 CROSSING_COST = 0.1         # per crossing (validation warns about each)
 JUMP_COST = 0.002           # per mm from the previous layer's end to the start
+CAVITY_WEIGHT = 2.0         # covering area every layer below left empty counts twice
 
 
 @dataclass(frozen=True)
@@ -31,6 +32,7 @@ class Choice:
     tight: float            # share of the path in bends tighter than the minimum
     crossings: int
     score: float
+    fresh: float = 0.0      # share of the layer it covers that every layer below left empty
 
 
 def zigzag_angles(part, layup_angle):
@@ -75,7 +77,15 @@ def measure(path, part, holes, gap, r_min, last_pt=None):
     return coverage, tight, count_crossings(pts), jump
 
 
-def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=False, repair=None):
+def fresh_share(path, empty, gap, part_area):
+    """Share of the part that `path` covers inside `empty` (what every
+    layer below left uncovered)."""
+    if empty is None or empty.is_empty or len(path) < 2:
+        return 0.0
+    return LineString(path).buffer(gap / 2.0).intersection(empty).area / max(part_area, 1e-9)
+
+
+def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=False, repair=None, empty=None):
     """Best of `candidates` [(pattern, angle)]: `generate(pattern, angle)`
     returns a path (or None / raises ValueError when it cannot). Returns
     (Choice, path), or (None, None) if nothing could be laid. `strict`
@@ -85,23 +95,27 @@ def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=F
     costly, so candidates are first judged unrepaired and repaired best
     first; a repair only leaves fibre out, so one whose unrepaired score
     (tight bends not counted) cannot beat the best repaired one so far is
-    never repaired."""
+    never repaired.
+
+    `empty` (Fill Pockets): where every layer below left the part empty;
+    covering it scores CAVITY_WEIGHT times as much as other coverage, so
+    layers take turns to fill spots instead of all leaving the same ones."""
     if repair is not None:
-        return _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, repair)
+        return _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, repair, empty)
     best = None
     for pattern, angle in candidates:
         try:
             path = generate(pattern, angle)
         except ValueError:
             continue
-        best = _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict)
+        best = _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict, empty)
     return best if best is not None else (None, None)
 
 
 _REPAIR_SLACK = 0.01        # a repair's curve may cover a little more than the stretch it replaced
 
 
-def _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, repair):
+def _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, repair, empty=None):
     raw = []
     for pattern, angle in candidates:
         try:
@@ -114,17 +128,20 @@ def _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, rep
         if m is None:
             continue
         coverage, _, _, jump = m
-        raw.append((coverage + _REPAIR_SLACK - JUMP_COST * jump, pattern, angle, path))
+        bound = coverage + _REPAIR_SLACK - JUMP_COST * jump
+        if empty is not None:
+            bound += CAVITY_WEIGHT * (fresh_share(path, empty, gap, part.area) + _REPAIR_SLACK)
+        raw.append((bound, pattern, angle, path))
     raw.sort(key=lambda r: -r[0])
     best = None
     for bound, pattern, angle, path in raw:
         if best is not None and bound <= best[0].score + 1e-9:
             break
-        best = _better(best, pattern, angle, repair(path), part, holes, gap, r_min, last_pt, True)
+        best = _better(best, pattern, angle, repair(path), part, holes, gap, r_min, last_pt, True, empty)
     return best if best is not None else (None, None)
 
 
-def _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict):
+def _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict, empty=None):
     """`best` or this candidate, whichever scores higher."""
     if not path or len(path) < 2:
         return best
@@ -136,9 +153,11 @@ def _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict
         if _strict_tight(path, r_min, last_pt):
             return best
         tight = 0.0             # only the join to the last layer, which the climb replaces
-    score = coverage - TIGHT_WEIGHT * tight - CROSSING_COST * crossings - JUMP_COST * jump
+    fresh = fresh_share(path, empty, gap, part.area)
+    score = (coverage + CAVITY_WEIGHT * fresh - TIGHT_WEIGHT * tight - CROSSING_COST * crossings
+             - JUMP_COST * jump)
     if best is None or score > best[0].score + 1e-9:
-        return (Choice(pattern, angle, coverage, tight, crossings, score), path)
+        return (Choice(pattern, angle, coverage, tight, crossings, score, fresh), path)
     return best
 
 

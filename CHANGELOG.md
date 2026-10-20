@@ -5,6 +5,39 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 44, first part: cavity check, Fill Pockets)
+- **Cavity check** (`coverage.cavity_map`): the spots of the part that no layer
+  fills, a void through the laminate. Every multi-layer flat or STL slice adds a
+  note ("Cavities: 9.9 % of the part (233 mm²) is empty in all 4 layers: 164 mm²
+  inside, 4 mm² next to hole 2 ...") and orange markers in the 3D view
+  (Cavities toggle, apart from mesh Problems); `stats["cavity_share"]`. Holes of a
+  Custom Outline are numbered in the order they are drawn. A run of N layers in
+  a row can be asked for (`run=`).
+- **Fill Pockets** (`fill_pockets`, Auto (Best Fit) on flat parts, off by
+  default): Auto scores covering what every layer below left empty at twice the
+  weight of other coverage (`auto.CAVITY_WEIGHT`), and judges each such layer
+  afresh instead of reusing the last choice. Measured (Auto, Fill Centre, 4
+  layers, empty in all layers): 60 mm triangle 11.7 % -> 5.1 % (strict 8.9 % ->
+  3.7 %), coverage unchanged; 60 x 40 rectangle strict 7.6 % -> 5.6 %, but each
+  layer covers less (90 % -> 83 %); hexagon and 135 x 25 strip about unchanged.
+- Faster zigzag joining on parts with holes: each margin-ring route is built in
+  one vectorised call (`serpentine._routes`). Auto on a 60 x 40 plate with four
+  M3 holes, 2 layers: 797 s -> 193 s. Paths unchanged (goldens).
+
+### Known limits (Phase 44, first part)
+- The plan's target (60 x 40 plate with four M3 holes, Fill Solid, 4 layers,
+  empty in all layers under 4 %) is not met with Strict Bend Radius on: 12.8 %
+  (Archimedean), 9.9 % with Fill Centre (strict off: 9.9 %, 3.1 %). With strict on
+  the hollow middle of the rings (about 6 mm wide) takes one line per layer, and
+  a line can only be reached going forwards from the spiral's end, so its two
+  ends stay empty; a ring cannot bend round an M3 hole closer than the bend
+  radius. Cutting the spiral back to lengthen the line was tried and made it
+  worse (12.3 %), as every inward layer cut the same ring stretch.
+- Auto on parts with holes is still slow (193 s for two layers of the plate
+  above): the zigzag joiner scores every route between every pair of runs.
+- Not yet done: the layer recipe (edge rings, hole rings, wrapping bolt holes at
+  layer changes, drill-after holes).
+
 ### Added (Phase 43: Strict Bend Radius)
 - **Strict Bend Radius** (`strict_bend_radius`, Pattern & Layers): no fibre bend
   tighter than the min bend radius anywhere. The core default is off, so saved

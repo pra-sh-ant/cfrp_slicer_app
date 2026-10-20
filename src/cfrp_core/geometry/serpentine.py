@@ -177,8 +177,11 @@ def _routes(a, b, poly, rings, reach, step=0.75, roadmap=None):
         for sign in (1.0, -1.0):
             span = ((t1 - t0) * sign) % length
             n = max(2, int(span / step))
-            pts = [ring.interpolate((t0 + sign * span * k / n) % length).coords[0] for k in range(n + 1)]
-            out.append(pts + [tuple(b)])
+            # all of a route's points in one call (point by point, this was
+            # most of Auto's time on a plate with holes)
+            at = (t0 + sign * span * np.arange(n + 1) / n) % length
+            xy = shapely.get_coordinates(shapely.line_interpolate_point(ring, at))
+            out.append([tuple(q) for q in xy.tolist()] + [tuple(b)])
     if not out and roadmap is not None:
         detour = roadmap(a, b)
         if detour:

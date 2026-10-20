@@ -225,6 +225,10 @@ def field_states(p: dict) -> dict[str, OptionState]:
     else:
         s["zigzag_respect_radius"] = (ON if zz else _off("Only for zigzag patterns (Oriented Serpentine, "
                                                           "45° Diagonal Hatch) on flat and STL parts."))
+    auto = infill == AUTO or p.get("first_layer_infill") == AUTO
+    s["fill_pockets"] = (ON if auto and family == "flat" and layers > 1
+                         else _off("Only for Auto (Best Fit) on flat parts with more than one layer: it "
+                                   "chooses each layer's pattern by what the layers below left empty."))
     s["strict_bend_radius"] = (ON if family in ("flat", "stl")
                                else _off("Only for flat and STL parts: Z shells and the Mushroom have "
                                          "their own fixed paths."))

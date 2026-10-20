@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 
+from shapely.geometry import LineString
 from shapely.ops import unary_union
 
 from .. import geometry as geo
@@ -84,6 +85,8 @@ def build_flat_laminate(config: ProcessConfig):
     strict = StrictBends(config)
     fill_region = unary_union(pieces) if multi else fill_poly
     climb_zone = printable.buffer(gap / 2.0 + 0.2) if strict.on else None
+    # Fill Pockets: where every layer so far left the part empty
+    empty = base_poly if config.fill_pockets else None
 
     for i, plan in enumerate(plan_layers(config, config.layers)):
         layer_z = config.z_offset_mm + (i * layer_height)
@@ -121,7 +124,8 @@ def build_flat_laminate(config: ProcessConfig):
                 # Auto fills every layer: each candidate solid, the best laid.
                 key = (plan.index % 2, round(current_angle % 180.0, 3), i == 0)
                 reused = None
-                if key in decided:
+                pockets = empty is not None and empty.area > 0.01 * base_poly.area
+                if key in decided and not pockets:
                     # the same choice for a layer like one judged -- unless it
                     # lays worse here (the start differs: a crossing, a hole)
                     pattern, angle, cov = decided[key]
@@ -135,7 +139,8 @@ def build_flat_laminate(config: ProcessConfig):
                     choice, raw_path = auto.choose(lambda p, a: generate(p, a, True, peek=True, raw=strict.on),
                                                    auto.candidates_for(fill_poly, current_angle),
                                                    base_poly, holes, gap, r_min, last_pt, strict=strict.on,
-                                                   repair=repair if strict.on else None)
+                                                   repair=repair if strict.on else None,
+                                                   empty=empty if pockets else None)
                     if choice is None:
                         raise ValueError("no pattern fits this layer.")
                     shifts.next(choice.pattern, plan.index, choice.angle)
@@ -165,6 +170,9 @@ def build_flat_laminate(config: ProcessConfig):
             flag_bridges(layer_trajectory, unary_union(pieces), gap, skip=anchor_n + 1)
         append_layer(trajectory, layer_trajectory, i + 1, seam_trim, kin.v_min, min_run,
                      strict=strict.climb(climb_zone))
+        if empty is not None and len(layer_trajectory) > 1:
+            laid = [(p['x'], p['y']) for p in layer_trajectory]
+            empty = empty.difference(LineString(laid).buffer(gap / 2.0))
 
         if layer_trajectory:
             last_pt = (layer_trajectory[-1]['x'], layer_trajectory[-1]['y'])

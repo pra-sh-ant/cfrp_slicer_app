@@ -543,3 +543,25 @@ def test_strict_bend_radius_on_for_new_projects_off_for_old_files(panel):
     assert not _enabled(panel, "zigzag_respect_radius")       # strict already keeps zigzag turns
     panel.shape_cb.setCurrentText("Hollow Cylinder (Z)")
     assert not _enabled(panel, "strict_bend_radius")
+
+
+def test_viewer_shows_cavities_apart_from_mesh_problems(app):
+    from cfrp_core import ProcessConfig, slice_part
+    from cfrp_core.machine import DEFAULT_MACHINE
+    from gui.viewer_gl import ViewerGL
+    r = slice_part(ProcessConfig())
+    v = ViewerGL(DEFAULT_MACHINE)
+    v.update_scene(r.trajectory, r.target_shapes, r.max_z,
+                   markers=((10.0, 10.0, 0.2, "open edge"), (20.0, 20.0, 0.4, "cavity"), (30.0, 20.0, 0.4, "cavity")))
+    assert v.problems_chk.text() == "Problems (1)" and v.cavities_chk.text() == "Cavities (2)"
+    assert not v.cavities_chk.isHidden()
+    v.update_scene(r.trajectory, r.target_shapes, r.max_z)
+    assert v.cavities_chk.isHidden()
+
+
+def test_fill_pockets_greyed_out_unless_auto_with_layers(panel):
+    panel.infill_cb.setCurrentText("Archimedean (Concentric Spiral)")
+    assert not _enabled(panel, "fill_pockets")
+    panel.infill_cb.setCurrentText("Auto (Best Fit)")
+    panel.layers_spin.setValue(4)
+    assert _enabled(panel, "fill_pockets")

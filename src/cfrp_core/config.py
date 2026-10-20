@@ -310,6 +310,11 @@ class ProcessConfig(_Frozen):
     # fails on any bend under 0.98·r_min. Off = tight bends are slowed and
     # warned. The GUI turns it on for new projects; saved files keep theirs.
     strict_bend_radius: bool = False
+    # Fill Pockets (Phase 44): spots every layer below left empty are filled
+    # first -- Auto (Best Fit) scores covering them double, so layers take
+    # turns instead of all leaving the same spots (a cavity through the
+    # laminate). Flat parts.
+    fill_pockets: bool = False
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")

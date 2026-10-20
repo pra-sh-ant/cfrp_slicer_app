@@ -6,10 +6,11 @@ from dataclasses import dataclass
 
 import shapely
 from shapely.affinity import translate
+from shapely.geometry import Polygon
 
 from .config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT, ORIENTED_SERPENTINE, ProcessConfig
 from .constraints import resolve_process_constraints
-from .coverage import coverage_summary, layer_coverage
+from .coverage import cavity_map, cavity_note, coverage_summary, layer_coverage
 from .gcode import compile_gcode
 from .layers import build_flat_laminate, build_revolve_shell, build_stl_laminate, plan_layers, skin_summary
 from .machine import DEFAULT_MACHINE, MachineProfile, fit_trajectory_to_bed
@@ -68,7 +69,7 @@ class SliceResult:
     info: tuple[str, ...]                 # other notes (e.g. bed auto-positioning)
     stats: dict = None                    # print_time_s, fiber_length_mm, fiber_mass_g
     bed_shift: tuple = (0.0, 0.0)         # XY added by fit_trajectory_to_bed
-    markers: tuple = ()                   # (x, y, z, kind): where an STL mesh is broken
+    markers: tuple = ()                   # (x, y, z, kind): where an STL mesh is broken; kind "cavity": a spot no layer fills
 
 
 def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE) -> SliceResult:
@@ -127,6 +128,25 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
         max_z = max((pt['z'] for pt in trajectory), default=float(cfg.z_offset_mm))
 
     stats = _compute_stats(trajectory, cfg, target_shapes)
+    cavity_markers = []
+    if target_shapes and not g.is_revolve and not g.is_specialty and len({t[2] for t in target_shapes}) > 1:
+        # Phase 44: spots no layer fills (informational; never fails a slice)
+        try:
+            holes = None
+            if g.shape == "Custom Outline":
+                holes = [translate(Polygon(h), xoff=g.start_x_mm + shift_x, yoff=g.start_y_mm + shift_y)
+                         for h in g.custom_holes if len(h) >= 3]
+            cav = cavity_map(trajectory, target_shapes, cfg.track_gap_mm, holes=holes)
+        except shapely.errors.GEOSException:
+            cav = None
+        if cav is not None:
+            stats["cavity_share"] = cav["share"]
+            info.append(cavity_note(cav))
+            z_of = {layer: z for z, _shape, layer in target_shapes}
+            for spot in cav["spots"]:
+                zs = [z_of[k] for k in range(spot["first"], spot["last"] + 1) if k in z_of]
+                z = sum(zs) / len(zs) if zs else float(cfg.z_offset_mm)
+                cavity_markers.append((spot["x"], spot["y"], z, "cavity"))
     sparse = (bool(cfg.zigzag_respect_radius or cfg.strict_bend_radius)
               and cfg.infill_type in (ORIENTED_SERPENTINE, DIAGONAL_45))
     if g.shape == "STL Import" and stats.get("worst_coverage", 1.0) < 0.5 and not sparse:
@@ -154,5 +174,5 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
         config=cfg, trajectory=trajectory, target_shapes=target_shapes, gcode=gcode,
         validation=validation, max_z=max_z, constraint_notes=resolved.notes, info=tuple(info),
         stats=stats, bed_shift=(float(shift_x), float(shift_y)),
-        markers=tuple((x + shift_x, y + shift_y, z, kind) for x, y, z, kind in markers),
+        markers=tuple((x + shift_x, y + shift_y, z, kind) for x, y, z, kind in markers) + tuple(cavity_markers),
     )

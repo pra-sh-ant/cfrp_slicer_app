@@ -75,6 +75,7 @@ _FIELD_MAP = {
     "zigzag_respect_radius": (None, "zigzag_respect_radius"),
     "fill_centre": (None, "fill_centre"),
     "strict_bend_radius": (None, "strict_bend_radius"),
+    "fill_pockets": (None, "fill_pockets"),
 }
 
 

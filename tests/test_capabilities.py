@@ -68,6 +68,7 @@ PERTURB = {
     "zigzag_respect_radius": lambda p: not p.get("zigzag_respect_radius", False),
     "fill_centre": lambda p: not p.get("fill_centre", False),
     "strict_bend_radius": lambda p: not p.get("strict_bend_radius", False),
+    "fill_pockets": lambda p: not p.get("fill_pockets", False),
     "stl_closing_radius": lambda p: 0.3,
     "stl_stitch": lambda p: 1.0,
 }
