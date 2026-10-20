@@ -210,10 +210,16 @@ def strict_path(path, r_min, allowed, gap, keep_head=0):
     zone = prep(allowed) if allowed is not None and not allowed.is_empty else None
     keep = max(int(keep_head), 0)
     head_s = _Path(pts[:keep + 1]).length if keep else 0.0    # where the layer proper starts
-    cursor, repairs, events = head_s + (BEND_GUARD if keep else 0.0), 0, []
+    low = head_s + (BEND_GUARD if keep else 0.0)
+    cursor, repairs, events = low, 0, []
     while repairs < _MAX_REPAIRS:
         P = _Path(pts)
         clusters = tight_clusters(pts, r_min, cursor)
+        if not clusters and cursor > low:
+            # a repair's own end can leave a bend behind the cursor: look again
+            # from the layer's start before giving up
+            cursor = low
+            clusters = tight_clusters(pts, r_min, cursor)
         if not clusters:
             break
         sa, sb = clusters[0]
@@ -228,7 +234,7 @@ def strict_path(path, r_min, allowed, gap, keep_head=0):
     out.repairs = repairs
     out.events = tuple(events)
     # Anything still tight (a pass limit): end the layer before it.
-    left = tight_clusters(pts, r_min, head_s + (BEND_GUARD if keep else 0.0))
+    left = tight_clusters(pts, r_min, low)
     if left:
         P = _Path(pts)
         k, p, _ = P.at(max(left[0][0] - 1.0, head_s))
@@ -282,7 +288,7 @@ def _repair(P, pts, sa, sb, R, r_min, zone, gap, head_s, keep):
     if lost_head < lost_tail and sb + 1.0 < total:
         kj, pj, _ = P.at(sb + 1.0)
         new = [tuple(q) for q in pts[:max(keep, 0)]] + [pj] + [tuple(q) for q in pts[kj + 1:]]
-        return _dedupe(new), head_s + BEND_GUARD, ("later start", head_s, sb + 1.0)
+        return _dedupe(new), low, ("later start", head_s, sb + 1.0)
     ki, pi, _ = P.at(max(sa - 1.0, low))
     new = [tuple(q) for q in pts[:ki + 1]] + [pi]
     return _dedupe(new), total + 1.0, ("early end", max(sa - 1.0, low), total)
@@ -293,7 +299,7 @@ def _try_curves(P, pts, curves, si, sj, ki, kj, pi, pj, r_min, zone, gap, whole)
     that stretch: (new points, where to look next, event), or None."""
     exempt = None
     for curve in curves:
-        line = LineString([pi] + curve)
+        line = shapely.linestrings(np.asarray([pi] + curve, dtype=np.float64))
         if zone is not None and not zone.covers(line):
             continue
         if not line.is_simple:                     # a Dubins loop can cross itself
@@ -406,9 +412,14 @@ def lost_area(before, after, region, gap):
     """mm² of `region` the tow covered on `before` but not on `after`."""
     if len(before) < 2 or region is None or region.is_empty:
         return 0.0
-    a = LineString(before).buffer(gap / 2.0).intersection(region)
-    b = LineString(after).buffer(gap / 2.0) if len(after) > 1 else None
-    return float(a.area if b is None else a.difference(b).area)
+    try:
+        a = shapely.make_valid(LineString(before).buffer(gap / 2.0)).intersection(region)
+        b = shapely.make_valid(LineString(after).buffer(gap / 2.0)) if len(after) > 1 else None
+        return float(a.area if b is None else a.difference(b).area)
+    except shapely.errors.GEOSException:
+        # a report figure only: the length left out times the tow width
+        short = LineString(before).length - (LineString(after).length if len(after) > 1 else 0.0)
+        return max(0.0, short) * gap
 
 
 __all__ = ["ARC_FACTOR", "BEND_GUARD", "walk", "TIGHT", "StrictPath", "dubins_curves", "lost_area", "strict_path", "tight_clusters"]

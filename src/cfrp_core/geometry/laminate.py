@@ -74,12 +74,29 @@ def ring_from(poly, start):
     return [tuple(start)] + after + before + [tuple(start)]
 
 
-def _entry_route(entry_from, path, corridor, allowed=None, gap=1.0, min_rad=0.0):
+def _entry_route(entry_from, path, corridor, allowed=None, gap=1.0, min_rad=0.0, wide=False):
     """Points along `corridor`'s ring from entry_from towards path[0], used
     only when the straight jump entry_from -> path[0] crosses `path` and the
     detour crosses it less (a corridor narrower than the U-turns would cut
     through them instead). With holes, a route must stay inside `allowed`
-    (where fibre may lie; default the corridor)."""
+    (where fibre may lie; default the corridor).
+
+    `wide` (lines 2·r_min apart): their U-turns reach out to the corridor,
+    so a route along `allowed`'s own ring (the wall loop just laid,
+    retraced) is tried too, and kept if it crosses fewer lines."""
+    route = _corridor_route(entry_from, path, corridor, allowed, gap, min_rad)
+    if not wide or allowed is None or allowed.is_empty or allowed.geom_type != 'Polygon' or len(path) < 3:
+        return route
+    line = LineString(path)
+    along = arc_along_ring(allowed, entry_from, path[0])
+    if _crossing_count(LineString([tuple(entry_from)] + along + [path[0]]), line) < \
+            _crossing_count(LineString([tuple(entry_from)] + [tuple(q) for q in route] + [path[0]]), line):
+        return along
+    return route
+
+
+def _corridor_route(entry_from, path, corridor, allowed, gap, min_rad):
+    """_entry_route along the corridor (or the margin rings round holes)."""
     if corridor.is_empty or corridor.geom_type != 'Polygon' or len(path) < 3:
         return []
     line = LineString(path)
@@ -329,7 +346,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             corridor = largest_polygon(wall_poly.buffer(-gap, join_style=1) if include_boundary else wall_poly)
 
             def entry(p):
-                route = _entry_route(entry_from, p, corridor, allowed=wall_poly, gap=gap, min_rad=min_rad)
+                route = _entry_route(entry_from, p, corridor, allowed=wall_poly, gap=gap, min_rad=min_rad,
+                                     wide=line_spacing is not None)
                 hits = (count_crossings([tuple(entry_from)] + [tuple(q) for q in route] + list(p))
                         - count_crossings(p)) if holed else 0
                 return (hits, cost(p)), route

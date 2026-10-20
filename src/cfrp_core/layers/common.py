@@ -483,7 +483,7 @@ def _cut_at(layer_trajectory, d):
     return trim_path_head(layer_trajectory, d)
 
 
-_CLIMB_PAIRS = 600      # (tail cut, head cut) pairs a strict climb tries at most
+_CLIMB_PAIRS = 1500      # (tail cut, head cut) pairs a strict climb tries at most
 
 
 def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, gap=1.0):
@@ -494,8 +494,8 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
     their headings. Pairs of cuts (_tail_cuts from seam_trim to 30 mm
     further, _head_cuts within 40 % of the layer), least fibre dropped
     first, are tried until a curve stays in `zone`, keeps every bend of the
-    join at r_min, crosses none of the layer's remaining fibre at over 5°,
-    and is long enough for the transition angle (min_run); else the best
+    join at r_min, crosses none of the layer's remaining fibre at over 5°
+    on its upper half (at the new layer's height), and is long enough for the transition angle (min_run); else the best
     found. Returns (tail cut point, climb XY points ending at the head cut,
     the layer's remaining
     points)."""
@@ -515,9 +515,17 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
         return prev_cut, [(cut['x'], cut['y'])], rest
     seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
     layer_len = float(seg.sum())
-    cum = np.concatenate([[0.0], np.cumsum(seg)])
-    tree = shapely.STRtree(shapely.linestrings(np.stack([xy[:-1], xy[1:]], axis=1)))
-    dirs = np.diff(xy, axis=0) / np.maximum(seg, 1e-12)[:, None]
+    # The crossing index on the layer cut into pieces of at most 3 mm: a
+    # long diagonal zigzag line has a box that every query hits.
+    pieces = [xy[:1]]
+    for a, b, length in zip(xy[:-1], xy[1:], seg, strict=True):
+        n = max(1, int(math.ceil(length / 3.0)))
+        pieces.append(a + (b - a) * (np.arange(1, n + 1, dtype=np.float64) / n)[:, None])
+    dense = np.vstack(pieces)
+    dseg = np.linalg.norm(np.diff(dense, axis=0), axis=1)
+    cum = np.concatenate([[0.0], np.cumsum(dseg)])
+    tree = shapely.STRtree(shapely.linestrings(np.stack([dense[:-1], dense[1:]], axis=1)))
+    dirs = np.diff(dense, axis=0) / np.maximum(dseg, 1e-12)[:, None]
     area = prep(zone) if zone is not None and not zone.is_empty else None
     heads = _head_cuts(layer_trajectory, seam_trim, max(0.4 * layer_len, seam_trim))
 
@@ -561,11 +569,24 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
         p1, h1, head, rest = hg
         curves = dubins_curves(p0, h0, p1, h1, ARC_FACTOR * r_min) + dubins_curves(p0, h0, p1, h1, 1.005 * r_min)
         for curve in curves:
-            line = LineString([p0] + curve)
-            outside = int((area is not None and not area.covers(line)) or not line.is_simple)
+            # Checks cheapest first; a candidate that can no longer beat the
+            # best one so far is dropped as soon as that is clear.
             arr = np.asarray([p0] + curve, dtype=np.float64)
+            line = shapely.linestrings(arr)
+            outside = int((area is not None and not area.covers(line)) or not line.is_simple)
+            if best is not None and (outside,) > best[0][:1]:
+                continue
+            joined = np.asarray(tail_pts + [p0] + curve + head[1:], dtype=np.float64)
+            tight = int(bool((local_bend_radii(joined) < TIGHT * r_min).any()))
+            if best is not None and (outside, tight) > best[0][:2]:
+                continue
             i, j = tree.query(shapely.linestrings(np.stack([arr[:-1], arr[1:]], axis=1)), predicate='crosses')
-            later = cum[j] >= d - 1e-6
+            # Only the climb's upper part is at the new layer's height (Z
+            # rises with length); the new layer crossing its lower half lies
+            # on it as on the layer below (the audit, too, counts crossings
+            # only within half a layer height). 45 % kept as margin.
+            run = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(arr, axis=0), axis=1))])
+            later = (cum[j] >= d - 1e-6) & (run[i + 1] >= 0.45 * run[-1])
             crossings = 0
             if later.any():
                 # Any crossing over 5°: a loop that grazes a line crosses it at
@@ -577,8 +598,6 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
                 cos = np.abs(np.einsum('ij,ij->i', dd[i[later]], dirs[j[later]]))
                 crossings = int(np.count_nonzero(cos < math.cos(math.radians(5.0))))
             crossings += int(line.crosses(LineString(head[:2])))     # the landing segment's kept piece
-            joined = np.asarray(tail_pts + [p0] + curve + head[1:], dtype=np.float64)
-            tight = int(bool((local_bend_radii(joined) < TIGHT * r_min).any()))
             short = int(line.length < min_run - 1e-6)
             score = (outside, tight, crossings, short)
             if best is None or score < best[0]:
