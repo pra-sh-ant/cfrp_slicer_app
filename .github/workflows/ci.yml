@@ -7,6 +7,9 @@ on:
 jobs:
   test:
     runs-on: windows-latest
+    env:
+      # The audits print non-ASCII (°, ↓); the Windows console default (cp1252) cannot.
+      PYTHONIOENCODING: utf-8
     steps:
       - uses: actions/checkout@v4
 
