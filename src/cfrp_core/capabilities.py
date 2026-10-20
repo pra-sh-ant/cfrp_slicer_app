@@ -24,6 +24,7 @@ from .config import (
 INFILL_PATTERNS = (ARCHIMEDEAN, FERMAT, ORIENTED_SERPENTINE, DIAGONAL_45, CORNER_STEP, AUTO)
 SPIRALS = (ARCHIMEDEAN, FERMAT, CORNER_STEP)
 ZIGZAGS = (ORIENTED_SERPENTINE, DIAGONAL_45)
+RECIPE_CORES = (*ZIGZAGS, FERMAT)        # layers the layer recipe shapes (layers/recipe.py)
 
 STL = "STL Import"
 CUSTOM = "Custom Outline"
@@ -148,6 +149,9 @@ def field_states(p: dict) -> dict[str, OptionState]:
         s["include_boundary"] = _off("Z shells and the Mushroom have no separate boundary pass.")
     elif infill == CORNER_STEP:
         s["include_boundary"] = _off("Corner-Step's outer ring already runs along the boundary.")
+    elif (_recipe_layers(p, family) == "all" and int(_num(p, "edge_rings", 0)) > 0
+          and not (shape == CUSTOM and p.get("stl_islands") == "all")):    # (pieces: no recipe)
+        s["include_boundary"] = _off("Edge Rings already run along the outline.")
     else:
         s["include_boundary"] = ON
     stl_only = _off("Only for STL Import.")
@@ -229,6 +233,27 @@ def field_states(p: dict) -> dict[str, OptionState]:
     s["fill_pockets"] = (ON if auto and family == "flat" and layers > 1
                          else _off("Only for Auto (Best Fit) on flat parts with more than one layer: it "
                                    "chooses each layer's pattern by what the layers below left empty."))
+    # --- layer recipe (Phase 44) ---------------------------------------------
+    recipe = _recipe_layers(p, family)
+    s["edge_rings"] = (ON if recipe else _off("Only for flat parts with a zigzag (Oriented Serpentine, 45° "
+                                               "Diagonal Hatch) or Fermat pattern, on this or the first "
+                                               "layer."))
+    wrap = bool(p.get("wrap_holes", False))
+    if not recipe:
+        s["wrap_holes"] = s["edge_rings"]
+    elif shape != CUSTOM:
+        s["wrap_holes"] = _off("Only for the Custom Outline: other flat shapes have no holes.")
+    elif layers <= 1:
+        s["wrap_holes"] = _off("A wrap takes two layers: one spirals into the hole, the next out of it.")
+    else:
+        s["wrap_holes"] = ON
+    for key in ("hole_rings", "bolt_holes"):
+        if not s["wrap_holes"].enabled:
+            s[key] = s["wrap_holes"]
+        else:
+            s[key] = ON if wrap else _off("Only with Wrap Holes.")
+    s["drill_holes"] = ON if shape == CUSTOM else _off("Only for the Custom Outline (its holes are numbered "
+                                                       "in drawing order).")
     s["strict_bend_radius"] = (ON if family in ("flat", "stl")
                                else _off("Only for flat and STL parts: Z shells and the Mushroom have "
                                          "their own fixed paths."))
@@ -274,6 +299,18 @@ def field_states(p: dict) -> dict[str, OptionState]:
     for key in ("v_z", "v_overhang", "dwell"):
         s[key] = ON if family == "mushroom" else mushroom_only
     return s
+
+
+def _recipe_layers(p: dict, family: str) -> str:
+    """Which layers the layer recipe can shape: "all", "some" (the first
+    layer / skins or the main pattern only) or "" (none): flat parts, zigzag
+    or Fermat layers."""
+    if family != "flat":
+        return ""
+    main = p.get("infill_type", ARCHIMEDEAN) in RECIPE_CORES
+    first = p.get("first_layer_infill")
+    skin = main if first in (None, "", "Same as other layers") else first in RECIPE_CORES
+    return "all" if main and skin else ("some" if main or skin else "")
 
 
 def first_enabled(states: dict[str, OptionState], preferred: str) -> str:

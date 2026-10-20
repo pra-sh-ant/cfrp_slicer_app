@@ -38,6 +38,7 @@ Entry: `pipeline.slice_part`. Core has no UI imports (`tests/test_core_isolation
 - **Oriented serpentine** (`serpentine.py`): rotate by -theta, erode by r_min, scanlines at `gap` pitch keeping the **longest segment per line**, arc U-turns radius `max(chord/2, r_min)`, rotate back. The only pattern that realises a real layup angle. 45-degree hatch is this at +/-45.
 - Corner-step spiral: `corner_step.py` (not covered here).
 - Layers alternate outside-in (even) / inside-out (odd) so the stroke end meets the next start (`laminate.laminate_layer`).
+- Layer recipe (Phase 44, `zones.recipe_layer`, driven by `layers/recipe.py`; opt-in with Edge Rings or Wrap Holes, flat parts in one piece, zigzag or Fermat layers): an inward layer is edge rings (`edge_path`, Archimedean rings round the outline that bend round the holes) -> the core (`laminate_layer` in the shell inset by the edge rings, minus the holes and a channel from the chosen hole's band out to the core's edge) -> `wrap_in` (a full lap of the hole's outer ring, a blend inward, a closing inner lap). The next layer, outward, is `wrap_out` from where that ended, turning the same way -> core -> edge rings outward. Pieces are joined by `strict.smooth_join` (a Dubins curve between cuts in both pieces) or `zones._join` (along the zones' edges). A wrap is kept only if the layer then crosses none of its own fibre; a recipe layer that still crosses itself (before or after the strict repair) is replaced by the plain layer when that crosses less.
 
 ## 5. Joining layers
 

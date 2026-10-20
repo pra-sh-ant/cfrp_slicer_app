@@ -65,6 +65,24 @@ HELP = {
                     "layer's pattern is chosen partly by how much of those spots it covers, so layers take "
                     "turns to fill them. A layer may then cover a little less itself. The notes and the 3D "
                     "view (Cavities) show the spots left empty in every layer.",
+    "edge_rings": "Layer recipe, flat parts with a zigzag or Fermat pattern. This many fibre rings run along "
+                  "the outline (bending round the holes) before the pattern fills the middle, or after it on "
+                  "the layers that run outward. The rings give the edge continuous fibre in the outline's "
+                  "direction; the middle keeps the layer's fibre angle. Off = the pattern alone (Print Outer "
+                  "Boundary still adds one ring).",
+    "wrap_holes": "Layer recipe, Custom Outline with holes, two layers or more. A layer ends by spiralling "
+                  "into a hole (Hole Rings laps round it) and the next layer starts by spiralling out of the "
+                  "same hole, turning the same way, so the hole gets full fibre laps with no cut and no "
+                  "travel. Each wrap takes two layers: Bolt Holes are wrapped first, every hole in turn when "
+                  "none is listed. A layer whose wrap would cross its own fibre wraps no hole (see the notes).",
+    "hole_rings": "How many fibre laps a wrapped hole gets on each of its two layers (the first lap one "
+                  "Track Gap from the hole's edge; a hole too small for the bend radius gets its first lap at "
+                  "the bend radius from its centre).",
+    "bolt_holes": "Hole numbers (1 = the first hole drawn in the PCB editor) that carry a bolt or a load: "
+                  "Wrap Holes wraps these first, and only these. Empty = every hole in turn.",
+    "drill_holes": "Custom Outline: hole numbers (1 = the first hole drawn) that are printed over and "
+                   "drilled after curing, for small holes the fibre cannot bend round. Drilling cuts the "
+                   "fibre at the hole, so use it for holes that carry no load.",
     "first_layer_solid": "Make the very first layer completely filled, whatever the other layers do. "
                          "Gives the part a closed, flat base that sticks well to the bed.",
     "first_layer_infill": "Pattern for the first layer and for the solid bottom/top layers. Spirals "

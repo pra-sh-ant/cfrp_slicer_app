@@ -565,3 +565,20 @@ def test_fill_pockets_greyed_out_unless_auto_with_layers(panel):
     panel.infill_cb.setCurrentText("Auto (Best Fit)")
     panel.layers_spin.setValue(4)
     assert _enabled(panel, "fill_pockets")
+
+
+def test_layer_recipe_fields(panel):
+    panel.infill_cb.setCurrentText("Archimedean (Concentric Spiral)")
+    assert not _enabled(panel, "edge_rings") and not _enabled(panel, "wrap_holes")
+    panel.infill_cb.setCurrentText("Oriented Serpentine")
+    panel.layers_spin.setValue(2)
+    assert _enabled(panel, "edge_rings")
+    assert not _enabled(panel, "wrap_holes")                  # a rectangle has no holes
+    panel.load_params({"edge_rings": 2, "wrap_holes": True, "hole_rings": 3, "bolt_holes": [1, 3],
+                       "drill_holes": "2"})
+    p = panel.get_params()
+    assert (p["edge_rings"], p["wrap_holes"], p["hole_rings"]) == (2, True, 3)
+    assert (p["bolt_holes"], p["drill_holes"]) == ("1, 3", "2")
+    from cfrp_core import from_legacy_dict
+    cfg = from_legacy_dict(p)
+    assert cfg.geometry.bolt_holes == (1, 3) and cfg.geometry.drill_holes == (2,)

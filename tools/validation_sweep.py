@@ -10,6 +10,7 @@ Base values are the GUI defaults. Takes a few minutes (8 processes).
 """
 import itertools
 import json
+import math
 import re
 import sys
 import time
@@ -60,6 +61,22 @@ def cases():
         yield dict(shape=shape, infill_type=inf, layers=4, layup_seq="0, 90", zigzag_respect_radius=keep)
     for shape, inf in itertools.product(FLAT, (INFILLS[0], INFILLS[4])):
         yield dict(shape=shape, infill_type=inf, layers=4, fill_solid=True, fill_centre=True)
+    # Layer recipe (Phase 44): edge rings; hole wraps on a 60 x 40 plate with four holes
+    for shape, inf in itertools.product(FLAT, INFILLS[1:4]):
+        yield dict(shape=shape, infill_type=inf, layers=4, layup_seq="0, 90", fill_solid=True, edge_rings=2)
+    for inf, edge, wrap, r in itertools.product(INFILLS[1:4], (0, 2), (False, True), (1.6, 4.0)):
+        if edge or wrap:
+            yield dict(PLATE, custom_holes=_holes(r), infill_type=inf, layers=4, layup_seq="0, 90",
+                       fill_solid=True, edge_rings=edge, wrap_holes=wrap)
+
+
+PLATE = dict(shape="Custom Outline", custom_outline=[(0.0, 0.0), (60.0, 0.0), (60.0, 40.0), (0.0, 40.0)],
+             start_x=40.0, start_y=40.0)
+
+
+def _holes(r):
+    return [[(x + r * math.cos(k * math.pi / 8), y + r * math.sin(k * math.pi / 8)) for k in range(16)]
+            for x, y in ((10.0, 10.0), (50.0, 10.0), (10.0, 30.0), (50.0, 30.0))]
 
 
 def norm(msg):

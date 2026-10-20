@@ -13,4 +13,4 @@ Read first: `docs/DEEP_DIVE.md` (how slicing works), then `docs/ARCHITECTURE.md`
 - Golden tests (`tests/golden`): regenerate only deliberately with `python -m tests.golden.regenerate`.
 
 ## Layout
-`config.py` models, `constraints.py` soft fixes, `geometry/` path generators, `layers/` layer loops/seams/ramps, `kinematics.py` speed planner, `gcode/writer.py`, `validation.py`, `machine.py`, `diw/` + `board.py` structural electronics. `tools/` audits (also run in CI).
+`config.py` models, `constraints.py` soft fixes, `geometry/` path generators (`zones.py`: layer recipe pieces), `layers/` layer loops/seams/ramps (`recipe.py`: Edge Rings / Wrap Holes), `kinematics.py` speed planner, `gcode/writer.py`, `validation.py`, `machine.py`, `diw/` + `board.py` structural electronics. `tools/` audits (also run in CI).

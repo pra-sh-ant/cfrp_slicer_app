@@ -158,6 +158,26 @@ def _margin_rings(poly, gap):
     return rings
 
 
+_RINGS: dict = {}       # id(ring) -> (ring, vertices, distance along the ring at each)
+
+
+def _along(ring, at):
+    """Points at distances `at` along `ring`, as line_interpolate_point
+    gives them. GEOS walks the ring from its start for every point (most of
+    the time of a layer recipe's zigzag core, whose margin rings have many
+    vertices); here the walk is done once per ring."""
+    hit = _RINGS.get(id(ring))
+    if hit is None or hit[0] is not ring:
+        if len(_RINGS) > 256:
+            _RINGS.clear()
+        xy = shapely.get_coordinates(ring)
+        cum = np.concatenate([[0.0], np.cumsum(np.hypot(*np.diff(xy, axis=0).T))])
+        hit = _RINGS[id(ring)] = (ring, xy, cum)
+    _, xy, cum = hit
+    at = np.clip(at, 0.0, cum[-1])
+    return np.column_stack([np.interp(at, cum, xy[:, 0]), np.interp(at, cum, xy[:, 1])])
+
+
 def _routes(a, b, poly, rings, reach, step=0.75, roadmap=None):
     """Candidate connectors from a to b, each the points after a up to b:
     straight if that stays on the part, and along every margin ring within
@@ -180,7 +200,7 @@ def _routes(a, b, poly, rings, reach, step=0.75, roadmap=None):
             # all of a route's points in one call (point by point, this was
             # most of Auto's time on a plate with holes)
             at = (t0 + sign * span * np.arange(n + 1) / n) % length
-            xy = shapely.get_coordinates(shapely.line_interpolate_point(ring, at))
+            xy = _along(ring, at)
             out.append([tuple(q) for q in xy.tolist()] + [tuple(b)])
     if not out and roadmap is not None:
         detour = roadmap(a, b)

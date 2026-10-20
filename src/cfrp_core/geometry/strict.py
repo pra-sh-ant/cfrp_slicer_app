@@ -422,4 +422,116 @@ def lost_area(before, after, region, gap):
         return max(0.0, short) * gap
 
 
-__all__ = ["ARC_FACTOR", "BEND_GUARD", "walk", "TIGHT", "StrictPath", "dubins_curves", "lost_area", "strict_path", "tight_clusters"]
+def _cut_points(pts, lo, hi, from_end):
+    """Distances (from the start, or from the end with `from_end`) between
+    lo and hi where a polyline may be cut for a join: its vertices, and
+    points of straight segments over 3 mm at least 1.5 mm from their ends
+    (a cut mid-arc reads ~2 % under the arc's radius); at most ~40."""
+    seq = pts[::-1] if from_end else pts
+    out, s = [0.0] if lo <= 0.0 else [], 0.0
+    for a, b in zip(seq[:-1], seq[1:], strict=False):
+        seg = math.dist(a, b)
+        if seg >= 3.0:
+            t = 1.5
+            while t <= seg - 1.5:
+                if lo <= s + t <= hi:
+                    out.append(s + t)
+                t += 1.0
+        s += seg
+        if lo <= s <= hi:
+            out.append(s)
+        if s > hi:
+            break
+    if len(out) > 40:
+        step = (len(out) - 1) / 39.0
+        out = [out[round(i * step)] for i in range(40)]
+    return out
+
+
+def smooth_join(prev, nxt, r_min, gap, zone=None, back=25.0, ahead=25.0):
+    """Join polyline `prev` (laid so far) to `nxt` (laid next) with a curve
+    that never bends under r_min: cut up to `back` mm off prev's end and
+    `ahead` mm off nxt's start, at vertices or inside straight runs, and lay
+    a Dubins curve (ARC_FACTOR or 1.005 x r_min) between the cuts along
+    their headings. Pairs are tried least fibre dropped first until the
+    curve stays in `zone`, keeps every bend of the join at r_min, crosses
+    neither line (over 5 degrees) and keeps half a gap off them (away from
+    its ends). Returns (prev kept, curve points ending at nxt's cut, nxt
+    after the cut), or None when no pair works."""
+    if len(prev) < 2 or len(nxt) < 2 or r_min <= 0:
+        return None
+    A, B = _Path(prev), _Path(nxt)
+    area = prep(zone) if zone is not None and not zone.is_empty else None
+    tails = _cut_points(prev, 0.0, min(back, 0.45 * A.length), from_end=True)
+    heads = _cut_points(nxt, 0.0, min(ahead, 0.45 * B.length), from_end=False)
+    pairs = sorted(((t + d, t, d) for t in tails for d in heads), key=lambda q: q[0])[:240]
+    cuts = {}       # each cut (and its segment index) once: the pairs share them
+
+    def cut(side, at):
+        key = (side, at)
+        if key not in cuts:
+            if side:
+                k, q, h = A.at(A.length - at)
+                part = _dedupe(list(map(tuple, A.pts[:k + 1].tolist())) + [q])
+            else:
+                k, q, h = B.at(at)
+                part = _dedupe([q] + list(map(tuple, B.pts[k + 1:].tolist())))
+            cuts[key] = (q, h, part, _Lines(part) if len(part) >= 2 else None)
+        return cuts[key]
+
+    for _, t, d in pairs:
+        pi, hi, kept, kept_lines = cut(True, t)
+        pj, hj, rest, rest_lines = cut(False, d)
+        if kept_lines is None or rest_lines is None:
+            continue
+        for R in (ARC_FACTOR * r_min, 1.005 * r_min):
+            for curve in dubins_curves(pi, hi, pj, hj, R):
+                arr = np.asarray([pi] + curve, dtype=np.float64)
+                line = shapely.linestrings(arr)
+                if area is not None and not area.covers(line):
+                    continue
+                if not line.is_simple:
+                    continue
+                if kept_lines.hits(arr, gap, at_start=True) or rest_lines.hits(arr, gap, at_start=False):
+                    continue
+                joined = walk(kept[::-1], 3.0)[::-1][:-1] + [pi] + curve + walk(rest, 3.0)[1:]
+                if _tight_near(joined, r_min, 0.0, _Path(joined).length):
+                    continue
+                return kept, curve, rest
+    return None
+
+
+class _Lines:
+    """A polyline's segments in an STRtree, for curves joined to one end."""
+
+    def __init__(self, pts):
+        self.tree, _, self.dirs = _segments(pts)
+        self.cum = _Path(pts).cum
+
+    def hits(self, arr, gap, at_start):
+        """True if the curve `arr` crosses the line (over 5 degrees) or
+        comes within half a gap of it away from the end it shares with it
+        (`at_start`: the line ends where arr starts; else it starts where
+        arr ends)."""
+        segs = shapely.linestrings(np.stack([arr[:-1], arr[1:]], axis=1))
+        i, j = self.tree.query(segs, predicate='crosses')
+        if len(i):
+            d = np.diff(arr, axis=0)
+            d /= np.maximum(np.linalg.norm(d, axis=1), 1e-12)[:, None]
+            cos = np.abs(np.einsum('ij,ij->i', d[i], self.dirs[j]))
+            if np.count_nonzero(cos < math.cos(math.radians(5.0))):
+                return True
+        run = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(arr, axis=0), axis=1))])
+        free = (run > 1.5 * gap) if at_start else (run < run[-1] - 1.5 * gap)
+        if not free.any():
+            return False
+        # the line's own stretch next to the shared end is exempt too
+        _, j = self.tree.query(shapely.points(arr[free]), predicate='dwithin', distance=0.5 * gap)
+        if not len(j):
+            return False
+        cum = self.cum
+        near_end = (cum[j] > cum[-1] - 2.0 * gap) if at_start else (cum[j] < 2.0 * gap)
+        return bool((~near_end).any())
+
+
+__all__ = ["ARC_FACTOR", "BEND_GUARD", "StrictPath", "TIGHT", "dubins_curves", "lost_area", "smooth_join", "strict_path", "tight_clusters", "walk"]

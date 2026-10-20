@@ -50,6 +50,7 @@ _DEFAULTS = {
     "first_layer_solid": True, "first_layer_infill": "Same as other layers", "first_layer_min_coverage": 0.0,
     "solid_bottom_layers": 0, "solid_top_layers": 0, "zigzag_respect_radius": False, "fill_centre": False,
     "strict_bend_radius": True, "fill_pockets": False,
+    "edge_rings": 0, "hole_rings": 2, "wrap_holes": False, "bolt_holes": "", "drill_holes": "",
     "stl_closing_radius": 0.049, "stl_stitch": 5.0,
     "bed_x": 180.0, "bed_y": 220.0, "z_max": 200.0, "bed_margin": 1.0,
     "uv": 225, "purge_e": 15.0, "purge_f": 60.0, "travel_f": 600.0,

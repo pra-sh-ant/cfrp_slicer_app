@@ -5,6 +5,90 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 44, second part: layer recipe, hole wraps, drill-after holes)
+- **Edge Rings** (`edge_rings`, 0 to 5, off by default; flat parts in one piece,
+  on zigzag and Fermat layers): that many rings along the outline, bending round
+  the holes, before the core on layers that run inward and after it on layers
+  that run outward. The core (Oriented Serpentine or 45° Diagonal Hatch at the
+  layer's angle, or Fermat) fills the rest. With the recipe on, Print Outer
+  Boundary counts as one edge ring.
+- **Wrap Holes** (`wrap_holes`, Custom Outline with holes, 2 layers or more): an
+  inward layer ends by spiralling into a hole's rings and the next layer starts
+  by spiralling out of them, turning the same way, so the hole gets full laps
+  with no cut. **Hole Rings** (`hole_rings`, 1 to 5, default 2) sets the laps;
+  the first lap is one Track Gap off the hole's edge and at least 1.05 x r_min
+  from its centre. **Bolt Holes** (`bolt_holes`, hole numbers in drawing order)
+  are the only holes wrapped when listed; else every hole in turn, least wrapped
+  first. A layer keeps a wrap only if it then crosses none of its own fibre;
+  otherwise it wraps no hole (both noted).
+- **Drill After Curing** (`drill_holes`, hole numbers): those holes are printed
+  over and listed in the notes to be drilled after curing (drilling cuts the
+  fibre there). Hole numbers that do not exist are named in the notes; a typo
+  in either list names its field.
+- The pieces of a recipe layer are joined by `strict.smooth_join`: a Dubins
+  curve (1.03 or 1.005 x r_min) between cuts in the end of one piece and the
+  start of the next, tried least fibre dropped first, kept only if it stays on
+  the part, crosses neither piece and keeps half a gap off them. Failing that,
+  a route along the zones' edges.
+- A recipe layer that crosses itself, before or after the strict bend repair,
+  is laid without the recipe when that crosses less ("Layer(s) 3 laid without
+  the layer recipe: its pieces crossed each other there").
+- The first layer of a recipe starts on its edge ring and uses the ring's own
+  first Anchor Length as the anchor; the straight stub back from there lay
+  across the ring's end (2 crossings).
+- GUI: the five settings with help text; greyed out where they do nothing
+  (capability rules tested by slicing with each one changed). Validation sweep:
+  30 recipe cases.
+- Faster: margin-ring routes are interpolated in numpy (`serpentine._along`;
+  GEOS walked the ring from its start for every point) and `smooth_join`
+  builds each cut's segment index once. A 60 x 40 plate with four M3 holes,
+  4 layers, zigzag core with wraps, strict off: 86 s -> 14 s; Fermat core:
+  48 s -> 24 s. Paths unchanged (goldens).
+
+Measured, Strict Bend Radius on, 4 layers at 0°/90°, Fill Solid, r_min 3 mm,
+gap 1.2 mm; share of each layer covered by fibre, averaged over the layers
+(`stats["coverage"]`). Plate: 60 x 40 mm with four holes 10 mm in from the
+corners.
+
+| Part, core | No recipe | Edge Rings 2 | Edge Rings 2 + Wrap Holes |
+|---|---|---|---|
+| 135 x 25 strip, Oriented Serpentine | 0.173 | 0.306 | (no holes) |
+| 135 x 25 strip, 45° Diagonal Hatch | 0.159 | 0.239 | (no holes) |
+| 135 x 25 strip, Fermat | 0.586 | 0.531 | (no holes) |
+| Plate, 3.2 mm holes, Oriented Serpentine | 0.145 (1 crossing) | 0.221 | 0.183 |
+| Plate, 3.2 mm holes, 45° Diagonal Hatch | 0.157 | 0.259 | 0.270 |
+| Plate, 3.2 mm holes, Fermat | 0.412 (3 crossings) | 0.392 | 0.300 |
+| Plate, 8 mm holes, Oriented Serpentine | 0.102 | 0.239 | 0.265 |
+| Plate, 8 mm holes, 45° Diagonal Hatch | 0.106 | 0.241 | 0.286 (1 crossing) |
+| Plate, 8 mm holes, Fermat | 0.937 | 0.866 | 0.856 |
+
+With strict on, edge rings fill the band along the outline that sparse strict
+zigzag lines leave empty, so zigzag cores gain; Fermat cores lose, as their
+rings cannot bend round a 3.2 mm hole within r_min and the edge rings take the
+outer laps. Strict validation sweep of the 30 recipe cases: 28 Pass, 2 Warning
+(one crossing each, added by the bend repair; the same plates without the
+recipe also show such a crossing).
+
+### Known limits (Phase 44, second part)
+- The plan's "with twice as many layers as holes, every bolt hole is wrapped"
+  is not met. On the plate with four holes, 8 layers, strict on, edge rings 1:
+  zigzag cores wrapped 3 of the 4 holes (on one inward layer every wrap crossed
+  that layer's fibre, and one layer was laid without the recipe); the Fermat
+  core wrapped 1 (8 mm holes), and with 3.2 mm holes only one hole on its way
+  in, with 7 of 8 layers laid without the recipe. With Bolt Holes "1, 4" and 4
+  layers, only hole 1 was wrapped.
+- Strict zigzag cores are sparse (lines about 2 x r_min apart; 15 % to 30 % of
+  each layer), recipe or not.
+- With Strict Bend Radius off, zigzag cores on plates with holes cross
+  themselves (1 to 11 crossings per layer, as without the recipe), and the
+  zigzag joiner is slow there: up to 623 s for 4 layers of the 8 mm-hole plate
+  with 45° Diagonal Hatch (260 s without the recipe). It scores every route
+  between every pair of runs.
+- Not used on parts in several pieces, with Auto (Best Fit), or on STL slices;
+  hole numbers are typed, not set per hole on the canvas. Auto does not try
+  recipes yet, Fill Pockets does not add lines into leftover slivers, and there
+  is no property test on random holed outlines yet.
+
 ### Added (Phase 44, first part: cavity check, Fill Pockets)
 - **Cavity check** (`coverage.cavity_map`): the spots of the part that no layer
   fills, a void through the laminate. Every multi-layer flat or STL slice adds a
@@ -35,8 +119,8 @@ outputs identical are listed under "Internal".
   worse (12.3 %), as every inward layer cut the same ring stretch.
 - Auto on parts with holes is still slow (193 s for two layers of the plate
   above): the zigzag joiner scores every route between every pair of runs.
-- Not yet done: the layer recipe (edge rings, hole rings, wrapping bolt holes at
-  layer changes, drill-after holes).
+- The layer recipe (edge rings, hole rings, wrapping bolt holes at layer
+  changes, drill-after holes) came in the second part, above.
 
 ### Added (Phase 43: Strict Bend Radius)
 - **Strict Bend Radius** (`strict_bend_radius`, Pattern & Layers): no fibre bend

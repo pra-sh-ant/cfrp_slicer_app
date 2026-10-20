@@ -369,6 +369,9 @@ class ControlsPanel(QWidget):
         box = QWidget()
         box.setLayout(row)
         self._add(sec, "custom_outline", "Outline", box)
+        self.drill_edit = self._add(sec, "drill_holes", "Drill After Curing", QLineEdit(""))
+        self.drill_edit.setPlaceholderText("hole numbers, e.g. 2, 4")
+        self.drill_edit.textChanged.connect(self._emit)
 
         # STL Import fields
         stl_row = QHBoxLayout()
@@ -430,6 +433,13 @@ class ControlsPanel(QWidget):
         self.strict_chk.setChecked(True)            # new projects (D1); files without it load it off
         self.pockets_chk = self._add(sec, "fill_pockets", "",
                                      QCheckBox("Fill Pockets (layers take turns to fill empty spots)"))
+        self.edge_rings_spin = self._add(sec, "edge_rings", "Edge Rings", _ispin(0, 5, 0))
+        self.edge_rings_spin.setSpecialValueText("off")
+        self.wrap_chk = self._add(sec, "wrap_holes", "",
+                                  QCheckBox("Wrap Holes (full laps round holes at layer changes)"))
+        self.hole_rings_spin = self._add(sec, "hole_rings", "Hole Rings", _ispin(1, 5, 2))
+        self.bolt_edit = self._add(sec, "bolt_holes", "Bolt Holes", QLineEdit(""))
+        self.bolt_edit.setPlaceholderText("hole numbers, e.g. 1, 3 (empty: every hole)")
         self.layers_spin = self._add(sec, "layers", "Total Layers", _ispin(1, 500, 1))
         self.first_solid_chk = self._add(sec, "first_layer_solid", "",
                                          QCheckBox("First Layer Solid (fully filled base)"))
@@ -455,6 +465,10 @@ class ControlsPanel(QWidget):
         self.centre_chk.toggled.connect(self._emit)
         self.strict_chk.toggled.connect(self._emit)
         self.pockets_chk.toggled.connect(self._emit)
+        self.edge_rings_spin.valueChanged.connect(self._emit)
+        self.wrap_chk.toggled.connect(self._emit)
+        self.hole_rings_spin.valueChanged.connect(self._emit)
+        self.bolt_edit.textChanged.connect(self._emit)
         self.first_solid_chk.toggled.connect(self._emit)
         self.first_infill_cb.currentTextChanged.connect(self._emit)
         self.first_cov_spin.valueChanged.connect(self._emit)
@@ -659,6 +673,9 @@ class ControlsPanel(QWidget):
             "fill_centre": self.centre_chk.isChecked(),
             "strict_bend_radius": self.strict_chk.isChecked(),
             "fill_pockets": self.pockets_chk.isChecked(),
+            "edge_rings": self.edge_rings_spin.value(),
+            "wrap_holes": self.wrap_chk.isChecked(),
+            "stl_islands": "all" if self.stl_islands_chk.isChecked() else "largest",
             "pa_table": self.pa_table_edit.text(),
             "track_gap": self.gap_spin.value(),
             "min_radius": self.min_r_spin.value(),
@@ -723,6 +740,11 @@ class ControlsPanel(QWidget):
             "fill_centre": self.centre_chk.isChecked(),
             "strict_bend_radius": self.strict_chk.isChecked(),
             "fill_pockets": self.pockets_chk.isChecked(),
+            "edge_rings": self.edge_rings_spin.value(),
+            "hole_rings": self.hole_rings_spin.value(),
+            "wrap_holes": self.wrap_chk.isChecked(),
+            "bolt_holes": self.bolt_edit.text(),
+            "drill_holes": self.drill_edit.text(),
             "first_layer_solid": self.first_solid_chk.isChecked() and not is_flat_specialty
             and shape not in REVOLVE_SHAPES,
             "first_layer_infill": (None if self.first_infill_cb.currentIndex() <= 0
@@ -844,6 +866,14 @@ class ControlsPanel(QWidget):
             p = dict(p, strict_bend_radius=False)
         _set(self.strict_chk, "strict_bend_radius")
         _set(self.pockets_chk, "fill_pockets")
+        _set(self.edge_rings_spin, "edge_rings", int)
+        _set(self.hole_rings_spin, "hole_rings", int)
+        _set(self.wrap_chk, "wrap_holes")
+        for key in ("bolt_holes", "drill_holes"):
+            if not isinstance(p.get(key, ""), str):          # a list (scripts, the CLI)
+                p = dict(p, **{key: ", ".join(str(k) for k in p[key])})
+        _set(self.bolt_edit, "bolt_holes")
+        _set(self.drill_edit, "drill_holes")
         _set(self.first_solid_chk, "first_layer_solid")
         if "first_layer_infill" in p:
             self.first_infill_cb.blockSignals(True)
