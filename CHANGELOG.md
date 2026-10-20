@@ -5,6 +5,26 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Internal (clean app folder)
+- The retired Streamlit front end (`legacy/streamlit/`) and its `streamlit-ui`
+  extra are removed; the PySide6 app is the only front end.
+- Removed unused files: the finished Phase 29–42 plan, two early design plots
+  (`docs/*_preview.png`). They remain in the git history.
+- `run.bat` creates `.venv` (Python 3.12) and installs `requirements.txt` on
+  first run (no more `numpy-stl`, which nothing used); `gui_app.py` finds
+  `src/` itself, so no editable install is needed. Qt 5 high-DPI attributes
+  dropped (Qt 6 always scales).
+- The exe build (`build_exe.py`, `cfrp_slicer.spec`) no longer bundles the
+  removed `presets.py` / `ui/` or the unused `scipy`; it uses `.venv`.
+- `requirements-dev.txt` lists `hypothesis` and `ruff`, which the tests and lint
+  need; `requirements.lock` regenerated without the Streamlit packages and
+  without the editable-install line that pointed at the old folder.
+- `.gitattributes`: the golden data is never converted to CRLF. A fresh clone
+  on Windows (`core.autocrlf=true`, also GitHub's Windows runners) failed all 21
+  byte-identical G-code checks on line endings alone.
+- Added `README.md`; next work is planned in `docs/UPGRADE_PLAN_43-49.md`.
+  Golden outputs unchanged.
+
 ### Added (Phase 42 — Auto infill, filled centres, radius-keeping zigzags, PCB layer stack)
 - **Auto (Best Fit)** infill pattern (`layers/auto.py`): on each layer it tries the
   three spirals filled solid and zigzags at the layup angle, across it, along the

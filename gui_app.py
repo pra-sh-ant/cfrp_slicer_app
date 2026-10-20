@@ -1,21 +1,20 @@
 """CFRP Slicer Pro -- PySide6 desktop application.
 
-Run with:
-    .venv312\\Scripts\\python.exe gui_app.py
+Run with run.bat, or:
+    .venv\\Scripts\\python.exe gui_app.py
 """
 import sys
+from pathlib import Path
 
-from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QApplication
+# cfrp_core lives in src/; no install needed to run from the source folder.
+sys.path.insert(0, str(Path(__file__).resolve().parent / "src"))
 
-from gui.main_window import MainWindow
+from PySide6.QtWidgets import QApplication  # noqa: E402
+
+from gui.main_window import MainWindow  # noqa: E402
 
 
 def main():
-    # High-DPI scaling
-    QApplication.setAttribute(Qt.AA_EnableHighDpiScaling, True)
-    QApplication.setAttribute(Qt.AA_UseHighDpiPixmaps, True)
-
     app = QApplication(sys.argv)
     app.setApplicationName("CFRP Slicer Pro")
     app.setOrganizationName("CFRP Lab")

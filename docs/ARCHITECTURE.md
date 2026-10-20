@@ -1,13 +1,13 @@
 # Architecture
 
-Status: **Phase 38** (layers package, per-layer plan with solid skins, typed
-trajectory check, property tests, audits in CI, Streamlit front end retired to
-`legacy/`; see docs/CHANGELOG.md for the history).
+Status: **Phase 42** (layers package, per-layer plan with solid skins, typed
+trajectory check, property tests, audits in CI; the PySide6 desktop app is the
+only front end; see CHANGELOG.md for the history).
 
 ## 1. Layout
 
 ```
-src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt imports)
+src/cfrp_core/            UI-free slicing library (no Qt or other UI imports)
   __init__.py             public API: ProcessConfig, slice_part, from_legacy_dict, ...
   config.py               pydantic v2 models: ProcessConfig + GeometryConfig,
                           MaterialConfig, KinematicsConfig, GcodeConfig;
@@ -42,8 +42,6 @@ src/cfrp_core/            UI-free slicing library (no streamlit/plotly/Qt import
   diw/                    DIW structural electronics: design (BoardDesign, footprints,
                           sensors), config (DiwConfig), slicer, validation (DRC), gcode
   board.py                slice_structural_board: fibre laminate + DIW on top
-legacy/streamlit/         retired Streamlit front end (own requirements + tests);
-                          not installed or tested by CI
 gui/                      PySide6 app: controls_panel (greyed settings), results_panel
                           (issues, dashboard, G-code), viewer_gl + toolpath_mesh +
                           range_slider (shaded tube viewer), pcb_editor (structural PCB)

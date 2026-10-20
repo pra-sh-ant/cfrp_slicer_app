@@ -1,7 +1,7 @@
 r"""Build script for the CFRP Slicer Pro standalone executable.
 
 Usage:
-    .venv312\Scripts\python.exe build_exe.py [--onefile]
+    .venv\Scripts\python.exe build_exe.py [--onefile]
 
 Flags:
     --onefile   Build a single .exe (slower launch but easier to share)
@@ -23,10 +23,10 @@ def main():
                     help="Produce a single self-extracting .exe")
     args = ap.parse_args()
 
-    pyinstaller = ROOT / ".venv312" / "Scripts" / "pyinstaller.exe"
+    pyinstaller = ROOT / ".venv" / "Scripts" / "pyinstaller.exe"
     if not pyinstaller.exists():
         sys.exit("PyInstaller not found. Run:\n"
-                 "  uv pip install pyinstaller --python .venv312/Scripts/python.exe")
+                 "  uv pip install pyinstaller --python .venv/Scripts/python.exe")
 
     cmd = [str(pyinstaller), "--clean"]
     if args.onefile:
@@ -37,8 +37,6 @@ def main():
             "--paths", str(ROOT / "src"),
             "--add-data", f"{ROOT / 'src' / 'cfrp_core'};cfrp_core",
             "--add-data", f"{ROOT / 'gui'};gui",
-            "--add-data", f"{ROOT / 'presets.py'};.",
-            "--add-data", f"{ROOT / 'ui'};ui",
             "--hidden-import", "PySide6.QtOpenGL",
             "--hidden-import", "PySide6.QtOpenGLWidgets",
             "--hidden-import", "pyqtgraph.opengl",
@@ -46,9 +44,6 @@ def main():
             "--hidden-import", "OpenGL.GL",
             "--hidden-import", "OpenGL.arrays.numpymodule",
             "--hidden-import", "shapely",
-            "--hidden-import", "scipy.spatial",
-            "--hidden-import", "scipy.interpolate",
-            "--exclude-module", "streamlit",
             "--exclude-module", "matplotlib",
             "--exclude-module", "pandas",
             str(ROOT / "gui_app.py"),

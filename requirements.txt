@@ -1,5 +1,4 @@
-# Core slicer + the Qt desktop app. The frozen Streamlit UI has its own
-# list in legacy/streamlit/requirements.txt.
+# Core slicer + the Qt desktop app.
 numpy==2.5.2
 shapely==2.1.2
 pydantic==2.13.5

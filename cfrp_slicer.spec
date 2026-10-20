@@ -2,7 +2,7 @@
 """PyInstaller spec for CFRP Slicer Pro desktop application.
 
 Build with:
-    .venv312\Scripts\pyinstaller.exe cfrp_slicer.spec
+    .venv\Scripts\pyinstaller.exe cfrp_slicer.spec
 
 Output: dist\CFRP_Slicer_Pro\CFRP_Slicer_Pro.exe  (one-folder bundle)
 """
@@ -16,13 +16,10 @@ a = Analysis(
     pathex=[str(ROOT / 'src')],
     binaries=[],
     datas=[
-        # cfrp_core package (installed as editable; include whole src tree)
+        # cfrp_core package with its data files (machine profiles)
         (str(ROOT / 'src' / 'cfrp_core'), 'cfrp_core'),
         # GUI package
         (str(ROOT / 'gui'), 'gui'),
-        # Presets / UI helpers used at runtime
-        (str(ROOT / 'presets.py'), '.'),
-        (str(ROOT / 'ui'), 'ui'),
     ],
     hiddenimports=[
         # PySide6 plugins that PyInstaller sometimes misses
@@ -38,17 +35,11 @@ a = Analysis(
         'shapely',
         'shapely.geometry',
         'numpy',
-        'scipy',
-        'scipy.spatial',
-        'scipy.interpolate',
     ],
     hookspath=[],
     hooksconfig={},
     runtime_hooks=[],
-    excludes=[
-        'streamlit', 'altair', 'tornado', 'click',
-        'matplotlib', 'pandas', 'IPython', 'notebook',
-    ],
+    excludes=['matplotlib', 'pandas', 'IPython', 'notebook'],
     noarchive=False,
 )
 

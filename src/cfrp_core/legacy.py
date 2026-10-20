@@ -1,5 +1,6 @@
-"""Bridge from the legacy flat `sys_config` dict (the Streamlit sidebar's
-output, and the golden test cases) to `ProcessConfig`.
+"""Bridge from the flat `sys_config` settings dict (what the GUI's settings
+panel sends, the saved parameter files and the golden test cases) to
+`ProcessConfig`.
 
 Keys missing from the dict take the model defaults; keys the core does not
 use (e.g. `constraint_notes`, `is_3d`, `layup_sequence`) are ignored.

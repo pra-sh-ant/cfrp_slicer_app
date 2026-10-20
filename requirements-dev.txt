@@ -1,2 +1,4 @@
 -r requirements.txt
 pytest==9.1.1
+hypothesis==6.140.0
+ruff==0.14.0

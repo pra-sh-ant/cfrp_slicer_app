@@ -15,7 +15,7 @@ The app generates toolpaths for a continuous-fibre printer. A carbon-fibre stran
 
 ## 2. End-to-end flow
 ```
-Sidebar inputs ─► sys_config ─► resolve_process_constraints (check + adjust)
+Settings panel ─► sys_config ─► resolve_process_constraints (check + adjust)
                                           │
               ┌───────────────────────────┼────────────────────────────┐
          flat laminate              revolve shell                 specialty
@@ -26,9 +26,9 @@ Sidebar inputs ─► sys_config ─► resolve_process_constraints (check + adj
                                           ▼
                  _finalize: fit to bed → G-code → validation
                                           ▼
-                 st.session_state.last_slice → dashboard / 3D viewer / G-code tab
+                 SliceResult → dashboard / 3D viewer / G-code tab
 ```
-Auto-slice is on by default, so every widget change re-slices. The last result is kept in `st.session_state.last_slice`.
+Auto-slice is on by default, so every setting change re-slices (in a worker thread).
 
 ## 3. Material and extrusion constant (sidebar)
 ```
@@ -108,7 +108,7 @@ Rotated by the layup angle about (w/2, h/2), then translated. The same extents f
 5. `raw = v/v_max`; `e = max(raw, pump_floor/v_max)`; `pump_floored = e > raw`.
 6. Pressure advance: each point uses the factor of the point `advance_dist` mm ahead.
 
-Results cached with `st.cache_data`.
+Results are cached (`lru_cache`).
 
 ## 7. Hollow (revolve) shells
 | Shape | r_outer(p) | Height |
@@ -153,7 +153,7 @@ Header; `G28 / G92 E0 / G90 / G0 Z15`; purge `G1 F{purge_f} E{purge_e}`, `G4 P15
 Fail > Warning > Pass.
 
 ## 14. UI
-Sidebar panels: run controls, layering, geometry, placement, materials, kinematics. Tabs: dashboard, 3D viewer (≤ 6,000 points, ≤ 150 outlines, full/single-layer/playback), G-code.
+PySide6 desktop app (`gui/`): settings panel with greyed-out settings, 3D viewer, dashboard, issue list, G-code tab, and the structural PCB editor. See `ARCHITECTURE.md` §1.
 
 ## 15. Modelling assumptions
 - Pump floor unmeasured (defaults to `v_min`).

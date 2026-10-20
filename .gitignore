@@ -13,4 +13,6 @@ dist/
 .venv*/
 
 # Generated
-graphify-out/
+prof.out
+*.prof
+validation_sweep.json

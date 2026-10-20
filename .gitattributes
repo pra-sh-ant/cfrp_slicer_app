@@ -1,0 +1,3 @@
+# Golden reference outputs are compared byte for byte: never convert their
+# line endings (a Windows checkout with core.autocrlf=true would add CRs).
+tests/golden/data/** -text

@@ -20,11 +20,6 @@ gui = [
     "pyqtgraph>=0.13",
     "PyOpenGL>=3.1",
 ]
-# Legacy Streamlit front end (frozen in legacy/streamlit/, not tested by CI).
-streamlit-ui = [
-    "streamlit==1.62.0",
-    "plotly==7.0.0",
-]
 dev = [
     "pytest==9.1.1",
     "hypothesis==6.140.0",
@@ -42,7 +37,7 @@ markers = [
 [tool.ruff]
 line-length = 120
 target-version = "py312"
-extend-exclude = [".venv*", "graphify-out"]
+extend-exclude = [".venv*", "build", "dist"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B", "UP"]
