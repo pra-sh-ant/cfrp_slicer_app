@@ -33,7 +33,9 @@ from .planning import (
     ZigzagShifts,
     _fill_track_count,
     _points_within,
+    layer_settings,
     plan_layers,
+    ranges_summary,
     skin_summary,
     stl_skins,
 )
@@ -235,7 +237,8 @@ _FALLBACK_NOTES = {
 def _recipe_note(config: ProcessConfig, tally) -> str:
     """'Layer recipe: 2 edge ring(s) along the outline on 12 slice(s), ...'."""
     edge = int(config.edge_rings)
-    parts = [f"Layer recipe: {edge} edge ring(s) along the outline on {tally['recipe']} slice(s), then the "
+    parts = [f"Layer recipe on {tally['recipe']} slice(s) (Edge Rings by height range)" if config.height_ranges else
+             f"Layer recipe: {edge} edge ring(s) along the outline on {tally['recipe']} slice(s), then the "
              f"{config.infill_type} core" if edge else
              f"Layer recipe (Wrap Holes) on {tally['recipe']} slice(s)"]
     if tally['edge only']:
@@ -348,7 +351,6 @@ def build_stl_laminate(config: ProcessConfig):
     target_shapes: list[tuple] = []
     max_z = float(config.z_offset_mm)
     last_pt = last_dir = None
-    layup_sequence = list(config.layup_deg) or [0.0]
     kin = KinematicsParams.from_config(config)
     seam_trim = max(0.0, float(config.seam_trim_mm))
     gap, r_min = config.track_gap_mm, config.min_radius_mm
@@ -374,6 +376,10 @@ def build_stl_laminate(config: ProcessConfig):
     prev_zone = None
     # Layer recipe (Phase 45): Edge Rings along each one-island slice's outline
     use_recipe = recipe_wanted(config)
+    # each slice's height above the first, fibre angle and Edge Rings
+    # (Height Ranges, Load Direction)
+    heights = [float(z) - float(config.z_offset_mm) for z, _r in slices]
+    settings = layer_settings(config, heights)
     tally = Counter()
     # Wrap Holes on STL parts: the bores through the slices take turns
     bores = _bores(printed, gap) if use_recipe and config.wrap_holes else {}
@@ -381,23 +387,27 @@ def build_stl_laminate(config: ProcessConfig):
 
     def recipe_slice(k):
         """Slice k (index) takes the recipe: one island, small holes, a
-        zigzag or Fermat layer."""
+        zigzag or Fermat layer, edge rings or wraps."""
         if not (0 <= k < len(printed)) or len(printed[k]) != 1 or not _bolt_holes_only(printed[k][0]):
+            return False
+        if not (settings[k][1] > 0 or config.wrap_holes):
             return False
         return first is not None and 0 <= k - first < len(plans) and plans[k - first].pattern in RECIPE_CORES
 
-    def layer_config(plan):
-        """config with this layer's pattern and fill (cached per pair)."""
-        key = (plan.pattern, plan.solid)
-        if key == (config.infill_type, bool(config.fill_solid)):
+    def layer_config(plan, edge=None):
+        """config with this layer's pattern, fill and Edge Rings (cached)."""
+        edge = int(config.edge_rings) if edge is None else int(edge)
+        key = (plan.pattern, plan.solid, edge)
+        if key == (config.infill_type, bool(config.fill_solid), int(config.edge_rings)):
             return config
         if key not in variants:
-            variants[key] = config.model_copy(update=dict(infill_type=plan.pattern, fill_solid=plan.solid))
+            variants[key] = config.model_copy(update=dict(infill_type=plan.pattern, fill_solid=plan.solid,
+                                                          edge_rings=edge))
         return variants[key]
 
     for i, (z_print, _region) in enumerate(slices):
         layer_z = z_print
-        current_angle = layup_sequence[i % len(layup_sequence)]
+        current_angle, layer_edge = settings[i]
         max_z = layer_z
 
         found = found_all[i]
@@ -414,7 +424,7 @@ def build_stl_laminate(config: ProcessConfig):
         # layer pattern / solid, its direction, the ring lead-in).
         if not trajectory:
             first = i
-            plans = plan_layers(config, len(slices) - i, skins[i:], offset=i)
+            plans = plan_layers(config, len(slices) - i, skins[i:], offset=i, heights=heights[i:])
         plan = plans[i - first]
         lead = plan.lead_in if len(islands) == 1 else 0.0
         recipe_start = False
@@ -461,18 +471,19 @@ def build_stl_laminate(config: ProcessConfig):
                 lead = 0.0
             else:
                 spacing, offset = shifts.next(plan.pattern, plan.index, current_angle)
-                if use_recipe and plan.pattern in RECIPE_CORES and len(islands) == 1 and _bolt_holes_only(islands[0]):
+                recipe_here = use_recipe and (layer_edge > 0 or config.wrap_holes) and plan.pattern in RECIPE_CORES
+                if recipe_here and len(islands) == 1 and _bolt_holes_only(islands[0]):
                     wrap = None
                     if bores:
                         ids = {h: bores[(i, h)] for h in range(1, len(islands[0].interiors) + 1) if (i, h) in bores}
                         above = {b for (k, _h), b in bores.items() if k == i + 1} if recipe_slice(i + 1) else set()
                         wrap = dict(ids=ids, eligible=sorted(b for b in ids.values() if b in above), state=wrap_state)
                     raw_path, recipe_start = _stl_recipe_layer(
-                        islands[0], layer_config(plan), current_angle, plan.index, i + 1, last_pt, last_dir,
-                        spacing, offset, strict, fallbacks, lead, tally, wrap)
+                        islands[0], layer_config(plan, layer_edge), current_angle, plan.index, i + 1, last_pt,
+                        last_dir, spacing, offset, strict, fallbacks, lead, tally, wrap)
                 else:
                     wrap_state['band'] = None
-                    if use_recipe and plan.pattern in RECIPE_CORES:
+                    if recipe_here:
                         tally['pieces' if len(islands) > 1 else 'ring'] += 1
                     raw_path = _stl_layer_path(islands, layer_config(plan), current_angle, plan.index, last_pt,
                                                last_dir, fallbacks, lead_in=lead, spacing=spacing, offset=offset,
@@ -538,6 +549,12 @@ def build_stl_laminate(config: ProcessConfig):
         if summary:
             info.append(summary)
     info.extend(dict.fromkeys(p.note for p in plans if p.note))
+    if config.height_ranges:
+        summary = ranges_summary(config, heights)
+        if summary:
+            info.append(summary)
+    if config.load_angle_deg:
+        info.append(f"Load Direction {config.load_angle_deg:g}°: the layup is measured from it.")
     if tally:
         info.append(_recipe_note(config, tally))
     if use_recipe and config.wrap_holes:

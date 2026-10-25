@@ -267,6 +267,29 @@ class GcodeConfig(_Frozen):
 
 # --- Whole process -----------------------------------------------------------
 
+class HeightRange(_Frozen):
+    """One height band of a flat or STL part, `from_mm` <= height < `to_mm`
+    above its first layer, with its own pattern, layup (measured like the
+    part's), Edge Rings and Fill Solid; None / () = the part's own."""
+
+    from_mm: float
+    to_mm: float
+    infill_type: InfillPattern | None = None
+    layup_deg: tuple[float, ...] = ()
+    edge_rings: int | None = None
+    fill_solid: bool | None = None
+
+    @model_validator(mode="after")
+    def _span(self):
+        if not (math.isfinite(self.from_mm) and math.isfinite(self.to_mm) and 0 <= self.from_mm < self.to_mm):
+            raise ValueError(f"Height range {self.from_mm:g}-{self.to_mm:g} mm: it must run upwards from 0 or more.")
+        if self.edge_rings is not None and not 0 <= self.edge_rings <= 5:
+            raise ValueError("Height range Edge Rings must be between 0 and 5.")
+        for angle in self.layup_deg:
+            _require_finite(angle, "Height range layup angle")
+        return self
+
+
 class ProcessConfig(_Frozen):
     """Everything one slice needs, apart from the machine profile."""
 
@@ -347,6 +370,21 @@ class ProcessConfig(_Frozen):
     uv_dose_mj_cm2: float = 0.0
     uv_irradiance_mw_cm2: float = 0.0
     uv_spot_mm: float = 0.0
+    # By loads (Phase 45): the direction the part is loaded in, as an XY
+    # angle. The layup (and every height range's) is measured from it, so a
+    # 0 degree layer carries the load. 0 = along X, as before.
+    load_angle_deg: float = 0.0
+    # Height ranges: from one height to another, a different pattern, layup,
+    # Edge Rings or Fill Solid (a stiff flange at the bottom, say). The first
+    # range that holds a layer's height applies.
+    height_ranges: tuple[HeightRange, ...] = ()
+
+    def height_range(self, height: float):
+        """The height range that holds `height` (mm above the first layer), or None."""
+        for r in self.height_ranges:
+            if r.from_mm - 1e-9 <= height < r.to_mm - 1e-9:
+                return r
+        return None
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")
@@ -411,6 +449,11 @@ class ProcessConfig(_Frozen):
         if not 0 <= v <= 5:
             raise ValueError("Edge Rings and Hole Rings must be between 0 and 5.")
         return v
+
+    @field_validator("load_angle_deg")
+    @classmethod
+    def _load_angle(cls, v: float) -> float:
+        return _require_finite(v, "Load Direction")
 
     @field_validator("seam_stagger_deg")
     @classmethod

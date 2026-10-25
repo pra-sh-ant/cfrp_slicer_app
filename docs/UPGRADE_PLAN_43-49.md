@@ -27,7 +27,7 @@ Request (2026-10-20), in short:
 |---|---|---|
 | 43 | Bend radius everywhere | done (see CHANGELOG) |
 | 44 | Mixed patterns in one layer, wrapped holes, cavity check | done: cavity check (corner gaps named), Fill Pockets, layer recipe (edge rings, hole wraps, bolt and drill-after holes; opt-in), property test, every bolt hole wrapped (zigzag cores), Auto weighing the recipe, holes marked on the canvas. Not done: lines into leftover slivers (see Phase 44 below, restated) |
-| 45 | STL: mixed patterns per slice | in progress: the layer recipe on one-island STL slices (edge rings, core; narrow walls get rings), bores wrapped in turn, UV dose speed cap done (see CHANGELOG); open: height ranges and load direction, overhangs, material limits, property test |
+| 45 | STL: mixed patterns per slice | in progress: the layer recipe on one-island STL slices (edge rings, core; narrow walls get rings), bores wrapped in turn, UV dose speed cap, height ranges and load direction done (see CHANGELOG); open: overhangs, material limits, property test |
 | 46 | Three workspaces | planned |
 | 47 | A tool and a cure per material, coordinated | planned |
 | 48 | Accuracy and reliability | planned |

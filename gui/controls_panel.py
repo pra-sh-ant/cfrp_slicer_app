@@ -458,6 +458,12 @@ class ControlsPanel(QWidget):
         self.layup_edit = QLineEdit("0")
         self.layup_edit.setPlaceholderText("e.g. 0, 90, 45, -45")
         self._add(sec, "layup_seq", "Layup Angles (°)", self.layup_edit)
+        self.load_angle_spin = self._add(sec, "load_angle", "Load Direction", _spin(-180, 180, 15, 0.0, 1, "°"))
+        self.ranges_edit = QLineEdit("")
+        self.ranges_edit.setPlaceholderText("e.g. 0-1: solid, edge 2; 1-20: serpentine, layup 45/-45")
+        self._add(sec, "height_ranges", "Height Ranges", self.ranges_edit)
+        self.load_angle_spin.valueChanged.connect(self._emit)
+        self.ranges_edit.textChanged.connect(self._emit)
 
         for w in (self.layers_spin, self.tracks_spin):
             w.valueChanged.connect(self._emit)
@@ -756,6 +762,8 @@ class ControlsPanel(QWidget):
             "z_offset": self.z_off_spin.value(),
             "layers": self.layers_spin.value(),
             "layup_seq": self.layup_edit.text(),
+            "load_angle": self.load_angle_spin.value(),
+            "height_ranges": self.ranges_edit.text(),
             "infill_type": infill,
             "tracks_per_layer": self.tracks_spin.value(),
             "fill_solid": self.fill_chk.isChecked(),
@@ -920,6 +928,8 @@ class ControlsPanel(QWidget):
             _set(w, key)
         _set(self.infill_cb, "infill_type")
         _set(self.layup_edit, "layup_seq")
+        _set(self.load_angle_spin, "load_angle")
+        _set(self.ranges_edit, "height_ranges")
 
         _set(self.needle_spin, "needle_dia")
         _set(self.lh_spin, "layer_height")

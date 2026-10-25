@@ -22,7 +22,15 @@ from .common import (
     plan_layer,
 )
 from .islands import flag_bridges, multi_island_layer
-from .planning import _SPIRAL_INFILLS, ZigzagShifts, _fill_track_count, _points_within, plan_layers
+from .planning import (
+    _SPIRAL_INFILLS,
+    ZigzagShifts,
+    _fill_track_count,
+    _points_within,
+    layer_settings,
+    plan_layers,
+    ranges_summary,
+)
 from .recipe import RECIPE_CORES, Recipe, hole_notes, recipe_wanted
 
 
@@ -57,7 +65,6 @@ def build_flat_laminate(config: ProcessConfig):
     target_shapes = []
     max_z = config.z_offset_mm
     last_pt = last_dir = None
-    layup_sequence = list(config.layup_deg) or [0.0]
     kin = KinematicsParams.from_config(config)
     seam_trim = max(0.0, float(config.seam_trim_mm))
     gap, r_min = config.track_gap_mm, config.min_radius_mm
@@ -88,7 +95,10 @@ def build_flat_laminate(config: ProcessConfig):
     climb_zone = printable.buffer(gap / 2.0 + 0.2) if strict.on else None
     # Fill Pockets: where every layer so far left the part empty
     empty = base_poly if config.fill_pockets else None
-    plans = plan_layers(config, config.layers)
+    heights = [i * layer_height for i in range(config.layers)]
+    plans = plan_layers(config, config.layers, heights=heights)
+    # each layer's fibre angle and Edge Rings (Height Ranges, Load Direction)
+    settings = layer_settings(config, heights)
     one_piece = not multi and base_poly.geom_type == 'Polygon'
     # Layer recipe: edge rings, a zigzag / Fermat core, hole wraps (one piece)
     recipe = (Recipe(config, base_poly) if recipe_wanted(config) and one_piece
@@ -97,11 +107,13 @@ def build_flat_laminate(config: ProcessConfig):
     # along the outline round a zigzag or Fermat core (never a wrap: that
     # takes the recipe on two layers in a row, and Auto judges each alone)
     auto_recipe = (Recipe(config.model_copy(update=dict(wrap_holes=False)), base_poly)
-                   if int(config.edge_rings) > 0 and one_piece and any(p.pattern == AUTO for p in plans) else None)
+                   if one_piece and any(p.pattern == AUTO and e > 0 for p, (_a, e) in zip(plans, settings, strict=True))
+                   else None)
+    used = set()                                   # layers laid as recipe layers
 
     for i, plan in enumerate(plans):
         layer_z = config.z_offset_mm + (i * layer_height)
-        current_angle = layup_sequence[i % len(layup_sequence)]
+        current_angle, layer_edge = settings[i]
         max_z = layer_z
 
         keep = 1 if last_pt is not None else 0
@@ -110,7 +122,7 @@ def build_flat_laminate(config: ProcessConfig):
             return strict.repair(path, fill_region, keep_head=keep)
 
         def generate(pattern, angle, solid, peek=False, raw=False, plan=plan, last_pt=last_pt,
-                     last_dir=last_dir, num=i + 1, edge=0):
+                     last_dir=last_dir, num=i + 1, edge=0, layer_edge=layer_edge):
             """The layer's path for this pattern (repaired for Strict Bend
             Radius unless `raw`); `edge`: in that many edge rings (Auto
             weighing the layer recipe)."""
@@ -137,9 +149,14 @@ def build_flat_laminate(config: ProcessConfig):
                     last_dir=heading, line_spacing=spacing, line_offset=offset, strict=strict.on,
                     exit_to=exit_to)
             if edge and auto_recipe is not None and pattern in RECIPE_CORES:
+                auto_recipe.edge = max(edge, 1) if g.include_boundary else edge
                 return auto_recipe.layer(num, plan.index, False, last_pt, last_dir, core, plain,
                                          repair=None if raw else repair, record=False)
-            if recipe is not None and recipe.active and pattern in RECIPE_CORES and plan.pattern != AUTO:
+            if (recipe is not None and (layer_edge > 0 or recipe.wrap) and pattern in RECIPE_CORES
+                    and plan.pattern != AUTO):
+                recipe.edge = max(layer_edge, 1) if g.include_boundary else layer_edge
+                if not peek:
+                    used.add(num)
                 # wrap only when the next layer is a recipe layer too (it unwraps)
                 wrap_ok = num < len(plans) and plans[num].pattern in RECIPE_CORES
                 # each candidate judged as repaired (a join laid along an
@@ -167,7 +184,7 @@ def build_flat_laminate(config: ProcessConfig):
                         raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0, edge=edge)
                         chosen.append((i + 1, reused))
                 if reused is None:
-                    edges = (int(config.edge_rings),) if auto_recipe is not None else ()
+                    edges = (layer_edge,) if auto_recipe is not None and layer_edge > 0 else ()
                     choice, raw_path = auto.choose(
                         lambda p, a, e: generate(p, a, True, peek=True, raw=strict.on, edge=e),
                         auto.candidates_for(fill_poly, current_angle, edges),
@@ -188,8 +205,8 @@ def build_flat_laminate(config: ProcessConfig):
         anchor_n = 0
         # A recipe layer starts on its edge ring: the ring's own first mm are
         # the anchor (a straight stub back from there lay across the ring's end).
-        recipe_first = ((recipe is not None and recipe.active and plan.pattern in RECIPE_CORES
-                         and 1 not in recipe.plain_layers) or (chosen and chosen[-1][0] == 1 and chosen[-1][1].edge))
+        recipe_first = ((1 in used and 1 not in recipe.plain_layers)
+                        or (chosen and chosen[-1][0] == 1 and chosen[-1][1].edge))
         if i == 0 and (plan.lead_in or recipe_first) and not multi:
             anchor_n = _points_within(raw_path, float(config.anchor_length_mm))
         elif i == 0:
@@ -215,8 +232,14 @@ def build_flat_laminate(config: ProcessConfig):
             last_dir = _end_direction(layer_trajectory)
 
     info = [auto.summary(chosen)] if chosen else []
+    if config.height_ranges:
+        summary = ranges_summary(config, heights)
+        if summary:
+            info.append(summary)
+    if config.load_angle_deg:
+        info.append(f"Load Direction {config.load_angle_deg:g}°: the layup is measured from it.")
     if recipe is not None:
-        info.extend(recipe.note(config))
+        info.extend(recipe.note(config, ranged=bool(config.height_ranges)))
     elif recipe_wanted(config) and not one_piece:
         info.append("Layer recipe (Edge Rings, Wrap Holes): not used on a part in several pieces.")
     if auto_recipe is not None and config.wrap_holes:

@@ -5,6 +5,21 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 45, fourth part: by loads)
+- **Load Direction** (Pattern & Layers, `load_angle_deg`, 0 by default): the
+  direction the part is loaded in. The layup, and every height range's, is
+  measured from it, so a 0° layer runs along the load. Flat and STL parts.
+- **Height Ranges** (`height_ranges`; text, e.g. "0-1: solid, edge 2; 1-20:
+  serpentine, layup 45/-45"): from one height to another (mm above the first
+  layer) a different pattern, layup, Edge Rings or Fill Solid, for a stiff
+  flange at the bottom, say. The first range that holds a layer applies; the
+  range's pattern replaces the main one before the spiral directions are
+  planned, its layup counts from its own first layer. A bad entry is named
+  ("Height Ranges: '0-a: solid': start with the heights ..."). A note lists the
+  layers each range holds. Flat parts and STL slices (on STL slices a range's
+  Edge Rings turn the recipe on or off per slice).
+- Greyed out for Z shells and the Mushroom.
+
 ### Added (Phase 45, third part: curing in the path)
 - **Cure Dose, LED Irradiance, LED Spot Length** (Speed & Flow; `uv_dose_mj_cm2`,
   `uv_irradiance_mw_cm2`, `uv_spot_mm`; off by default): the resin cures under

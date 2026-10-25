@@ -82,6 +82,8 @@ _FIELD_MAP = {
     "uv_dose": (None, "uv_dose_mj_cm2"),
     "uv_irradiance": (None, "uv_irradiance_mw_cm2"),
     "uv_spot": (None, "uv_spot_mm"),
+    "load_angle": (None, "load_angle_deg"),
+    "height_ranges": (None, "height_ranges"),
     "edge_rings": (None, "edge_rings"),
     "hole_rings": (None, "hole_rings"),
     "wrap_holes": (None, "wrap_holes"),
@@ -111,6 +113,60 @@ def parse_layup(text: str) -> tuple[float, ...]:
     except ValueError:
         return (0.0,)
     return angles or (0.0,)
+
+
+_PATTERN_WORDS = {
+    "archimedean": "Archimedean (Concentric Spiral)", "spiral": "Archimedean (Concentric Spiral)",
+    "fermat": "Fermat Spiral (Connected Double Spiral)", "serpentine": "Oriented Serpentine",
+    "zigzag": "Oriented Serpentine", "hatch": "45° Diagonal Hatch", "corner": "Corner-Step Spiral",
+    "corner-step": "Corner-Step Spiral", "auto": "Auto (Best Fit)",
+}
+
+
+def parse_height_ranges(text) -> tuple[dict, ...]:
+    """'0-1.5: solid, edge 2; 1.5-20: serpentine, layup 45/-45' -> the height
+    ranges as dicts (a list of dicts or models passes through). Each entry:
+    from-to (mm above the first layer), then any of a pattern (archimedean,
+    fermat, serpentine / zigzag, hatch, corner, auto), 'layup a/b/...',
+    'edge N', 'solid' or 'sparse'. Raises ValueError naming the bad entry."""
+    if not isinstance(text, str):
+        return tuple(r if isinstance(r, dict) else r.model_dump() for r in (text or ()))
+    out = []
+    for entry in text.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        span, _, rest = entry.partition(":")
+        lo, sep, hi = span.strip().partition("-")
+        try:
+            item = {"from_mm": float(lo), "to_mm": float(hi)}
+        except ValueError:
+            raise ValueError(f"{entry!r}: start with the heights, from-to in mm, e.g. 0-1.5: solid") from None
+        for word in rest.split(","):
+            w = " ".join(word.lower().split())
+            if not w:
+                continue
+            if w in _PATTERN_WORDS:
+                item["infill_type"] = _PATTERN_WORDS[w]
+            elif w.startswith("layup"):
+                try:
+                    item["layup_deg"] = tuple(float(a) for a in w[5:].replace("/", " ").split())
+                except ValueError:
+                    raise ValueError(f"{entry!r}: write the layup as angles with slashes, e.g. layup 45/-45") from None
+            elif w.startswith("edge"):
+                try:
+                    item["edge_rings"] = int(w[4:].strip())
+                except ValueError:
+                    raise ValueError(f"{entry!r}: write the edge rings as a number, e.g. edge 2") from None
+            elif w == "solid":
+                item["fill_solid"] = True
+            elif w == "sparse":
+                item["fill_solid"] = False
+            else:
+                raise ValueError(f"{entry!r}: {word.strip()!r} is not a pattern, 'layup a/b', 'edge N', 'solid' "
+                                 f"or 'sparse'")
+        out.append(item)
+    return tuple(out)
 
 
 def parse_pa_table(text) -> tuple[tuple[float, float], ...]:
@@ -159,6 +215,11 @@ def to_nested(d: dict, layup=None) -> dict:
             value = parse_pa_table(value)
         if field == "hole_ring_counts":
             value = parse_hole_list(value)
+        if field == "height_ranges":
+            try:
+                value = parse_height_ranges(value)
+            except ValueError as exc:      # named by the GUI label, so the field is marked
+                raise ValueError(f"Height Ranges: {exc}") from None
         if field in ("bolt_holes", "drill_holes"):
             try:
                 value = parse_hole_list(value)

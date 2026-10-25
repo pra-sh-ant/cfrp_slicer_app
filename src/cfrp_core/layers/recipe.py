@@ -17,8 +17,10 @@ RECIPE_CORES = (ORIENTED_SERPENTINE, DIAGONAL_45, FERMAT)    # start and end on 
 
 
 def recipe_wanted(config: ProcessConfig) -> bool:
-    """True when the config asks for edge rings or hole wraps."""
-    return int(config.edge_rings) > 0 or bool(config.wrap_holes)
+    """True when the config asks for edge rings (the part's or a height
+    range's) or hole wraps."""
+    return (int(config.edge_rings) > 0 or bool(config.wrap_holes)
+            or any(r.edge_rings for r in config.height_ranges))
 
 
 def hole_notes(config: ProcessConfig) -> list[str]:
@@ -172,9 +174,11 @@ class Recipe:
             self.band = None
         return laid
 
-    def note(self, config: ProcessConfig) -> list[str]:
+    def note(self, config: ProcessConfig, ranged=False) -> list[str]:
+        """The recipe's notes; `ranged` (Height Ranges set their own Edge
+        Rings): not the edge-ring count, which the ranges note gives."""
         out = []
-        if self.edge:
+        if self.edge and not ranged:
             out.append(f"Layer recipe: {self.edge} edge ring(s) round the outline, then the "
                        f"{config.infill_type} core.")
         if config.wrap_holes and not self.holes:

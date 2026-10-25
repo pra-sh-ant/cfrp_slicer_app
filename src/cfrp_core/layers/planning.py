@@ -30,7 +30,50 @@ class LayerPlan:
     note: str = ""
 
 
-def plan_layers(config: ProcessConfig, n: int, skins=None, offset: int = 0) -> list[LayerPlan]:
+def layer_settings(config: ProcessConfig, heights, offset: int = 0) -> list[tuple[float, int]]:
+    """(fibre angle, Edge Rings) of each layer at `heights` (mm above the
+    first layer; layer k of the part is offset + k): the height range's
+    layup (counted from the range's first layer) or the part's, both
+    measured from the Load Direction, and the range's Edge Rings or the
+    part's."""
+    out, counts = [], {}
+    layup = list(config.layup_deg) or [0.0]
+    for k, h in enumerate(heights):
+        r = config.height_range(h)
+        if r is not None and r.layup_deg:
+            n = counts.get(id(r), 0)
+            counts[id(r)] = n + 1
+            angle = r.layup_deg[n % len(r.layup_deg)]
+        else:
+            angle = layup[(offset + k) % len(layup)]
+        edge = r.edge_rings if r is not None and r.edge_rings is not None else int(config.edge_rings)
+        out.append((float(angle) + float(config.load_angle_deg), int(edge)))
+    return out
+
+
+def ranges_summary(config: ProcessConfig, heights, offset: int = 0) -> str:
+    """'Height ranges: layers 1-5 (0-1 mm): solid, 2 edge ring(s); ...' for
+    the ranges that hold any layer, or ''."""
+    parts = []
+    for r in config.height_ranges:
+        layers = [offset + k + 1 for k, h in enumerate(heights) if config.height_range(h) is r]
+        if not layers:
+            continue
+        what = []
+        if r.infill_type:
+            what.append(r.infill_type)
+        if r.layup_deg:
+            what.append("layup " + "/".join(f"{a:g}" for a in r.layup_deg))
+        if r.edge_rings is not None:
+            what.append(f"{r.edge_rings} edge ring(s)")
+        if r.fill_solid is not None:
+            what.append("solid" if r.fill_solid else "sparse")
+        span = f"{layers[0]}" if len(layers) == 1 else f"{layers[0]}-{layers[-1]}"
+        parts.append(f"layers {span} ({r.from_mm:g}-{r.to_mm:g} mm): {', '.join(what) or 'as the part'}")
+    return ("Height ranges: " + "; ".join(parts) + ".") if parts else ""
+
+
+def plan_layers(config: ProcessConfig, n: int, skins=None, offset: int = 0, heights=None) -> list[LayerPlan]:
     """Pattern, fill and direction of each of `n` layers (numbered from
     offset + 1 in notes).
 
@@ -48,7 +91,10 @@ def plan_layers(config: ProcessConfig, n: int, skins=None, offset: int = 0) -> l
     climb ran in to the centre and every ring of that layer crossed it).
     Within a run directions alternate. A run of an odd number of spiral
     layers with zigzags on both sides cannot do both; its last layer becomes
-    a Fermat spiral, which enters and leaves on the perimeter."""
+    a Fermat spiral, which enters and leaves on the perimeter.
+
+    `heights` (mm above the first layer, per layer): Height Ranges set the
+    main pattern and Fill Solid of the layers they hold."""
     if n <= 0:
         return []
     bottom, top = max(int(config.solid_bottom_layers), 0), max(int(config.solid_top_layers), 0)
@@ -56,8 +102,11 @@ def plan_layers(config: ProcessConfig, n: int, skins=None, offset: int = 0) -> l
     if config.first_layer_solid:
         skins[0] = True
     skin_pattern = config.first_layer_infill or config.infill_type
-    patterns = [skin_pattern if (skins[i] or i == 0) else config.infill_type for i in range(n)]
-    solid = [bool(config.fill_solid or skins[i]) for i in range(n)]
+    ranges = [config.height_range(h) for h in heights] if heights is not None else [None] * n
+    main = [r.infill_type if r is not None and r.infill_type else config.infill_type for r in ranges]
+    fill = [r.fill_solid if r is not None and r.fill_solid is not None else config.fill_solid for r in ranges]
+    patterns = [skin_pattern if (skins[i] or i == 0) else main[i] for i in range(n)]
+    solid = [bool(fill[i] or skins[i]) for i in range(n)]
     index = list(range(n))
     notes = [""] * n
     # Spirals that end in the centre (or start there). Fermat enters and

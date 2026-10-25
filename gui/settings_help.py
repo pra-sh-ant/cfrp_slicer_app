@@ -100,6 +100,15 @@ HELP = {
                                 "(0 = don't check). Tight bends can't reach the very corners, so "
                                 "100 % is rarely possible.",
     "layers": "How many flat layers are stacked. Thickness = layers x layer height.",
+    "load_angle": "The direction the part is loaded in, as an angle in the bed's XY plane. The layup "
+                  "(and every height range's) is measured from it, so a 0 degree layer runs along the "
+                  "load. 0 = along X.",
+    "height_ranges": "From one height to another (mm above the first layer), other settings: entries "
+                     "separated by ';', each 'from-to:' then any of a pattern (archimedean, fermat, "
+                     "serpentine, hatch, corner, auto), 'layup a/b/...', 'edge N' (Edge Rings) and "
+                     "'solid' or 'sparse'. E.g. '0-1: solid, edge 2; 1-20: serpentine, layup 45/-45' "
+                     "for a stiff flange at the bottom. The first range that holds a layer applies; "
+                     "layers outside every range keep the part's settings.",
     "layup_seq": "The direction of the fibre in each layer, in degrees, repeating: e.g. 0, 90 "
                  "crosses the layers for strength both ways; 0, 45, 90, -45 is strong in every "
                  "direction. Only zigzag patterns have a direction.",
