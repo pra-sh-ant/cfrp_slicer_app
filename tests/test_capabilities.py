@@ -76,6 +76,7 @@ PERTURB = {
     "drill_holes": lambda p: "1",
     "height_ranges": lambda p: "0-1: fermat, solid, layup 45/-45",
     "load_angle": lambda p: 30.0,
+    "overhang_span": lambda p: 3.0,
     "uv_irradiance": lambda p: 600.0,
     "uv_spot": lambda p: 3.0,
     "stl_closing_radius": lambda p: 0.3,

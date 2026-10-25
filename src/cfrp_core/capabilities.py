@@ -309,8 +309,11 @@ def field_states(p: dict) -> dict[str, OptionState]:
     dose = _num(p, "uv_dose", 0.0) > 0
     for key in ("uv_irradiance", "uv_spot"):
         s[key] = ON if dose else _off("Only with a Cure Dose: the speed cap needs all three.")
-    for key in ("v_z", "v_overhang", "dwell"):
+    for key in ("v_z", "dwell"):
         s[key] = ON if family == "mushroom" else mushroom_only
+    s["v_overhang"] = (ON if family in ("mushroom", "stl")
+                       else _off("Only for the Mushroom and STL parts (fibre over a slice's overhang)."))
+    s["overhang_span"] = ON if family == "stl" else _off("Only for STL parts: their slices can overhang.")
     return s
 
 

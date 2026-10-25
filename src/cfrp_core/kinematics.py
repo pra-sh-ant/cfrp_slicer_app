@@ -98,7 +98,7 @@ def _advance_indices(distances: np.ndarray, advance_dist) -> np.ndarray:
 
 @lru_cache(maxsize=512)
 def _plan(path_bytes: bytes, n: int, v_max, v_min, accel, decel, advance_dist, min_rad, pump_floor,
-          advance_table=()):
+          advance_table=(), cap_bytes=None):
     path = np.frombuffer(path_bytes, dtype=np.float64).reshape(n, 2)
 
     distances = np.append(np.linalg.norm(np.diff(path, axis=0), axis=1), 0.0)
@@ -126,6 +126,11 @@ def _plan(path_bytes: bytes, n: int, v_max, v_min, accel, decel, advance_dist, m
         inner = target_v[1:-1]
         inner[ok] = np.minimum(inner[ok], v_min + (v_max - v_min) * np.maximum(0.0, momentum))
 
+    if cap_bytes is not None:
+        # per-point limits (fibre over an overhang): the accel/decel passes
+        # below then ramp into and out of them
+        target_v = np.minimum(target_v, np.frombuffer(cap_bytes, dtype=np.float64))
+
     final_v = _limit_accel(target_v, distances, accel, decel)
 
     # v_min governs geometric corner slowing only; pump_floor is the
@@ -152,12 +157,13 @@ def _plan(path_bytes: bytes, n: int, v_max, v_min, accel, decel, advance_dist, m
 
 
 def calculate_trajectory(path, v_max, v_min, accel, decel, advance_dist,
-                         z_height=0.0, min_rad=3.0, pump_floor=None, advance_table=()) -> list[dict]:
+                         z_height=0.0, min_rad=3.0, pump_floor=None, advance_table=(), v_cap=None) -> list[dict]:
     """Plan speed (mm/s) and extrusion factor along an already fiber-safe 2D
     path. Corner rounding is the geometry generators' job; this only limits
     speed through whatever corners remain. `advance_table` ((speed, advance
-    mm), ...) replaces the fixed advance_dist when given. Returns one dict
-    per point."""
+    mm), ...) replaces the fixed advance_dist when given. `v_cap` (one per
+    point, or None): a speed no point may exceed, reached and left at the
+    accel / decel limits. Returns one dict per point."""
     if len(path) < 3:
         return []
     arr = np.ascontiguousarray(np.asarray(path, dtype=np.float64).reshape(-1, 2))
@@ -166,6 +172,7 @@ def calculate_trajectory(path, v_max, v_min, accel, decel, advance_dist,
         arr.tobytes(), n, float(v_max), float(v_min), float(accel), float(decel),
         float(advance_dist), float(min_rad), None if pump_floor is None else float(pump_floor),
         tuple((float(v), float(a)) for v, a in advance_table),
+        None if v_cap is None else np.ascontiguousarray(np.asarray(v_cap, dtype=np.float64).reshape(n)).tobytes(),
     )
     xs, ys = arr[:, 0].tolist(), arr[:, 1].tolist()
     ds, vs, es, fs = distances.tolist(), final_v.tolist(), shifted.tolist(), floored.tolist()

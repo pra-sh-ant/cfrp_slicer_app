@@ -393,6 +393,7 @@ class ControlsPanel(QWidget):
         self.stl_islands_chk = self._add(sec, "stl_islands", "", QCheckBox("Print All Islands (fibre-bridged)"))
         self.stl_close_spin = self._add(sec, "stl_closing_radius", "Close Cracks", _spin(0, 2, 0.01, 0.049, 3, "mm"))
         self.stl_stitch_spin = self._add(sec, "stl_stitch", "Stitch Holes", _spin(0, 50, 0.5, 5.0, 1, "mm"))
+        self.span_spin = self._add(sec, "overhang_span", "Max Unsupported Span", _spin(1, 500, 1, 15.0, 1, "mm"))
 
         # Revolve / specialty fields
         self.base_r_spin = self._add(sec, "base_radius", "Outer Radius", _spin(1, 200, 1, 20.0, 1, "mm"))
@@ -402,7 +403,7 @@ class ControlsPanel(QWidget):
 
         for w in (self.w_spin, self.h_spin, self.base_r_spin, self.stem_h_spin,
                   self.disc_r_spin, self.stem_top_spin, self.stl_scale_spin, self.stl_close_spin,
-                  self.stl_stitch_spin):
+                  self.stl_stitch_spin, self.span_spin):
             w.valueChanged.connect(self._emit)
         self.boundary_chk.toggled.connect(self._emit)
         self.stl_islands_chk.toggled.connect(self._emit)
@@ -737,7 +738,8 @@ class ControlsPanel(QWidget):
             trans_angle = self.trans_angle_spin.value()
             seam_trim = self.seam_trim_spin.value()
             anchor = self.anchor_spin.value()
-            vz = v_overhang = dwell = 0.0
+            vz = dwell = 0.0
+            v_overhang = self.v_overhang_spin.value() if shape == "STL Import" else 0.0     # its overhangs
 
         infill = (self.infill_cb.currentText()
                   if not is_flat_specialty else "N/A")
@@ -788,6 +790,7 @@ class ControlsPanel(QWidget):
                                  else self.skin_top_spin.value()),
             "stl_closing_radius": self.stl_close_spin.value(),
             "stl_stitch": self.stl_stitch_spin.value(),
+            "overhang_span": self.span_spin.value(),
             "layer_height": self.lh_spin.value(),
             "needle_dia": self.needle_spin.value(),
             "e_mult": self.emult_spin.value(),
@@ -923,6 +926,7 @@ class ControlsPanel(QWidget):
         _set(self.skin_top_spin, "solid_top_layers", int)
         _set(self.stl_close_spin, "stl_closing_radius")
         _set(self.stl_stitch_spin, "stl_stitch")
+        _set(self.span_spin, "overhang_span")
         for key, w in (("bed_x", self.bed_x_spin), ("bed_y", self.bed_y_spin), ("z_max", self.z_max_spin),
                        ("bed_margin", self.margin_spin)):
             _set(w, key)

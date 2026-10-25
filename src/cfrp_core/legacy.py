@@ -83,6 +83,7 @@ _FIELD_MAP = {
     "uv_irradiance": (None, "uv_irradiance_mw_cm2"),
     "uv_spot": (None, "uv_spot_mm"),
     "load_angle": (None, "load_angle_deg"),
+    "overhang_span": (None, "overhang_span_mm"),
     "height_ranges": (None, "height_ranges"),
     "edge_rings": (None, "edge_rings"),
     "hole_rings": (None, "hole_rings"),

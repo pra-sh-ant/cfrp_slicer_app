@@ -119,6 +119,52 @@ def _bolt_holes_only(island, share=0.1):
     return all(Polygon(r).area <= share * shell for r in island.interiors)
 
 
+def _overhangs(slices, gap):
+    """Per slice: the part of it with nothing under it -- more than a gap
+    out from the slice below (a tow there still rests on the one below);
+    spots under a gap squared left out. None where there is none (the first
+    slice lies on the bed)."""
+    out = [None]
+    for (_z0, below), (_z1, here) in zip(slices, slices[1:], strict=False):
+        if here is None or here.is_empty:
+            out.append(None)
+            continue
+        free = here.difference(below.buffer(gap)) if below is not None and not below.is_empty else here
+        parts = [g for g in getattr(free, 'geoms', [free]) if g.geom_type == 'Polygon' and g.area > gap * gap]
+        out.append(shapely.union_all(parts) if parts else None)
+    return out
+
+
+def _across(over):
+    """The zigzag angle whose lines cross the overhang the short way (its
+    largest piece's minimum rectangle's short side): the shortest spans."""
+    piece = max(getattr(over, 'geoms', [over]), key=lambda g: g.area)
+    rect = piece.minimum_rotated_rectangle
+    c = list(rect.exterior.coords)
+    if len(c) < 4:
+        return None
+    e1, e2 = (c[0], c[1]), (c[1], c[2])
+    a, b = e1 if math.dist(*e1) <= math.dist(*e2) else e2
+    return math.degrees(math.atan2(b[1] - a[1], b[0] - a[0]))
+
+
+def _unsupported_runs(points, over):
+    """Lengths (mm) of the runs of the path that lie over the overhang."""
+    xy = np.asarray(points, dtype=np.float64)
+    inside = shapely.contains_xy(over, xy[:, 0], xy[:, 1])
+    seg = np.hypot(*np.diff(xy, axis=0).T)
+    runs, run = [], 0.0
+    for k in range(1, len(xy)):
+        if inside[k] and inside[k - 1]:
+            run += seg[k - 1]
+        elif run:
+            runs.append(run)
+            run = 0.0
+    if run:
+        runs.append(run)
+    return runs
+
+
 def _bores(printed, gap):
     """{(slice index, hole number): bore number} for holes of one-island
     slices that line up with a hole of the slice above or below (a bore
@@ -362,6 +408,12 @@ def build_stl_laminate(config: ProcessConfig):
     fallbacks = Counter()
 
     found_all = [mesh_islands(region, min_island_area) for _z, region in slices]
+    # Overhangs: fibre over them at the Overhang Speed, zigzags across them
+    # the short way, long unsupported runs reported
+    overhangs = _overhangs(slices, gap)
+    v_over = float(config.kinematics.v_overhang_mm_s)
+    v_over = min(v_over, float(config.kinematics.v_max_mm_s)) if v_over > 0 else float(config.kinematics.v_max_mm_s)
+    over_area, over_slices, turned, longest = 0.0, [], 0, (0.0, None)
     printed = [(found if multi else found[:1]) for found in found_all]
     bottom, top = int(config.solid_bottom_layers), int(config.solid_top_layers)
     # Skins where a slice's top or bottom is exposed (and the first / last
@@ -408,6 +460,7 @@ def build_stl_laminate(config: ProcessConfig):
     for i, (z_print, _region) in enumerate(slices):
         layer_z = z_print
         current_angle, layer_edge = settings[i]
+        over = overhangs[i]
         max_z = layer_z
 
         found = found_all[i]
@@ -470,6 +523,11 @@ def build_stl_laminate(config: ProcessConfig):
                     chosen.append((i + 1, choice))
                 lead = 0.0
             else:
+                if over is not None and plan.pattern in _ZIGZAGS and over.area > 0.05 * unary_union(islands).area:
+                    across = _across(over)
+                    if across is not None:
+                        current_angle = across
+                        turned += 1
                 spacing, offset = shifts.next(plan.pattern, plan.index, current_angle)
                 recipe_here = use_recipe and (layer_edge > 0 or config.wrap_holes) and plan.pattern in RECIPE_CORES
                 if recipe_here and len(islands) == 1 and _bolt_holes_only(islands[0]):
@@ -508,7 +566,22 @@ def build_stl_laminate(config: ProcessConfig):
             raw_path, r_min, [h for p in islands for h in hole_keepouts(p)], gap * 0.25)
         raw_path = strict.repair(raw_path, unary_union(islands), keep_head=1 if last_pt is not None else 0)
         strict.record(i + 1, raw_path)
-        layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin)
+        caps = None
+        if over is not None and len(raw_path) > 1:
+            here = over.intersection(unary_union(islands))
+            if not here.is_empty and here.area > gap * gap:
+                over_area += here.area
+                over_slices.append(i + 1)
+                c = here.representative_point()
+                markers.append((float(c.x), float(c.y), float(layer_z), 'overhang'))
+                xy = np.asarray(raw_path, dtype=np.float64)
+                inside = shapely.contains_xy(here, xy[:, 0], xy[:, 1])
+                if inside.any():
+                    caps = np.where(inside, v_over, np.inf)
+                    runs = _unsupported_runs(raw_path, here)
+                    if runs and max(runs) > longest[0]:
+                        longest = (max(runs), i + 1)
+        layer_trajectory = plan_layer(raw_path, layer_z, i + 1, kin, v_cap=caps)
         _mark_anchor(layer_trajectory, anchor_n)
         if len(islands) > 1:
             flag_bridges(layer_trajectory, unary_union(islands), gap, skip=anchor_n + 1)
@@ -542,6 +615,20 @@ def build_stl_laminate(config: ProcessConfig):
             f"{thin_slices} slice(s) have walls thinner than one {gap:g} mm track: the tow there is "
             f"wider than the wall (or the wall is skipped). Thicken the walls or reduce Track Gap."
         )
+    if over_slices:
+        span = f"{over_slices[0]}" if len(over_slices) == 1 else f"{over_slices[0]}-{over_slices[-1]}"
+        note = (f"Overhangs: {over_area:.0f} mm² of {len(over_slices)} slice(s) (layers {span}) has nothing under "
+                f"it; fibre crosses it at the Overhang Speed ({v_over:g} mm/s)")
+        if turned:
+            note += f", zigzags across it the short way on {turned} slice(s)"
+        if longest[1] is not None:
+            note += f"; the longest unsupported run is {longest[0]:.1f} mm (layer {longest[1]})"
+        info.append(note + ". Marked in the 3D view (Problems).")
+        if longest[0] > float(config.overhang_span_mm):
+            warnings.append(
+                f"Unsupported spans: fibre runs up to {longest[0]:.1f} mm over empty space (layer {longest[1]}), "
+                f"more than the Max Unsupported Span ({float(config.overhang_span_mm):g} mm): the tow may sag. "
+                f"Turn the part, add support or a skin under it.")
     for kind, n in sorted(fallbacks.items()):
         info.append(_FALLBACK_NOTES[kind].format(n=n, w=2.0 * max(r_min, gap) + gap))
     if bottom or top:

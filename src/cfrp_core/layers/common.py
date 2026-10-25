@@ -190,12 +190,13 @@ def _mark_anchor(points, n):
         pt['is_anchor'] = True
 
 
-def plan_layer(raw_path, layer_z, layer_num, kin: KinematicsParams):
-    """Speed-plan one layer's 2D path and tag every point with its layer."""
+def plan_layer(raw_path, layer_z, layer_num, kin: KinematicsParams, v_cap=None):
+    """Speed-plan one layer's 2D path and tag every point with its layer
+    (`v_cap`: a speed limit per point, or None)."""
     layer_trajectory = calculate_trajectory(
         tuple(raw_path), kin.v_max, kin.v_min, kin.accel, kin.decel,
         kin.p_advance, z_height=layer_z, min_rad=kin.min_rad, pump_floor=kin.pump_floor,
-        advance_table=kin.advance_table,
+        advance_table=kin.advance_table, v_cap=v_cap,
     )
     for pt in layer_trajectory:
         pt['layer'] = layer_num

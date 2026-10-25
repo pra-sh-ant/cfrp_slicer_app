@@ -374,6 +374,10 @@ class ProcessConfig(_Frozen):
     # angle. The layup (and every height range's) is measured from it, so a
     # 0 degree layer carries the load. 0 = along X, as before.
     load_angle_deg: float = 0.0
+    # STL overhangs (Phase 45): fibre over a slice's area with nothing under
+    # it runs at the Overhang Speed; unsupported runs longer than this are
+    # reported (the tow may sag).
+    overhang_span_mm: float = 15.0
     # Height ranges: from one height to another, a different pattern, layup,
     # Edge Rings or Fill Solid (a stiff flange at the bottom, say). The first
     # range that holds a layer's height applies.
@@ -449,6 +453,11 @@ class ProcessConfig(_Frozen):
         if not 0 <= v <= 5:
             raise ValueError("Edge Rings and Hole Rings must be between 0 and 5.")
         return v
+
+    @field_validator("overhang_span_mm")
+    @classmethod
+    def _span_limit(cls, v: float) -> float:
+        return _require(v, "Max Unsupported Span", unit=" mm")
 
     @field_validator("load_angle_deg")
     @classmethod

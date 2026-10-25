@@ -5,6 +5,23 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 45, fifth part: STL overhangs)
+- **Overhangs on STL slices**: the part of a slice more than a gap out from the
+  slice below has nothing under it (a tow closer than that still rests on the
+  one below). Fibre over it runs at the Overhang Speed (now also an STL
+  setting), reached and left at the accel / decel limits: the speed planner
+  takes an optional limit per point (`calculate_trajectory(v_cap=)`), applied
+  before its sequential scans, which are unchanged. On zigzag slices with a
+  sizeable overhang the lines run across it the short way (the shortest
+  spans). A note gives the overhang area, the slices and the longest
+  unsupported run; markers show it in the 3D view (Problems); a run longer than
+  **Max Unsupported Span** (`overhang_span_mm`, 15 mm) is a warning ("the tow
+  may sag"). The fibre is not cut there: one stroke has no way to leave a span
+  out.
+- None of the 13 audit meshes (spheres, cones, tori included) has an overhang
+  by this rule: their slices grow by less than a gap. A 40 mm cap on a 10 mm
+  stem has one on its first cap slice.
+
 ### Added (Phase 45, fourth part: by loads)
 - **Load Direction** (Pattern & Layers, `load_angle_deg`, 0 by default): the
   direction the part is loaded in. The layup, and every height range's, is
