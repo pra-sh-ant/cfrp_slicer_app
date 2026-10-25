@@ -125,6 +125,36 @@ def _level_ends(lines, direction, keep=0.5):
     return out
 
 
+def _level_split(runs, keep=0.5):
+    """Runs cut wherever widely spaced lines cannot all turn level
+    (_level_ends), whichever way round the run is laid: every line must
+    keep `keep` mm between the levels of its turns. (A line cut back at
+    both ends by turns on opposite sides came out shorter than the next
+    turn needed, and _uturn then stretched the next line past its end: a
+    turn 1.5 mm past a plate's edge, found by the recipe property test.)"""
+    def pair_ok(a, b):
+        (la, ra), (lb, rb) = _x_span(a), _x_span(b)
+        right, left = min(ra, rb), max(la, lb)              # the turn's level on either side
+        return max(la, lb) + keep <= right and left + keep <= min(ra, rb)
+
+    def mid_ok(a, b, c):
+        (la, ra), (lb, rb), (lc, rc) = _x_span(a), _x_span(b), _x_span(c)
+        # b turns left to one neighbour and right to the other
+        return (max(lb, la) + keep <= min(rb, rc)) and (max(lb, lc) + keep <= min(rb, ra))
+
+    out = []
+    for run in runs:
+        cur = []
+        for seg in run:
+            if cur and not (pair_ok(cur[-1], seg) and (len(cur) < 2 or mid_ok(cur[-2], cur[-1], seg))):
+                out.append(cur)
+                cur = []
+            cur.append(seg)
+        if cur:
+            out.append(cur)
+    return out
+
+
 def _zigzag(lines, direction, level=False):
     """One serpentine over consecutive `lines`, first line run along +x
     (direction 1) or -x, joined by _uturn. `level`: cut each turn's line
@@ -338,17 +368,117 @@ def _order_runs(n_runs, cost, first, first_variants):
     return order[::-1]
 
 
-def _join_runs(runs, poly, gap, start_from_end, min_rad=0.0, level=False):
-    """Zigzag each run and chain them into one stroke.
+def _connector_costs(variants, geoms, tree, region, rings, reach, detour, step=0.75):
+    """cost[i, a, j, b] = (cost, route) of the best connector from the end
+    of run i (way round a) to the start of run j (way round b): of the
+    routes of _routes (straight if on the part, along every margin ring
+    within `reach` of both ends both ways round, else the `detour`), the
+    first that crosses fewest runs (but i and j: `tree`; and those two,
+    `geoms`), then is shortest, off the part last.
 
-    Every connector from the end of one run (4 ways round) to the start of
-    another is routed straight or along a margin ring and scored by how many
-    runs it crosses (any crossing is fibre on fibre, whichever is laid
-    first), then by length. That cost does not depend on the order, so the
-    order and way round of every run is then chosen to minimise the total
-    (_order_runs). (Chaining greedily nearest-first, and not checking the
-    run a connector led into, left connectors cutting through runs: 14
-    crossings on a plate with two bolt holes.)"""
+    The same result, faster: the geometry tests run in bulk, one call for
+    every connector of the layer (one by one, they were most of a layer
+    recipe's time: 680 000 tree queries on a plate with four holes), and a
+    route is only scored if it could still win -- a cost is never less than
+    the route's length, so a clean straight connector settles its pair."""
+    n = len(variants)
+    ends = [tuple(variants[i][a][-1]) for i in range(n) for a in range(4)]
+    starts = [tuple(variants[j][b][0]) for j in range(n) for b in range(4)]
+    keys = [(i, a, j, b) for i in range(n) for a in range(4) for j in range(n) if j != i for b in range(4)]
+    if not keys:
+        return {}
+    e_xy, s_xy = np.asarray(ends, dtype=np.float64), np.asarray(starts, dtype=np.float64)
+    ke = np.asarray([4 * i + a for i, a, _, _ in keys])
+    ks = np.asarray([4 * j + b for _, _, j, b in keys])
+    flat = np.asarray([g for gs in geoms for g in gs], dtype=object)
+    footprints = tree.geometries
+
+    def score(which, links):
+        """Cost of each link (connector `which[k]` of keys)."""
+        # crossing implies touching: the cheap test (prepared) first, crosses
+        # only on what touches -- the same pairs as a 'crosses' query
+        qi, qk = tree.query(links, predicate='intersects')
+        hit = shapely.crosses(links[qi], footprints[qk])
+        qi, qk = qi[hit], qk[hit]
+        run_i = np.asarray([keys[k][0] for k in which])
+        run_j = np.asarray([keys[k][2] for k in which])
+        keep = (qk != run_i[qi]) & (qk != run_j[qi])
+        hits = np.bincount(qi[keep], minlength=len(links))
+        hits = hits + shapely.crosses(links, flat[ke[which]]) + shapely.crosses(links, flat[ks[which]])
+        c = hits * _CROSSING_COST + shapely.length(links)
+        return np.where(shapely.covers(region, links), c, c + _OFF_PART_COST)
+
+    best = {}                                     # key number -> (cost, route number, route)
+    straight = shapely.linestrings(np.stack([e_xy[ke], s_xy[ks]], axis=1))
+    on_part = np.nonzero(shapely.covers(region, straight))[0]
+    if len(on_part):
+        for k, c in zip(on_part.tolist(), score(on_part, straight[on_part]).tolist(), strict=True):
+            best[k] = (c, 0, [starts[ks[k]]])
+    # The others: every route of each pair not settled by a clean straight
+    # connector (no route is shorter), with its length.
+    e_pts, s_pts = shapely.points(e_xy), shapely.points(s_xy)
+    near = [(ring, ring.length, shapely.distance(ring, e_pts), shapely.line_locate_point(ring, e_pts),
+             shapely.distance(ring, s_pts), shapely.line_locate_point(ring, s_pts)) for ring in rings]
+    cands = []                                    # (key number, route number, length, coordinates, route)
+    for k in range(len(keys)):
+        if k in best and best[k][0] < _CROSSING_COST:
+            continue
+        e, s = ke[k], ks[k]
+        count = len(cands)
+        number = 1
+        for ring, length, de, te, ds, ts in near:
+            if de[e] > reach or ds[s] > reach:
+                continue
+            t0, t1 = te[e], ts[s]
+            for sign in (1.0, -1.0):
+                span = ((t1 - t0) * sign) % length
+                m = max(2, int(span / step))
+                at = (t0 + sign * span * np.arange(m + 1) / m) % length
+                xy = _along(ring, at)
+                route = [tuple(q) for q in xy.tolist()] + [starts[s]]
+                pts = np.vstack([e_xy[e], xy, s_xy[s]])
+                cands.append((k, number, float(np.hypot(*np.diff(pts, axis=0).T).sum()), pts, route))
+                number += 1
+        if len(cands) == count and k not in best:
+            way = detour(ends[e], starts[s]) or [starts[s]]
+            pts = np.asarray([ends[e]] + list(way), dtype=np.float64)
+            cands.append((k, number, float(np.hypot(*np.diff(pts, axis=0).T).sum()), pts, way))
+
+    def evaluate(chosen):
+        if not chosen:
+            return
+        which = np.asarray([cands[q][0] for q in chosen])
+        coords = np.vstack([cands[q][3] for q in chosen])
+        index = np.repeat(np.arange(len(chosen)), [len(cands[q][3]) for q in chosen])
+        for q, c in zip(chosen, score(which, shapely.linestrings(coords, indices=index)).tolist(), strict=True):
+            k, number, _, _, route = cands[q]
+            if k not in best or (c, number) < best[k][:2]:
+                best[k] = (c, number, route)
+
+    by_key = {}
+    for q, cand in enumerate(cands):
+        by_key.setdefault(cand[0], []).append(q)
+    for qs in by_key.values():
+        qs.sort(key=lambda q: cands[q][2])
+    # each pair's shortest route, then every route that could still beat
+    # (or tie, by route order) the best so far
+    evaluate([qs[0] for k, qs in by_key.items() if k not in best or cands[qs[0]][2] <= best[k][0] + 1e-6])
+    evaluate([q for k, qs in by_key.items() for q in qs[1:] if cands[q][2] <= best[k][0] + 1e-6])
+    return {keys[k]: (c, route) for k, (c, _, route) in best.items()}
+
+
+_COSTS: dict = {}       # the last few runs' connector costs (both start ends of a zigzag share them)
+
+
+def _run_costs(runs, poly, gap, min_rad, level):
+    """Each run's four zigzags (both orders, both ways) and the connector
+    costs between them (_connector_costs). The same runs come twice, for
+    the zigzag started at either end: kept for the last few."""
+    coords = [np.asarray(seg.coords, dtype=np.float64) for r in runs for seg in r]
+    key = (shapely.to_wkb(poly), float(gap), float(min_rad), bool(level), tuple(len(r) for r in runs),
+           tuple(len(c) for c in coords), np.concatenate(coords).tobytes() if coords else b"")
+    if key in _COSTS:
+        return _COSTS[key]
     variants = []
     for r in runs:
         options = []
@@ -370,30 +500,39 @@ def _join_runs(runs, poly, gap, start_from_end, min_rad=0.0, level=False):
             roadmap.append(_Roadmap(region, rings, reach, max(gap, 0.75)))
         return roadmap[0](a, b)
 
+    if len(_COSTS) >= 4:
+        _COSTS.pop(next(iter(_COSTS)))
+    _COSTS[key] = variants, _connector_costs(variants, geoms, tree, region, rings, reach, detour)
+    return _COSTS[key]
+
+
+def _join_runs(runs, poly, gap, start_from_end, min_rad=0.0, level=False):
+    """Zigzag each run and chain them into one stroke.
+
+    Every connector from the end of one run (4 ways round) to the start of
+    another is routed straight or along a margin ring and scored by how many
+    runs it crosses (any crossing is fibre on fibre, whichever is laid
+    first), then by length. That cost does not depend on the order, so the
+    order and way round of every run is then chosen to minimise the total
+    (_order_runs). (Chaining greedily nearest-first, and not checking the
+    run a connector led into, left connectors cutting through runs: 14
+    crossings on a plate with two bolt holes.)"""
+    variants, cost = _run_costs(runs, poly, gap, min_rad, level)
     n = len(runs)
-    cost = {}
-    for i in range(n):
-        for a in range(4):
-            end = tuple(variants[i][a][-1])
-            for j in range(n):
-                if j == i:
-                    continue
-                for b in range(4):
-                    start = variants[j][b][0]
-                    best = None
-                    for route in _routes(end, start, region, rings, reach, roadmap=detour):
-                        link = LineString([end] + route)
-                        hits = sum(1 for k in tree.query(link, predicate='crosses') if k not in (i, j))
-                        hits += sum(1 for g in (geoms[i][a], geoms[j][b])
-                                    if g is not None and link.crosses(g))
-                        c = hits * _CROSSING_COST + link.length
-                        if not region.covers(link):
-                            c += _OFF_PART_COST
-                        if best is None or c < best[0]:
-                            best = (c, route)
-                    cost[i, a, j, b] = best
     first = n - 1 if start_from_end else 0
-    order = _order_runs(n, cost, first, (2, 3) if start_from_end else (0, 1))
+    kept = list(range(n))
+    while True:
+        sub = {(p, a, q, b): cost[kept[p], a, kept[q], b] for p in range(len(kept)) for q in range(len(kept))
+               if p != q for a in range(4) for b in range(4)}
+        order = [(kept[p], a) for p, a in _order_runs(len(kept), sub, kept.index(first),
+                                                       (2, 3) if start_from_end else (0, 1))]
+        # A run only reached off the part (a stub between two holes, beyond
+        # every margin ring: its connector ran over a hole) is left out.
+        off = next((j for (i, a), (j, b) in zip(order, order[1:], strict=False)
+                    if cost[i, a, j, b][0] >= _OFF_PART_COST), None)
+        if off is None:
+            break
+        kept.remove(off)
     i, a = order[0]
     path = list(variants[i][a])
     for j, b in order[1:]:
@@ -485,25 +624,42 @@ def oriented_serpentine(poly, angle, gap, min_rad, start_from_end=False, spacing
         y += pitch
 
     region = rot_poly.buffer(1e-6)
-    runs = _boustrophedon_runs(scan, region)
-    if len(runs) <= 1:
-        # Convex (one segment per line, each overlapping the last): the
-        # original single zigzag.
-        lines = runs[0] if runs else []
-        path = _zigzag(list(reversed(lines)) if start_from_end else lines,
-                       -1 if start_from_end else 1, wide)
-    else:
+
+    def chain(runs, refine):
+        """The runs as one stroke (`refine`: applied to the strict cells)."""
+        if len(runs) <= 1:
+            # Convex (one segment per line, each overlapping the last): the
+            # original single zigzag.
+            lines = runs[0] if runs else []
+            return _zigzag(list(reversed(lines)) if start_from_end else lines,
+                           -1 if start_from_end else 1, wide)
         # Long runs (fewest U-turn breaks) can wrap round a hole and box
         # other runs in; strict cells cannot. Keep whichever chains with
         # fewer crossings (then the shorter path).
         options = []
         for cells in (False, True):
-            r = runs if not cells else _boustrophedon_runs(scan, region, cells=True)
+            r = runs if not cells else refine(_boustrophedon_runs(scan, region, cells=True))
             p = _join_runs(r, rot_poly, gap, start_from_end, min_rad, wide)
             options.append((count_crossings(p), LineString(p).length, p))
             if options[0][0] == 0:
                 break
-        path = min(options, key=lambda o: o[:2])[2]
+        return min(options, key=lambda o: o[:2])[2]
+
+    runs = _boustrophedon_runs(scan, region)
+    path = chain(runs, lambda r: r)
+    if wide and path:
+        # Widely spaced lines whose turns cannot all be level (a line cut
+        # back at both ends) get a turn stretched past a line's end, which
+        # can leave the part; the runs cut there instead, if that keeps on
+        # the part and crosses no more.
+        split = _level_split(runs)
+        if len(split) != len(runs):
+            alt = chain(split, _level_split)
+            if alt:
+                def score(p):
+                    return (not region.covers(LineString(p)), count_crossings(p))
+                if score(alt) < score(path):
+                    path = alt
 
     if not path:
         return []

@@ -26,7 +26,7 @@ Request (2026-10-20), in short:
 | Phase | Topic | State |
 |---|---|---|
 | 43 | Bend radius everywhere | done (see CHANGELOG) |
-| 44 | Mixed patterns in one layer, wrapped holes, cavity check | in progress: cavity check, Fill Pockets, layer recipe (edge rings, hole wraps, bolt and drill-after holes; opt-in) done; open: every bolt hole wrapped, Auto trying recipes, lines into leftover slivers, per-hole canvas settings, property test (see CHANGELOG) |
+| 44 | Mixed patterns in one layer, wrapped holes, cavity check | in progress: cavity check, Fill Pockets, layer recipe (edge rings, hole wraps, bolt and drill-after holes; opt-in), property test, every bolt hole wrapped (zigzag cores) done; open: Auto trying recipes, lines into leftover slivers, per-hole canvas settings (see CHANGELOG) |
 | 45 | STL: mixed patterns per slice | planned |
 | 46 | Three workspaces | planned |
 | 47 | A tool and a cure per material, coordinated | planned |

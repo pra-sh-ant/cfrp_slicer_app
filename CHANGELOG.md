@@ -5,6 +5,67 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Fixed (Phase 44, third part: recipe property test, every bolt hole wrapped)
+- **Property test** on random holed outlines with the layer recipe
+  (`tests/test_property_recipe_phase44.py`; Edge Rings, Wrap Holes, Bolt Holes,
+  Drill After Curing, strict on): one stroke, Z never drops, no layer crosses
+  itself, no fibre over a hole that is not drilled or off the part, no bend under
+  r_min. `RECIPE_EXAMPLES=300` runs it longer. Each failure it found is pinned:
+  - An outward zigzag core could box its own end in with its route to the first
+    line, so the join out to the edge rings crossed it. A zigzag that the stroke
+    leaves (`laminate_layer(exit_to=)`) now also counts the lines its end
+    crosses on the way out when it picks its start corner.
+  - The joins before a hole wrap ran through the band kept for the wrap, which
+    then crossed them; they now keep out of it.
+  - Widely spaced zigzag lines (strict): a line cut back at both ends by turns on
+    opposite sides left the next turn stretched past a line's end, 1.5 mm off
+    the plate. The run is cut there (`_level_split`) when that keeps on the part
+    and crosses no more.
+  - A run that only a connector over a hole reached (a stub between two holes,
+    beyond every margin ring) is left out instead.
+  - Strict repair: a "later start" hopped straight from the last layer's end
+    across a bolt hole (339 mm of the layer dropped); it now ends early instead
+    when the hop leaves where fibre may lie. A replacing curve could cross
+    fibre that the replaced stretch touched or lay on (a loop across an edge
+    ring that a join ran along); it may now only come as near it.
+  - Strict climb: the bend check now reaches past the layer's first millimetre,
+    which the layer's own repair leaves to the climb (a climb landed before a
+    90° corner there).
+  - The radius smoothing (`enforce_min_radius_clear`) no longer moves a point
+    across the path's own fibre (a strict Fermat corner nudged across the next
+    arm); such a point goes back, as next to holes.
+  - Recipe joins count crossings with the piece they lead into.
+- Recipe layers are judged as laid, after the bend repair. A wrap that crossed
+  once repaired was laid without the recipe and its hole left unwrapped; now
+  the next candidate is tried. A candidate that crosses nothing and keeps 60 %
+  of its fibre is laid; otherwise, of the candidates (and the layer without the
+  recipe) laying at least 60 % of the longest, the one with no fibre over a hole
+  and the fewest crossings. (Fewest crossings alone had laid a Fermat layer as
+  53 mm of its 1783.)
+- Faster zigzag joining on parts with holes: the connector costs between runs
+  are tested in bulk (one tree query for all of them), a route is only scored if
+  it could still win, and both start ends of a zigzag share the table. Same
+  paths (goldens; costs compared with the old code on 196 000 connectors). The
+  strict repair's search for fibre near a replaced stretch is done segment by
+  segment (the same set). 4 layers of the 60 x 40 plate with four M3 holes, 45°
+  Diagonal Hatch, edge rings 2, wraps, strict off: 205 s -> 47 s.
+
+Wraps on the 60 x 40 plate with four M3 holes (gap 1.2, r_min 3, strict on,
+hole rings 2), before -> now:
+
+| Core, edge rings, layers, bolt holes | Before | Now |
+|---|---|---|
+| Oriented Serpentine, 1, 8, 1-4 | 4 of 4 | 4 of 4 |
+| 45° Diagonal Hatch, 1, 8, 1-4 | 3 of 4 | 4 of 4 |
+| 45° Diagonal Hatch, 2, 8, 1-4 | 4 of 4 | 4 of 4 |
+| Zigzag cores, 1, 4, "1, 4" | 2 of 2 | 2 of 2 |
+| Fermat, 1, 8, 1-4 | 3 into only (coverage 0.37) | 1 full, 3 into only (0.46) |
+| Fermat, 2, 8, 1-4 | 1 into only (0.27) | 4 into only (0.42) |
+
+Strict sweep of the 30 recipe cases: 28 Pass, 2 Warning (one crossing each;
+before: 27 Pass, 3 Warning); 58 s on 12 processes (45 s before; Fermat cores
+judge every candidate after the repair).
+
 ### Added (Phase 44, second part: layer recipe, hole wraps, drill-after holes)
 - **Edge Rings** (`edge_rings`, 0 to 5, off by default; flat parts in one piece,
   on zigzag and Fermat layers): that many rings along the outline, bending round
@@ -70,13 +131,11 @@ outer laps. Strict validation sweep of the 30 recipe cases: 28 Pass, 2 Warning
 recipe also show such a crossing).
 
 ### Known limits (Phase 44, second part)
-- The plan's "with twice as many layers as holes, every bolt hole is wrapped"
-  is not met. On the plate with four holes, 8 layers, strict on, edge rings 1:
-  zigzag cores wrapped 3 of the 4 holes (on one inward layer every wrap crossed
-  that layer's fibre, and one layer was laid without the recipe); the Fermat
-  core wrapped 1 (8 mm holes), and with 3.2 mm holes only one hole on its way
-  in, with 7 of 8 layers laid without the recipe. With Bolt Holes "1, 4" and 4
-  layers, only hole 1 was wrapped.
+- (Met for zigzag cores in the third part, above.) The plan's "with twice as
+  many layers as holes, every bolt hole is wrapped" was not met: on the plate
+  with four holes, 8 layers, strict on, edge rings 1, zigzag cores wrapped 3 of
+  the 4 holes. A Fermat core still wraps a hole fully only now and then: its
+  outward layer, spiralling out of the hole, is mostly laid without the recipe.
 - Strict zigzag cores are sparse (lines about 2 x r_min apart; 15 % to 30 % of
   each layer), recipe or not.
 - With Strict Bend Radius off, zigzag cores on plates with holes cross
@@ -86,8 +145,8 @@ recipe also show such a crossing).
   between every pair of runs.
 - Not used on parts in several pieces, with Auto (Best Fit), or on STL slices;
   hole numbers are typed, not set per hole on the canvas. Auto does not try
-  recipes yet, Fill Pockets does not add lines into leftover slivers, and there
-  is no property test on random holed outlines yet.
+  recipes yet and Fill Pockets does not add lines into leftover slivers (the
+  property test came in the third part).
 
 ### Added (Phase 44, first part: cavity check, Fill Pockets)
 - **Cavity check** (`coverage.cavity_map`): the spots of the part that no layer

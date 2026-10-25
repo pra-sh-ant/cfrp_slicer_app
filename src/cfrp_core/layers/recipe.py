@@ -6,6 +6,9 @@ from __future__ import annotations
 import math
 from collections import Counter
 
+import shapely
+from shapely.geometry import LineString, Polygon
+
 from ..config import DIAGONAL_45, FERMAT, ORIENTED_SERPENTINE, ProcessConfig
 from ..geometry import zones
 from ..geometry.outlines import drawn_holes
@@ -45,6 +48,10 @@ def hole_notes(config: ProcessConfig) -> list[str]:
     return out
 
 
+def _length(path):
+    return LineString(path).length if len(path) > 1 else 0.0
+
+
 class Recipe:
     """Builds recipe layers in turn for one flat part (`part`: its outline
     with holes, as placed)."""
@@ -69,64 +76,80 @@ class Recipe:
         self.unjoined = Counter()        # layers whose core found no room
         self.skipped = 0                 # layers that could have wrapped a hole but would have crossed
         self.plain_layers = []           # layers laid without the recipe (it crossed itself there)
-        self._last = (None, None)        # (layer, its 'no room' note) of the last layer built
         # Nothing asked of it (no edge rings, no hole to wrap): the layers
         # are laid as without the recipe.
         self.active = self.edge > 0 or self.wrap
+        # where fibre over a hole fails validation (the holes, a hair in)
+        inner = [Polygon(r).buffer(-0.1) for r in part.interiors] if part.geom_type == 'Polygon' else []
+        inner = [h for h in inner if not h.is_empty]
+        self.hole_area = shapely.union_all(inner) if inner else None
         if self.active and g.include_boundary:
             self.edge = max(self.edge, 1)    # the boundary pass is one edge ring
 
-    def layer(self, layer_num, plan_index, wrap_ok, last_pt, last_dir, core, plain):
+    def layer(self, layer_num, plan_index, wrap_ok, last_pt, last_dir, core, plain, repair=None):
         """The 2D path of layer `layer_num` (1-based). `core(poly, last_pt,
-        last_dir, layer_idx)` lays the core pattern in `poly`; `plain()` the
-        layer without the recipe, laid instead when it crosses itself less.
+        last_dir, layer_idx, exit_to)` lays the core pattern in `poly`;
+        `plain()` the layer without the recipe, laid instead when it is
+        clearly better.
         `wrap_ok`: the next layer is a recipe layer too (it spirals out of
-        the hole)."""
+        the hole). `repair(path)`: the layer's bend repair (Strict Bend
+        Radius), or None; every candidate is judged as repaired, and the
+        repaired path is returned."""
         inward = plan_index % 2 == 0
         start = None if inward else self.band
-        crossings = None
 
         def build(band):
             return zones.recipe_layer(self.part, self.holes, self.gap, self.r_min, self.edge, core, plan_index,
                                       last_pt=last_pt, last_dir=last_dir, wrap_end=band, wrap_start=start,
                                       start_ccw=self.ccw,
                                       start_near=band.centre if band is not None and last_pt is None else None)
-        if self.wrap and inward and wrap_ok and self.eligible:
+
+        def judge(path):
+            """((fibre over a hole, crossings), the repair cut over 40 % of
+            it away, the path as laid). Judged after the bend repair: a
+            candidate that crossed nothing could cross once repaired (and was
+            then laid without the recipe, its hole left unwrapped)."""
+            laid = repair(path) if repair is not None else path
+            lost = float(getattr(laid, 'lost', 0.0) or 0.0)
+            over = len(laid) > 1 and self.hole_area is not None and LineString(laid).intersects(self.hole_area)
+            return (bool(over), zones.joins_cross(laid)), lost > 0.4 * _length(path), laid
+
+        wrapping = self.wrap and inward and wrap_ok and self.eligible
+        holes = [None]
+        if wrapping:
             # Holes wrapped least so far first; of those, where the core ends: a
             # zigzag ends across the part (the hole farthest from where the
             # layer enters), a Fermat spiral next to where it entered (the
-            # nearest). The first layer that crosses none of its own fibre is
-            # kept; failing that, the layer wraps no hole (and failing that,
-            # the fewest crossings).
+            # nearest); then no hole.
             at = last_pt if last_pt is not None else self.part.centroid.coords[0]
             sign = 1.0 if self.core_pattern == FERMAT else -1.0
             order = sorted(self.eligible, key=lambda h: (self.count[h], sign * math.dist(at, self.bands[h].centre), h))
-            least = self.count[order[0]]
-            tried = []
-            lay = None
-            for k in [h for h in order if self.count[h] == least] + [None]:
-                cand = build(self.bands[k] if k is not None else None)
-                crossings = zones.joins_cross(cand.path)
-                tried.append((crossings, k is None, cand))
-                if crossings == 0:
-                    lay = cand
-                    break
-            if lay is None:
-                crossings, _, lay = min(tried, key=lambda t: t[:2])
-            if lay.wrapped is None:
-                self.skipped += 1
+            holes = [h for h in order if self.count[h] == self.count[order[0]]] + [None]
+        # The first candidate that crosses none of its own fibre and keeps
+        # most of it is laid. Failing that, of the candidates (and the layer
+        # without the recipe) that lay at least 60 % of the longest one, the
+        # one with no fibre over a hole and the fewest crossings, the first
+        # in that order. (Fewest crossings alone laid a strict Fermat layer
+        # as 53 mm of its 1783.)
+        tried = []
+        for k in holes:
+            cand = build(self.bands[k] if k is not None else None)
+            faults, short, laid = judge(cand.path)
+            tried.append((faults, laid, cand))
+            if faults == (False, 0) and not short:
+                break
         else:
-            lay = build(None)
-            crossings = zones.joins_cross(lay.path)
-        if crossings:
-            # Its pieces cross (a join over the core, a core into a band):
-            # the layer without the recipe, if that crosses less.
-            alt = plain()
-            if zones.joins_cross(alt) < crossings:
-                self.plain_layers.append(layer_num)
-                self.band = None
-                return alt
-        self._last = (layer_num, lay.notes[0] if lay.notes else None)
+            alt_faults, _, alt = judge(plain())
+            tried.append((alt_faults, alt, None))
+            longest = max(_length(t[1]) for t in tried)
+            tried = [min((t for t in tried if _length(t[1]) >= 0.6 * longest), key=lambda t: t[0])]
+        _, laid, lay = tried[-1]
+        if lay is None:
+            self.plain_layers.append(layer_num)
+            self.band = None
+            return laid
+        if wrapping and lay.wrapped is None:
+            self.skipped += 1
         if lay.notes:
             self.unjoined[lay.notes[0]] += 1
         if inward and lay.wrapped is not None:
@@ -135,23 +158,7 @@ class Recipe:
             self.wraps.append((layer_num, lay.wrapped))
         else:
             self.band = None
-        return lay.path
-
-    def drop(self, layer_num):
-        """Layer `layer_num`, the last one built, is laid without the recipe
-        after all: undo what it counted."""
-        if getattr(self, '_last', (None,))[0] != layer_num:
-            return
-        why = self._last[1]
-        if why:
-            self.unjoined[why] -= 1
-            if not self.unjoined[why]:
-                del self.unjoined[why]
-        if self.wraps and self.wraps[-1][0] == layer_num:
-            self.count[self.wraps.pop()[1]] -= 1
-        self.band = None
-        self.plain_layers.append(layer_num)
-        self._last = (None, None)
+        return laid
 
     def note(self, config: ProcessConfig) -> list[str]:
         out = []
@@ -178,7 +185,7 @@ class Recipe:
             out.append(f"{n} layer(s): {why}.")
         if self.plain_layers:
             out.append(f"Layer(s) {', '.join(map(str, self.plain_layers))} laid without the layer recipe: "
-                       f"its pieces crossed each other there.")
+                       f"its pieces crossed each other there, or the bend repair cut much of it away.")
         return out
 
 

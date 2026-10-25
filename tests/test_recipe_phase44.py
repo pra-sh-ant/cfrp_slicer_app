@@ -3,13 +3,14 @@ hole wraps at layer changes (a layer spirals into a hole, the next spirals
 out of it the same way round), bolt holes first, drill-after holes printed
 over."""
 import math
+import re
 
 import numpy as np
 import pytest
 from shapely.geometry import LineString, Point, box
 
 from cfrp_core import ConfigError, from_legacy_dict, slice_part
-from cfrp_core.capabilities import ARCHIMEDEAN, FERMAT, ORIENTED_SERPENTINE, field_states
+from cfrp_core.capabilities import ARCHIMEDEAN, DIAGONAL_45, FERMAT, ORIENTED_SERPENTINE, field_states
 from cfrp_core.geometry._common import count_crossings
 from cfrp_core.legacy import parse_hole_list
 
@@ -153,3 +154,27 @@ def test_recipe_settings_greyed_out_where_they_do_nothing():
     # Edge Rings on every layer: Print Outer Boundary adds nothing
     assert not field_states(dict(flat, edge_rings=2))["include_boundary"].enabled
     assert field_states(dict(flat, edge_rings=2, first_layer_infill=ARCHIMEDEAN))["include_boundary"].enabled
+
+
+@pytest.mark.parametrize("core", [ORIENTED_SERPENTINE, DIAGONAL_45])
+def test_every_bolt_hole_is_wrapped_given_two_layers_each(core):
+    # the plan's plate: 60 x 40 with four M3 holes, 8 layers, strict on
+    centres = ((10.0, 10.0), (50.0, 10.0), (50.0, 30.0), (10.0, 30.0))
+    holes = [[tuple(q) for q in Point(x, y).buffer(1.6, 16).exterior.coords[:-1]] for x, y in centres]
+    cfg = dict(shape="Custom Outline", custom_outline=[(0, 0), (60, 0), (60, 40), (0, 40)], custom_holes=holes,
+               layers=8, layup_seq="0, 90", fill_solid=True, track_gap=1.2, min_radius=3.0, start_x=40.0, start_y=40.0,
+               infill_type=core, strict_bend_radius=True, edge_rings=1, wrap_holes=True, hole_rings=2,
+               bolt_holes="1, 2, 3, 4")
+    res = slice_part(from_legacy_dict(cfg))
+    assert res.validation["status"] == "Pass", res.validation["messages"]
+    note = next(n for n in res.info if n.startswith("Hole wraps"))
+    wraps = {int(h): int(n) for h, n, _ in re.findall(r"hole (\d) at layers (\d)-(\d)", note)}
+    assert sorted(wraps) == [1, 2, 3, 4], note
+    layers = _layers(res)
+    reach = 3.15 + 1.2 + 0.6 + 0.2         # rings at >= 1.05 x r_min round an M3 hole, one gap apart
+    for hole, n in wraps.items():
+        x, y = centres[hole - 1]
+        c = (x + 40.0 + res.bed_shift[0], y + 40.0 + res.bed_shift[1])
+        into = _sweep(_near_run(layers[n], c, reach, from_end=True), c)
+        out = _sweep(_near_run(layers[n + 1], c, reach, from_end=False), c)
+        assert abs(into) >= 540.0 and abs(out) >= 540.0 and into * out > 0, (hole, into, out)

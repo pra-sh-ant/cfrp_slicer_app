@@ -317,25 +317,32 @@ def blend_chain(rings, samples: int):
 CROSSING_MIN_ANGLE_DEG = 20.0
 
 
-def count_crossings(coords, min_angle_deg=CROSSING_MIN_ANGLE_DEG):
-    """Pairs of non-adjacent segments that properly cross at more than
-    `min_angle_deg`. Touching, retracing or near-parallel overlap at a seam
-    (numerically an X at ~0 deg) is not a crossing; tow laid on tow is
-    measured by the coverage metric instead. One bulk STRtree query."""
+def crossing_pairs(coords, min_angle_deg=CROSSING_MIN_ANGLE_DEG):
+    """(i, j): the segment numbers of each crossing count_crossings counts."""
+    none = np.zeros(0, dtype=np.int64)
     pts = np.asarray(coords, dtype=np.float64)
     if pts.ndim != 2 or len(pts) < 4:
-        return 0
+        return none, none
     pts = pts[:, :2]
     segs = shapely.linestrings(np.stack([pts[:-1], pts[1:]], axis=1))
     i, j = shapely.STRtree(segs).query(segs, predicate='crosses')
     keep = j > i + 1
     if not keep.any():
-        return 0
+        return none, none
     i, j = i[keep], j[keep]
     d = np.diff(pts, axis=0)
     d /= np.maximum(np.linalg.norm(d, axis=1), 1e-12)[:, None]
     cos = np.abs(np.einsum('ij,ij->i', d[i], d[j]))
-    return int(np.count_nonzero(cos < math.cos(math.radians(min_angle_deg))))
+    sharp = cos < math.cos(math.radians(min_angle_deg))
+    return i[sharp], j[sharp]
+
+
+def count_crossings(coords, min_angle_deg=CROSSING_MIN_ANGLE_DEG):
+    """Pairs of non-adjacent segments that properly cross at more than
+    `min_angle_deg`. Touching, retracing or near-parallel overlap at a seam
+    (numerically an X at ~0 deg) is not a crossing; tow laid on tow is
+    measured by the coverage metric instead. One bulk STRtree query."""
+    return len(crossing_pairs(coords, min_angle_deg)[0])
 
 
 def _circumradii(pts_arr):
@@ -431,28 +438,41 @@ def enforce_min_radius_clear(path, min_rad, keepouts=(), clearance=0.0, max_iter
     than min_rad and is reported by the curvature audit, instead of the
     fibre being laid over the hole. (Rings that bend round a hole meet the
     straight part at a sharp inside corner; rounding it cut ~2 mm across a
-    hole edge -- found by the property tests.)"""
+    hole edge -- found by the property tests.) Nor across the path's own
+    fibre: a point whose move made a crossing goes back too (a strict Fermat
+    layer's corner nudged across the arm a gap away)."""
     smooth = enforce_min_radius(path, min_rad)
-    zones = [k.buffer(clearance) if clearance else k for k in keepouts if not k.is_empty]
-    if not zones or len(smooth) < 2:
+    if len(smooth) < 2:
         return smooth
-    import shapely
-    region = shapely.union_all(zones)
     orig = [(float(x), float(y)) for x, y in path]
     out = list(smooth)
-    for _ in range(max_iter):
-        pts = np.asarray(out, dtype=np.float64)
-        inside = shapely.contains_xy(region, pts[:, 0], pts[:, 1])
-        segs = shapely.linestrings(np.stack([pts[:-1], pts[1:]], axis=1))
-        hit = shapely.intersects(segs, region)
-        bad = set(np.nonzero(inside)[0].tolist())
-        for i in np.nonzero(hit)[0].tolist():
-            bad.update((i, i + 1))
-        bad = [i for i in bad if out[i] != orig[i]]
-        if not bad:
-            break
-        for i in bad:
-            out[i] = orig[i]
+    zones = [k.buffer(clearance) if clearance else k for k in keepouts if not k.is_empty]
+    if zones:
+        region = shapely.union_all(zones)
+        for _ in range(max_iter):
+            pts = np.asarray(out, dtype=np.float64)
+            inside = shapely.contains_xy(region, pts[:, 0], pts[:, 1])
+            segs = shapely.linestrings(np.stack([pts[:-1], pts[1:]], axis=1))
+            hit = shapely.intersects(segs, region)
+            bad = set(np.nonzero(inside)[0].tolist())
+            for i in np.nonzero(hit)[0].tolist():
+                bad.update((i, i + 1))
+            bad = [i for i in bad if out[i] != orig[i]]
+            if not bad:
+                break
+            for i in bad:
+                out[i] = orig[i]
+    if out != orig:
+        before = count_crossings(orig)
+        for _ in range(max_iter):
+            i, j = crossing_pairs(out)
+            if len(i) <= before:
+                break
+            bad = [k for k in set(np.concatenate([i, i + 1, j, j + 1]).tolist()) if out[k] != orig[k]]
+            if not bad:
+                break
+            for k in bad:
+                out[k] = orig[k]
     return out
 
 

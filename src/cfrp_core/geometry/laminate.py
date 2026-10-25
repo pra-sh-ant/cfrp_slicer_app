@@ -204,7 +204,8 @@ def max_track_count(base_poly, track_gap, min_radius, infill_type, include_bound
 
 def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_layer,
                    include_boundary, angle, layer_idx=0, last_pt=None, last_dir=None, lead_in=0.0,
-                   seam_turn=0.0, line_spacing=None, line_offset=0.0, fill_centre=False, strict=False):
+                   seam_turn=0.0, line_spacing=None, line_offset=0.0, fill_centre=False, strict=False,
+                   exit_to=None):
     """2D path for one layer of a flat part.
 
     Even layers spiral outside-in, odd layers inside-out. With
@@ -222,6 +223,9 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     (serpentine.centre_fill; not on an inside-out first layer, which starts
     there with its anchor). `strict` (Strict Bend Radius): Fill Centre lays
     one line per layer, moving across the hollow from layer to layer.
+    `exit_to` (a line; the layer recipe): where the stroke goes after this
+    path. A zigzag then also counts the lines its end would cross on the
+    way there when it picks its start corner.
     """
     check_gap_radius(track_gap, min_radius)
     gap = track_gap
@@ -350,6 +354,12 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
                                      wide=line_spacing is not None)
                 hits = (count_crossings([tuple(entry_from)] + [tuple(q) for q in route] + list(p))
                         - count_crossings(p)) if holed else 0
+                if exit_to is not None:
+                    # the way out: an end boxed in by the route in (or by the
+                    # lines) crosses them to get there
+                    q = exit_to.interpolate(exit_to.project(Point(p[-1])))
+                    hits += _crossing_count(LineString([p[-1], (q.x, q.y)]),
+                                            LineString([tuple(entry_from)] + [tuple(c) for c in route] + list(p)))
                 return (hits, cost(p)), route
             # On a part with holes: fewest lines crossed on the way in, then
             # the nearest corner. (A layer that ended by a hole, mid-part,
@@ -357,7 +367,7 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
             # (also for widely spaced lines: a start corner on the last
             # layer's end leads the climb across the first line)
             holed = bool(len(getattr(wall_poly, 'interiors', ()))) or line_spacing is not None
-            if holed:
+            if holed or exit_to is not None:
                 (_, route), infill_path = min(((entry(p), p) for p in candidates), key=lambda e: e[0][0])
             else:
                 infill_path = min(candidates, key=cost)

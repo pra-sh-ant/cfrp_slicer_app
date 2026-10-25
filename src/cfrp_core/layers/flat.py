@@ -9,7 +9,7 @@ from shapely.ops import unary_union
 
 from .. import geometry as geo
 from ..config import AUTO, ProcessConfig
-from ..geometry._common import count_crossings, enforce_min_radius_clear, hole_keepouts
+from ..geometry._common import enforce_min_radius_clear, hole_keepouts
 from . import auto
 from .common import (
     KinematicsParams,
@@ -125,25 +125,18 @@ def build_flat_laminate(config: ProcessConfig):
                     strict=strict.on,
                 )
             if recipe is not None and recipe.active and pattern in RECIPE_CORES and plan.pattern != AUTO:
-                def core(poly, at, heading, idx):
+                def core(poly, at, heading, idx, exit_to):
                     return geo.laminate_layer(
                         poly, gap, r_min, pattern, count, False, angle, layer_idx=idx, last_pt=at,
-                        last_dir=heading, line_spacing=spacing, line_offset=offset, strict=strict.on)
+                        last_dir=heading, line_spacing=spacing, line_offset=offset, strict=strict.on,
+                        exit_to=exit_to)
                 # wrap only when the next layer is a recipe layer too (it unwraps)
                 wrap_ok = num < len(plans) and plans[num].pattern in RECIPE_CORES
-                path = recipe.layer(num, plan.index, wrap_ok, last_pt, last_dir, core, plain)
-                if raw:
-                    return path
-                fixed = repair(path)
-                if strict.on and count_crossings(fixed) > count_crossings(path):
-                    # a bend repair crossed the recipe's own fibre (a join laid
-                    # along an edge ring): the layer without the recipe, if
-                    # that crosses less once repaired
-                    alt = repair(plain())
-                    if count_crossings(alt) < count_crossings(fixed):
-                        recipe.drop(num)
-                        return alt
-                return fixed
+                # each candidate judged as repaired (a join laid along an
+                # edge ring crossed it once repaired; a repair started a
+                # layer 339 mm late)
+                return recipe.layer(num, plan.index, wrap_ok, last_pt, last_dir, core, plain,
+                                    repair=None if raw else repair)
             path = plain()
             return path if raw else repair(path)
 

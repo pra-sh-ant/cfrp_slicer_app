@@ -505,7 +505,7 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
     from shapely.prepared import prep
 
     from ..geometry._common import local_bend_radii
-    from ..geometry.strict import ARC_FACTOR, TIGHT, dubins_curves, walk
+    from ..geometry.strict import ARC_FACTOR, BEND_GUARD, TIGHT, dubins_curves, walk
 
     xy = np.asarray([(p['x'], p['y']) for p in layer_trajectory], dtype=np.float64)
     tails = _tail_cuts(trajectory, seam_trim, seam_trim + 30.0)
@@ -515,6 +515,11 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
         return prev_cut, [(cut['x'], cut['y'])], rest
     seg = np.linalg.norm(np.diff(xy, axis=0), axis=1)
     layer_len = float(seg.sum())
+    # The layer's own repair left its bends up to BEND_GUARD past its first
+    # point (after the kept head) to the climb: the bend check runs past
+    # them, plus a bend window. (Checking 3 mm past a cut on the hop to the
+    # first point missed a 90° corner 6 mm on.)
+    guarded = float(seg[0]) + BEND_GUARD + 1.5
     # The crossing index on the layer cut into pieces of at most 3 mm: a
     # long diagonal zigzag line has a box that every query hits.
     pieces = [xy[:1]]
@@ -552,7 +557,7 @@ def strict_climb(trajectory, layer_trajectory, seam_trim, min_run, r_min, zone, 
         ahead = [q for n, q in enumerate(ahead) if n == 0 or math.dist(q, ahead[n - 1]) > 1e-9]
         if len(ahead) < 2:
             return None
-        return p1, math.atan2(ahead[1][1] - p1[1], ahead[1][0] - p1[0]), walk(ahead, 3.0), rest
+        return p1, math.atan2(ahead[1][1] - p1[1], ahead[1][0] - p1[0]), walk(ahead, max(3.0, guarded - d)), rest
 
     landed = {}
 

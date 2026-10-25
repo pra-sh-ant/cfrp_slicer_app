@@ -288,10 +288,24 @@ def _repair(P, pts, sa, sb, R, r_min, zone, gap, head_s, keep):
     if lost_head < lost_tail and sb + 1.0 < total:
         kj, pj, _ = P.at(sb + 1.0)
         new = [tuple(q) for q in pts[:max(keep, 0)]] + [pj] + [tuple(q) for q in pts[kj + 1:]]
-        return _dedupe(new), low, ("later start", head_s, sb + 1.0)
+        if not keep or _hop_ok(tuple(pts[keep - 1]), pj, zone):
+            return _dedupe(new), low, ("later start", head_s, sb + 1.0)
     ki, pi, _ = P.at(max(sa - 1.0, low))
     new = [tuple(q) for q in pts[:ki + 1]] + [pi]
     return _dedupe(new), total + 1.0, ("early end", max(sa - 1.0, low), total)
+
+
+def _hop_ok(head, start, zone):
+    """A later start after a kept head joins the head straight to the new
+    start: only if that hop stays where fibre may lie (past its first half
+    mm: the head is the last layer's end). A hop across the layer's lines
+    is left to the climb, which replaces the layer's start; a hop across a
+    hole outlived it (a layer started 339 mm later, over a bolt hole)."""
+    n = math.dist(head, start)
+    if n < 1e-9 or zone is None:
+        return True
+    f = min(0.5, 0.5 * n) / n
+    return zone.covers(LineString([(head[0] + (start[0] - head[0]) * f, head[1] + (start[1] - head[1]) * f), start]))
 
 
 def _try_curves(P, pts, curves, si, sj, ki, kj, pi, pj, r_min, zone, gap, whole):
@@ -338,41 +352,39 @@ def _tight_near(pts, r_min, s0, s1):
 
 
 def _already_near(P, whole, ki, kj, pi, pj, gap):
-    """Segments outside the replaced stretch that already lay near it:
-    (within half a gap -- the new curve may come as near them; within
-    0.1 mm, a retrace such as a spiral's outer lap closing over its own
-    start -- the new curve may also cross them)."""
+    """Segments outside the replaced stretch that already lay within half a
+    gap of it: the new curve may come as near them. (It may not cross any
+    of them, not even one the old stretch lay on: the audit counts that
+    crossing -- a loop replacing a join laid along an edge ring cut across
+    the ring.)"""
     tree = whole[0]
-    none = np.zeros(0, dtype=np.int64)
     if tree is None:
-        return none, none
+        return np.zeros(0, dtype=np.int64)
     old = [pi] + [(float(q[0]), float(q[1])) for q in P.pts[ki + 1:kj + 1]] + [pj]
     if len(old) < 2:
-        return none, none
-    out = []
-    for dist in (0.5 * gap + 0.05, 0.1):
-        j = tree.query(LineString(old), predicate='dwithin', distance=dist)
-        out.append(j[(j < ki) | (j > kj)])
-    return out[0], out[1]
+        return np.zeros(0, dtype=np.int64)
+    # queried segment by segment (the same set; a stretch hundreds of mm
+    # long against every segment near it was most of a repair's time)
+    arr = np.asarray(old, dtype=np.float64)
+    pieces = shapely.linestrings(np.stack([arr[:-1], arr[1:]], axis=1))
+    j = np.unique(tree.query(pieces, predicate='dwithin', distance=0.5 * gap + 0.05)[1])
+    return j[(j < ki) | (j > kj)]
 
 
-def _clear_of_rest(curve, start, whole, ki, kj, gap, cum, exempt=((), ())):
+def _clear_of_rest(curve, start, whole, ki, kj, gap, cum, exempt=()):
     """The curve crosses no segment outside the replaced stretch and keeps
     0.5·gap off them (away from its own two ends). `exempt` (_already_near):
-    segments the old stretch already came that near / retraced."""
+    segments the old stretch already came that near."""
     tree, segs, dirs = whole
     if tree is None:
         return True
     ex = np.zeros(len(dirs), dtype=bool)
-    on = np.zeros(len(dirs), dtype=bool)
-    if len(exempt[0]):
-        ex[np.asarray(exempt[0], dtype=np.int64)] = True
-    if len(exempt[1]):
-        on[np.asarray(exempt[1], dtype=np.int64)] = True
+    if len(exempt):
+        ex[np.asarray(exempt, dtype=np.int64)] = True
     arr = np.asarray([start] + list(curve), dtype=np.float64)
     lines = shapely.linestrings(np.stack([arr[:-1], arr[1:]], axis=1))
     i, j = tree.query(lines, predicate='crosses')
-    keep = ((j < ki) | (j > kj)) & ~on[j]
+    keep = (j < ki) | (j > kj)
     if keep.any():
         d = np.diff(arr, axis=0)
         d /= np.maximum(np.linalg.norm(d, axis=1), 1e-12)[:, None]

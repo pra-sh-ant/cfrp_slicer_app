@@ -107,12 +107,12 @@ def _turns_ccw(path, centre):
     return (x0 - centre[0]) * (y1 - centre[1]) - (y0 - centre[1]) * (x1 - centre[0]) > 0.0
 
 
-def _join(a, b, zone, rings, laid, gap, min_rad):
+def _join(a, b, zone, rings, laid, gap, min_rad, ahead=None):
     """Points after `a` up to `b`: straight, or along one of `rings` (the
     edges of the zones, where no pattern reaches), whichever stays in
-    `zone` and crosses `laid` (the layer so far) least, then is shortest.
-    The bends at its ends are rounded later (strict repair, or the radius
-    smoothing)."""
+    `zone` and crosses `laid` (the layer so far) and `ahead` (the piece laid
+    next, from `b`) least, then is shortest. The bends at its ends are
+    rounded later (strict repair, or the radius smoothing)."""
     from .serpentine import _Roadmap, _routes
     area = zone.buffer(1e-6)
     options = [r for r in _routes(tuple(a), tuple(b), area, rings, reach=1e9)
@@ -120,14 +120,14 @@ def _join(a, b, zone, rings, laid, gap, min_rad):
     if not options:
         detour = _Roadmap(area, rings, max(min_rad, gap) + 1.5 * gap, max(gap, 0.75))(a, b)
         options = [detour] if detour else [[tuple(b)]]
-    line = LineString(laid) if len(laid) > 1 else None
+    lines = [LineString(p) for p in (laid, ahead) if p is not None and len(p) > 1]
 
     def cost(r):
         seg = LineString([a] + r)
         hits = 0
-        if line is not None:
+        for line in lines:
             x = seg.intersection(line)
-            hits = 0 if x.is_empty else len(getattr(x, 'geoms', [x])) - 1
+            hits += 0 if x.is_empty else len(getattr(x, 'geoms', [x])) - 1    # less the shared end
         return hits, seg.length
     return list(min(options, key=cost))
 
@@ -217,8 +217,10 @@ def recipe_layer(part, holes, gap, min_rad, edge_rings, core, layer_idx, last_pt
     """One layer of the recipe on `part` (a Polygon with holes).
 
     `holes`: {index: hole Polygon} of the part's holes (drawing order).
-    `core(poly, last_pt, last_dir, layer_idx)`: the core pattern's path in
-    `poly` (it prepends last_pt when given).
+    `core(poly, last_pt, last_dir, layer_idx, exit_to)`: the core pattern's
+    path in `poly` (it prepends last_pt when given); `exit_to`, a line or
+    None: where the stroke goes after the core (a zigzag picks a start
+    corner whose end can get there without crossing its lines).
     Even `layer_idx`: inward -- edge rings in, core, then (`wrap_end`, a
     HoleBand) spiral into that hole. Odd: outward -- (`wrap_start`, a
     HoleBand; `start_ccw`: the way the last layer turned round it) spiral
@@ -249,15 +251,19 @@ def recipe_layer(part, holes, gap, min_rad, edge_rings, core, layer_idx, last_pt
                       part.buffer(-0.5 * gap, join_style=1))
 
     parts = []
+    # where the stroke goes after the core: the wrapped hole's outer ring
+    # (inward layers), the innermost edge ring (outward)
+    inner_edge = largest_polygon(shell.buffer(-(edge_rings - 0.5) * gap, join_style=1)) if edge_rings else None
+    edge_line = inner_edge.exterior if inner_edge is not None and inner_edge.geom_type == 'Polygon' else None
 
-    def extend(points, name):
+    def extend(points, name, area=zone):
         if not points:
             return
         if len(path) >= 2 and len(points) >= 2 and min_rad > 0:
             # a join that keeps the bend radius by construction (the end of
             # the last piece and the start of this one are cut back to make
             # room; a closed edge lap's end lies next to its own start)
-            joined = smooth_join(path, points, min_rad, gap, zone)
+            joined = smooth_join(path, points, min_rad, gap, area)
             if joined is not None:
                 kept, curve, rest = joined
                 path[:] = kept
@@ -269,19 +275,23 @@ def recipe_layer(part, holes, gap, min_rad, edge_rings, core, layer_idx, last_pt
                 path.extend(rest)
                 return
         if path:
-            link = _join(path[-1], points[0], zone, rings, path, gap, min_rad)[:-1]
+            link = _join(path[-1], points[0], area, rings, path, gap, min_rad, ahead=points)[:-1]
             parts.append(("join", len(path) - 1, len(path) + len(link)))
             path.extend(link)
         parts.append((name, len(path), len(path) + len(points) - 1))
         path.extend(points)
 
     if not outward:
+        # the joins before the wrap keep out of its band (the wrap, laid
+        # last, would cross them)
+        clear = zone.difference(band.band) if band is not None else zone
         edge = _edge_aligned(edge_poly, gap, min_rad, edge_rings, False,
                              last_pt if last_pt is not None else start_near, last_dir)
-        extend(edge, "edge")
+        extend(edge, "edge", clear)
         if core_poly is not None:
-            body = core(core_poly, path[-1] if path else None, _heading(path) or last_dir, layer_idx)
-            extend(body[1:] if path and body else body, "core")
+            body = core(core_poly, path[-1] if path else None, _heading(path) or last_dir, layer_idx,
+                        band.rings[-1].exterior if band is not None else None)
+            extend(body[1:] if path and body else body, "core", clear)
         ccw = True
         if band is not None:
             ccw = _turns_ccw(path, band.centre) if len(path) > 1 else True
@@ -294,7 +304,7 @@ def recipe_layer(part, holes, gap, min_rad, edge_rings, core, layer_idx, last_pt
         # same way, and spiral out.
         extend(wrap_out(band, last_pt if last_pt is not None else band.centre, ccw=start_ccw), "wrap")
     if core_poly is not None:
-        body = core(core_poly, path[-1] if path else None, _heading(path) or last_dir, layer_idx)
+        body = core(core_poly, path[-1] if path else None, _heading(path) or last_dir, layer_idx, edge_line)
         extend(body[1:] if path and body else body, "core")
     edge = _edge_aligned(edge_poly, gap, min_rad, edge_rings, True, path[-1] if path else None, _heading(path))
     extend(edge, "edge")
