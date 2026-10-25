@@ -2,8 +2,13 @@
 each one-island slice's outline (bending round its holes), then the core at
 the layer's angle; edge rings alone where a wall is too narrow for the
 core."""
+import math
+import re
+
 import numpy as np
 import pytest
+import shapely
+from shapely.geometry import Point, box
 
 from cfrp_core import from_legacy_dict, slice_part
 from cfrp_core.capabilities import ARCHIMEDEAN, FERMAT, ORIENTED_SERPENTINE, field_states
@@ -49,6 +54,31 @@ def _frame_stl(path, w, d, wall, h=1.0):
                 f.write(f"vertex {x} {y} {z}\n")
             f.write("endloop\nendfacet\n")
         f.write("endsolid frame\n")
+    return str(path)
+
+
+def _extruded_stl(path, poly, h=1.0):
+    """An ASCII STL of `poly` (holes allowed) extruded `h` tall: its faces
+    by constrained Delaunay triangulation, walls round every ring."""
+    poly = shapely.geometry.polygon.orient(poly, 1.0)          # outline counter-clockwise, holes clockwise
+    tris = []
+    for t in shapely.constrained_delaunay_triangles(poly).geoms:
+        a, b, c = t.exterior.coords[:3]
+        if shapely.geometry.polygon.orient(t, 1.0).exterior.coords[1] != b:
+            b, c = c, b
+        tris += [((a, h), (b, h), (c, h)), ((a, 0), (c, 0), (b, 0))]
+    for ring in [poly.exterior, *poly.interiors]:
+        pts = list(ring.coords)
+        for a, b in zip(pts[:-1], pts[1:], strict=False):
+            tris += [((a, 0), (b, 0), (b, h)), ((a, 0), (b, h), (a, h))]
+    with open(path, "w") as f:
+        f.write("solid part\n")
+        for tri in tris:
+            f.write("facet normal 0 0 0\nouter loop\n")
+            for (x, y), z in tri:
+                f.write(f"vertex {x} {y} {z}\n")
+            f.write("endloop\nendfacet\n")
+        f.write("endsolid part\n")
     return str(path)
 
 
@@ -113,7 +143,57 @@ def test_recipe_settings_on_stl():
     stl = dict(shape="STL Import", infill_type=ORIENTED_SERPENTINE, layers=2)
     s = field_states(stl)
     assert s["edge_rings"].enabled
-    assert not s["wrap_holes"].enabled and "STL" in s["wrap_holes"].reason
+    assert s["wrap_holes"].enabled and not s["hole_rings"].enabled           # Wrap Holes is off
+    s = field_states(dict(stl, wrap_holes=True))
+    assert s["hole_rings"].enabled and not s["bolt_holes"].enabled and "bores" in s["bolt_holes"].reason
     assert not field_states(dict(stl, infill_type=ARCHIMEDEAN))["edge_rings"].enabled
     assert not field_states(dict(stl, edge_rings=2))["include_boundary"].enabled
     assert field_states(dict(stl, edge_rings=2, stl_islands="all"))["include_boundary"].enabled
+
+
+def _sweep(points, centre):
+    """Signed degrees turned round `centre` along `points`."""
+    a = np.unwrap([math.atan2(y - centre[1], x - centre[0]) for x, y in points])
+    return math.degrees(a[-1] - a[0]) if len(a) > 1 else 0.0
+
+
+def _near_run(points, centre, reach, from_end):
+    seq = points[::-1] if from_end else points
+    run = []
+    for p in seq:
+        if math.dist(p, centre) > reach:
+            break
+        run.append(p)
+    return run[::-1] if from_end else run
+
+
+def test_bores_through_the_slices_are_wrapped_in_turn(tmp_path):
+    # a 60 x 40 plate, 2 mm thick (8 slices), with four M3 bores
+    centres = ((10.0, 10.0), (50.0, 10.0), (50.0, 30.0), (10.0, 30.0))
+    poly = box(0, 0, 60, 40)
+    for x, y in centres:
+        poly = poly.difference(Point(x, y).buffer(1.6, 16))
+    path = _extruded_stl(tmp_path / "plate.stl", poly, 2.0)
+    res = _slice(path, edge_rings=2, wrap_holes=True, hole_rings=2)
+    assert res.validation["status"] == "Pass", res.validation["messages"]
+    note = next(n for n in res.info if n.startswith("Bore wraps"))
+    wraps = re.findall(r"bore (\d) at layers (\d)-(\d)", note)
+    assert sorted(int(b) for b, _, _ in wraps) == [1, 2, 3, 4], note
+    layers = _layers(res)
+    xs = [q["x"] for q in res.trajectory]
+    ys = [q["y"] for q in res.trajectory]
+    ox, oy = min(xs) - 0.6, min(ys) - 0.6          # the plate's corner as placed (outer ring half a gap in)
+    for _b, n, m in wraps:
+        n, m = int(n), int(m)
+        # the bore the layer ends in: the hole centre nearest its end
+        end = layers[n][-1]
+        c = min(((x + ox, y + oy) for x, y in centres), key=lambda q: math.dist(q, end))
+        into = _sweep(_near_run(layers[n], c, 5.2, from_end=True), c)
+        out = _sweep(_near_run(layers[m], c, 5.2, from_end=False), c)
+        assert abs(into) >= 540.0 and abs(out) >= 540.0 and into * out > 0, (n, into, out)
+
+
+def test_no_bore_no_wrap(tmp_path):
+    path = _boxes_stl(tmp_path / "plate.stl", [(0, 0, 60, 30)])
+    res = _slice(path, edge_rings=1, wrap_holes=True)
+    assert any(n.startswith("Wrap Holes: no bore") for n in res.info)

@@ -244,7 +244,7 @@ def field_states(p: dict) -> dict[str, OptionState]:
         s["wrap_holes"] = (_off("Auto (Best Fit) judges each layer on its own; a wrap takes the recipe on two "
                                 "layers in a row.") if auto and family == "flat" else s["edge_rings"])
     elif family == "stl":
-        s["wrap_holes"] = _off("Not for STL parts yet: their holes are steered round, not wrapped.")
+        s["wrap_holes"] = ON              # the bores through the slices (their count is the mesh's)
     elif shape != CUSTOM:
         s["wrap_holes"] = _off("Only for the Custom Outline: other flat shapes have no holes.")
     elif layers <= 1:
@@ -256,6 +256,8 @@ def field_states(p: dict) -> dict[str, OptionState]:
             s[key] = s["wrap_holes"]
         else:
             s[key] = ON if wrap else _off("Only with Wrap Holes.")
+    if family == "stl" and s["bolt_holes"].enabled:
+        s["bolt_holes"] = _off("STL parts: the bores are found and numbered by the slicer and wrapped in turn.")
     s["drill_holes"] = ON if shape == CUSTOM else _off("Only for the Custom Outline (its holes are numbered "
                                                        "in drawing order).")
     s["strict_bend_radius"] = (ON if family in ("flat", "stl")

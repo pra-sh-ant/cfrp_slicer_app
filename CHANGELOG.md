@@ -5,6 +5,20 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 45, second part: bores wrapped on STL parts)
+- **Wrap Holes on STL parts**: holes that line up through consecutive slices
+  (centres within a gap or a third of the hole's radius, areas within a factor
+  2) are bores, numbered from the bottom. On recipe slices an inward layer ends
+  by spiralling into a bore's Hole Rings and the next slice starts by spiralling
+  out of the same bore, the same way round, as on flat parts; bores take turns,
+  least wrapped first. A layer wraps a bore only if the next slice has it and
+  takes the recipe too. The note lists the wraps ("Bore wraps (2 ring(s), full
+  laps): bore 1 at layers 1-2, ...") and the bores not wrapped. Bolt Holes stays
+  off for STL parts (the slicer numbers the bores). Wrap Holes works without
+  Edge Rings too.
+- Measured: a 60 x 40 x 2 mm plate with four M3 bores (8 slices, strict on,
+  Edge Rings 2, Oriented Serpentine): all four bores wrapped, Pass.
+
 ### Added (Phase 45, first part: the layer recipe on STL slices)
 - **Edge Rings on STL parts** (zigzag or Fermat pattern): each slice that is one
   island with only small holes (bores, bolt holes: none over a tenth of the
