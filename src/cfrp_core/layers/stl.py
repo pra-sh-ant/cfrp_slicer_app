@@ -283,7 +283,7 @@ def build_stl_laminate(config: ProcessConfig):
                         raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0)
                         chosen.append((i + 1, reused))
                 if reused is None:
-                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, peek=True, raw=strict.on),
+                    choice, raw_path = auto.choose(lambda p, a, _e: generate(p, a, peek=True, raw=strict.on),
                                                    auto.candidates_for(region, current_angle), region, holes,
                                                    gap, r_min, last_pt, strict=strict.on,
                                                    repair=repair if strict.on else None)
