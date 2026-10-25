@@ -524,6 +524,12 @@ class ControlsPanel(QWidget):
         self.pump_floor_spin = self._add(sec, "pump_stall_floor", "Pump-Stall Floor",
                                          _spin(0, 100, 0.5, 5.0, 1, "mm/s"))
         self.min_r_spin = self._add(sec, "min_radius", "Min Bend Radius", _spin(0, 50, 0.5, 3.0, 1, "mm"))
+        self.uv_dose_spin = self._add(sec, "uv_dose", "Cure Dose", _spin(0, 10000, 10, 0.0, 0, "mJ/cm²"))
+        self.uv_dose_spin.setSpecialValueText("off")
+        self.uv_irr_spin = self._add(sec, "uv_irradiance", "LED Irradiance", _spin(0, 100000, 10, 0.0, 0, "mW/cm²"))
+        self.uv_spot_spin = self._add(sec, "uv_spot", "LED Spot Length", _spin(0, 50, 0.5, 0.0, 1, "mm"))
+        for w in (self.uv_dose_spin, self.uv_irr_spin, self.uv_spot_spin):
+            w.valueChanged.connect(self._emit)
 
         sec = self._section("Seams & Transitions")
         self.anchor_spin = self._add(sec, "anchor_length", "Anchor Length", _spin(0, 50, 1, 15.0, 1, "mm"))
@@ -693,6 +699,7 @@ class ControlsPanel(QWidget):
             "wrap_holes": self.wrap_chk.isChecked(),
             "stl_islands": "all" if self.stl_islands_chk.isChecked() else "largest",
             "pa_table": self.pa_table_edit.text(),
+            "uv_dose": self.uv_dose_spin.value(),
             "track_gap": self.gap_spin.value(),
             "min_radius": self.min_r_spin.value(),
             "include_boundary": self.boundary_chk.isChecked(),
@@ -788,6 +795,9 @@ class ControlsPanel(QWidget):
             "seam_trim_length": seam_trim,
             "seam_stagger": self.seam_stagger_spin.value(),
             "pa_table": self.pa_table_edit.text(),
+            "uv_dose": self.uv_dose_spin.value(),
+            "uv_irradiance": self.uv_irr_spin.value(),
+            "uv_spot": self.uv_spot_spin.value(),
             "anchor_length": anchor,
             "min_radius": self.min_r_spin.value(),
             "v_z": vz,
@@ -927,6 +937,9 @@ class ControlsPanel(QWidget):
         _set(self.seam_trim_spin, "seam_trim_length")
         _set(self.seam_stagger_spin, "seam_stagger")
         _set(self.pa_table_edit, "pa_table")
+        _set(self.uv_dose_spin, "uv_dose")
+        _set(self.uv_irr_spin, "uv_irradiance")
+        _set(self.uv_spot_spin, "uv_spot")
         _set(self.anchor_spin, "anchor_length")
         _set(self.min_r_spin, "min_radius")
         _set(self.vz_spin, "v_z")

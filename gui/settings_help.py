@@ -136,6 +136,12 @@ HELP = {
                         "flowing reliably. Measure it with the pump-floor calibration coupon.",
     "min_radius": "Tightest bend the fibre may take without breaking or kinking. Bigger = safer for "
                   "the fibre but corners and small details can't be reached.",
+    "uv_dose": "UV energy the resin needs to cure as it is laid (from the resin's data sheet or the UV "
+               "dose ladder). With LED Irradiance and LED Spot Length set, every speed is capped so "
+               "the tow passes the LED slowly enough to get it: speed <= irradiance x spot / dose. "
+               "Off = no cap.",
+    "uv_irradiance": "Irradiance of the head's UV LED at the tow (measure it with a radiometer).",
+    "uv_spot": "Length of the LED's spot along the path: how long each point of the tow stays lit.",
 
     # --- seams & transitions -----------------------------------------------------------------
     "anchor_length": "A short straight start before the part begins, to grip the fibre to the bed.",

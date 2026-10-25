@@ -339,6 +339,14 @@ class ProcessConfig(_Frozen):
     edge_rings: int = 0
     hole_rings: int = 2
     wrap_holes: bool = False
+    # Curing in the path (Phase 45): the resin cures under the head's UV LED
+    # as it is laid, so the tow must pass slowly enough to get its dose:
+    # dose (mJ/cm²) = irradiance (mW/cm²) x spot length (mm) / speed (mm/s).
+    # With all three set, every speed is capped at irradiance x spot / dose.
+    # 0 = off.
+    uv_dose_mj_cm2: float = 0.0
+    uv_irradiance_mw_cm2: float = 0.0
+    uv_spot_mm: float = 0.0
 
     # -- unconditional field rules (legacy messages) --
     @field_validator("track_gap_mm")
@@ -386,6 +394,15 @@ class ProcessConfig(_Frozen):
     def _skins(cls, v: int) -> int:
         if not 0 <= v <= 1000:
             raise ValueError("Solid Bottom / Top Layers must be between 0 and 1000.")
+        return v
+
+    @field_validator("uv_dose_mj_cm2", "uv_irradiance_mw_cm2", "uv_spot_mm")
+    @classmethod
+    def _cure(cls, v: float, info) -> float:
+        names = {"uv_dose_mj_cm2": "Cure Dose", "uv_irradiance_mw_cm2": "LED Irradiance",
+                 "uv_spot_mm": "LED Spot Length"}
+        if not (math.isfinite(v) and v >= 0):
+            raise ValueError(f"{names[info.field_name]} cannot be negative.")
         return v
 
     @field_validator("edge_rings", "hole_rings")

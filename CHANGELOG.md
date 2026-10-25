@@ -5,6 +5,18 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 45, third part: curing in the path)
+- **Cure Dose, LED Irradiance, LED Spot Length** (Speed & Flow; `uv_dose_mj_cm2`,
+  `uv_irradiance_mw_cm2`, `uv_spot_mm`; off by default): the resin cures under
+  the head's LED as it is laid, so with all three set every speed is capped at
+  irradiance x spot / dose (dose = irradiance x spot length / speed): Print
+  Speed, Min Bend Speed, Pump-Stall Floor, and the Mushroom's Overhang and Z Pull
+  speeds. Applied before the speed planner, whose loops are untouched; a note
+  names what was capped ("UV cure: Print Speed (Max) capped at 6.00 mm/s, so the
+  resin gets 300 mJ/cm² (600 mW/cm² over a 3 mm spot)."). A dose without the LED
+  values caps nothing and says so. The LED fields are greyed out until a dose is
+  set. Goldens unchanged (off).
+
 ### Added (Phase 45, second part: bores wrapped on STL parts)
 - **Wrap Holes on STL parts**: holes that line up through consecutive slices
   (centres within a gap or a third of the hole's radius, areas within a factor

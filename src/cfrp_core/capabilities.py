@@ -302,6 +302,10 @@ def field_states(p: dict) -> dict[str, OptionState]:
     else:
         s["seam_stagger"] = _off("Only for round Z shells and flat Archimedean parts (it twists the "
                                  "spiral so each layer's seam moves round).")
+    s["uv_dose"] = ON                     # every part: the tow passes the LED as it is laid
+    dose = _num(p, "uv_dose", 0.0) > 0
+    for key in ("uv_irradiance", "uv_spot"):
+        s[key] = ON if dose else _off("Only with a Cure Dose: the speed cap needs all three.")
     for key in ("v_z", "v_overhang", "dwell"):
         s[key] = ON if family == "mushroom" else mushroom_only
     return s

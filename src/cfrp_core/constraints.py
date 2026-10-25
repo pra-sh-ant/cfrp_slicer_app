@@ -48,12 +48,31 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
             )
 
     kin_update = {}
-    minimum_speed = float(k.v_min_mm_s)
+    # Curing in the path: no faster than the LED gives the resin its dose.
+    dose, irradiance, spot = (float(config.uv_dose_mj_cm2), float(config.uv_irradiance_mw_cm2),
+                              float(config.uv_spot_mm))
+    if dose > 0 and (irradiance <= 0 or spot <= 0):
+        notes.append("Cure Dose is set but LED Irradiance or LED Spot Length is not: speeds are not capped "
+                     "for the cure.")
+    elif dose > 0:
+        cure_speed = irradiance * spot / dose
+        capped = []
+        for field, label in (("v_max_mm_s", "Print Speed (Max)"), ("v_min_mm_s", "Min Bend Speed"),
+                             ("pump_stall_floor_mm_s", "Pump-Stall Floor"), ("v_overhang_mm_s", "Overhang Speed"),
+                             ("v_z_mm_s", "Z Pull Speed")):
+            if float(getattr(k, field)) > cure_speed:
+                kin_update[field] = cure_speed
+                capped.append(label)
+        if capped:
+            max_speed = min(max_speed, cure_speed)
+            notes.append(f"UV cure: {', '.join(capped)} capped at {cure_speed:.2f} mm/s, so the resin gets "
+                         f"{dose:g} mJ/cm² ({irradiance:g} mW/cm² over a {spot:g} mm spot).")
+    minimum_speed = float(kin_update.get("v_min_mm_s", k.v_min_mm_s))
     if minimum_speed > max_speed:
         kin_update["v_min_mm_s"] = max_speed
         notes.append(f"Min Bend Speed limited to Print Speed (Max), {max_speed:.2f} mm/s.")
 
-    pump_floor = float(k.pump_stall_floor_mm_s)
+    pump_floor = float(kin_update.get("pump_stall_floor_mm_s", k.pump_stall_floor_mm_s))
     if pump_floor > max_speed:
         kin_update["pump_stall_floor_mm_s"] = max_speed
         notes.append(f"Pump-Stall Floor limited to Print Speed (Max), {max_speed:.2f} mm/s-equiv.")
