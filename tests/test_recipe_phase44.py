@@ -150,7 +150,7 @@ def test_recipe_settings_greyed_out_where_they_do_nothing():
     rect = field_states(dict(flat, shape="Square/Rectangle", wrap_holes=True))
     assert rect["edge_rings"].enabled and not rect["wrap_holes"].enabled and not rect["drill_holes"].enabled
     assert not rect["bolt_holes"].enabled
-    assert not field_states(dict(flat, shape="STL Import"))["edge_rings"].enabled
+    assert field_states(dict(flat, shape="STL Import"))["edge_rings"].enabled        # Phase 45: STL slices too
     # Edge Rings on every layer: Print Outer Boundary adds nothing
     assert not field_states(dict(flat, edge_rings=2))["include_boundary"].enabled
     assert field_states(dict(flat, edge_rings=2, first_layer_infill=ARCHIMEDEAN))["include_boundary"].enabled

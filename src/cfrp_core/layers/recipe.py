@@ -114,11 +114,13 @@ class Recipe:
             """((fibre over a hole, crossings), the repair cut over 40 % of
             it away, the path as laid). Judged after the bend repair: a
             candidate that crossed nothing could cross once repaired (and was
-            then laid without the recipe, its hole left unwrapped)."""
+            then laid without the recipe, its hole left unwrapped). The hop
+            from the last layer's end is left out: the climb replaces it."""
             laid = repair(path) if repair is not None else path
             lost = float(getattr(laid, 'lost', 0.0) or 0.0)
-            over = len(laid) > 1 and self.hole_area is not None and LineString(laid).intersects(self.hole_area)
-            return (bool(over), zones.joins_cross(laid)), lost > 0.4 * _length(path), laid
+            body = laid[1:] if last_pt is not None and len(laid) > 2 else laid
+            over = len(body) > 1 and self.hole_area is not None and LineString(body).intersects(self.hole_area)
+            return (bool(over), zones.joins_cross(body)), lost > 0.4 * _length(path), laid
 
         wrapping = self.wrap and inward and wrap_ok and self.eligible and record
         holes = [None]

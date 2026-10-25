@@ -7,6 +7,8 @@ import math
 from collections import Counter
 
 import numpy as np
+import shapely
+from shapely.geometry import Polygon
 from shapely.ops import unary_union
 
 from .. import geometry as geo
@@ -35,6 +37,7 @@ from .planning import (
     skin_summary,
     stl_skins,
 )
+from .recipe import RECIPE_CORES, Recipe, recipe_wanted
 
 
 def _stl_layer_path(islands, config: ProcessConfig, angle, layer_idx, last_pt, last_dir=None,
@@ -105,6 +108,64 @@ def _stl_layer_raw(islands, config: ProcessConfig, angle, layer_idx, last_pt, la
     return attempt(pattern, tracks)
 
 
+def _bolt_holes_only(island, share=0.1):
+    """True when every hole of the slice is small next to it (a bore, a bolt
+    hole): the recipe steers round such holes. A ring-shaped slice (a tube,
+    a torus: one big hole) has walls, not a middle, and is laid as without
+    the recipe."""
+    shell = Polygon(island.exterior).area
+    return all(Polygon(r).area <= share * shell for r in island.interiors)
+
+
+def _stl_recipe_layer(island, config: ProcessConfig, angle, layer_idx, num, last_pt, last_dir, spacing, offset,
+                      strict, fallbacks, lead_in, tally):
+    """The layer recipe on a one-island slice: Edge Rings along its outline
+    (bending round its holes), then the core at the layer's angle; where the
+    core has no room (a wall narrower than about 2 x r_min + gap) the edge
+    rings alone. Laid as the flat recipe lays it (judged after the bend
+    repair; the slice without the recipe where that is clearly better).
+    `tally` counts the slices: 'recipe', 'edge only', 'plain'."""
+    gap, r_min = config.track_gap_mm, config.min_radius_mm
+    pattern = config.infill_type
+
+    def plain():
+        return _stl_layer_raw([island], config, angle, layer_idx, last_pt, last_dir, fallbacks, lead_in,
+                              spacing, offset)
+
+    # The core's room inside the edge rings: none (a narrow wall) -> the
+    # slice as without the recipe, whose rings follow the wall across it.
+    zone = geo.largest_polygon(Polygon(island.exterior).buffer(-int(config.edge_rings) * gap, join_style=1))
+    if not zone.is_empty and island.interiors:
+        zone = geo.largest_polygon(zone.difference(shapely.union_all([Polygon(r) for r in island.interiors])))
+    if (zone.is_empty or (pattern in _ZIGZAGS and not geo.zigzag_fits(zone, gap, r_min))
+            or (pattern == FERMAT and zone.buffer(-2.0 * gap).is_empty)):
+        tally['edge only'] += 1
+        path = plain()
+        return (strict.repair(path, island, keep_head=1 if last_pt is not None else 0)
+                if strict is not None and strict.on else path), False
+    holes = {k: Polygon(r) for k, r in enumerate(island.interiors, start=1)}
+    recipe = Recipe(config.model_copy(update=dict(wrap_holes=False)), island, holes=holes)
+    count = _fill_track_count(island, config, pattern) if config.fill_solid else config.tracks_per_layer
+
+    def core(poly, at, heading, idx, exit_to):
+        return geo.laminate_layer(poly, gap, r_min, pattern, count, False, angle, layer_idx=idx, last_pt=at,
+                                  last_dir=heading, line_spacing=spacing, line_offset=offset,
+                                  strict=config.strict_bend_radius, exit_to=exit_to)
+
+    repair = None
+    if strict is not None and strict.on:
+        def repair(path):
+            return strict.repair(path, island, keep_head=1 if last_pt is not None else 0)
+    path = recipe.layer(num, layer_idx, False, last_pt, last_dir, core, plain, repair=repair)
+    if recipe.plain_layers:
+        tally['plain'] += 1
+    elif recipe.unjoined:
+        tally['edge only'] += 1
+    else:
+        tally['recipe'] += 1
+    return path, not recipe.plain_layers
+
+
 _FALLBACK_NOTES = {
     'zigzag': "{n} slice(s) or island(s) are too narrow for the zigzag's U-turns (walls under "
               "{w:.1f} mm) and were filled with concentric rings instead.",
@@ -113,6 +174,23 @@ _FALLBACK_NOTES = {
     'corner': "{n} slice(s) fit no Corner-Step ring and were filled with Archimedean rings instead.",
     'lap': "{n} island(s) too thin for a spiral got one lap of their wall.",
 }
+
+
+def _recipe_note(config: ProcessConfig, tally) -> str:
+    """'Layer recipe: 2 edge ring(s) along the outline on 12 slice(s), ...'."""
+    parts = [f"Layer recipe: {int(config.edge_rings)} edge ring(s) along the outline on {tally['recipe']} "
+             f"slice(s), then the {config.infill_type} core"]
+    if tally['edge only']:
+        parts.append(f"{tally['edge only']} slice(s) too narrow for the core got rings along their walls "
+                     f"instead")
+    if tally['plain']:
+        parts.append(f"{tally['plain']} slice(s) laid without the recipe (it crossed itself or lost much there)")
+    if tally['pieces']:
+        parts.append(f"{tally['pieces']} slice(s) in several pieces laid without it (each piece must be "
+                     f"entered and left at its edge)")
+    if tally['ring']:
+        parts.append(f"{tally['ring']} ring-shaped slice(s) (a hole over a tenth of the slice) laid without it")
+    return "; ".join(parts) + "."
 
 
 def _mesh_report_notes(report, slices, layer_height):
@@ -220,6 +298,9 @@ def build_stl_laminate(config: ProcessConfig):
     decided, chosen = {}, []                       # Auto: (parity, angle, outline) -> (pattern, angle)
     strict = StrictBends(config)
     prev_zone = None
+    # Layer recipe (Phase 45): Edge Rings along each one-island slice's outline
+    use_recipe = recipe_wanted(config) and int(config.edge_rings) > 0
+    tally = Counter()
 
     def layer_config(plan):
         """config with this layer's pattern and fill (cached per pair)."""
@@ -252,6 +333,7 @@ def build_stl_laminate(config: ProcessConfig):
             plans = plan_layers(config, len(slices) - i, skins[i:], offset=i)
         plan = plans[i - first]
         lead = plan.lead_in if len(islands) == 1 else 0.0
+        recipe_start = False
         try:
             if plan.pattern == AUTO:
                 # Auto fills every slice; a slice like one already judged
@@ -295,9 +377,16 @@ def build_stl_laminate(config: ProcessConfig):
                 lead = 0.0
             else:
                 spacing, offset = shifts.next(plan.pattern, plan.index, current_angle)
-                raw_path = _stl_layer_path(islands, layer_config(plan), current_angle, plan.index, last_pt,
-                                           last_dir, fallbacks, lead_in=lead, spacing=spacing, offset=offset,
-                                           strict=strict)
+                if use_recipe and plan.pattern in RECIPE_CORES and len(islands) == 1 and _bolt_holes_only(islands[0]):
+                    raw_path, recipe_start = _stl_recipe_layer(
+                        islands[0], layer_config(plan), current_angle, plan.index, i + 1, last_pt, last_dir,
+                        spacing, offset, strict, fallbacks, lead, tally)
+                else:
+                    if use_recipe and plan.pattern in RECIPE_CORES:
+                        tally['pieces' if len(islands) > 1 else 'ring'] += 1
+                    raw_path = _stl_layer_path(islands, layer_config(plan), current_angle, plan.index, last_pt,
+                                               last_dir, fallbacks, lead_in=lead, spacing=spacing, offset=offset,
+                                               strict=strict)
         except ValueError:
             continue
         if not raw_path:
@@ -305,7 +394,9 @@ def build_stl_laminate(config: ProcessConfig):
 
         strict.record(i + 1, raw_path)
         anchor_n = 0
-        if not trajectory and lead:
+        # a recipe slice starts on its edge ring: the ring's own first mm are
+        # the anchor (as on flat parts)
+        if not trajectory and (lead or recipe_start):
             anchor_n = _points_within(raw_path, float(config.anchor_length_mm))
         elif not trajectory:
             n_before = len(raw_path)
@@ -357,6 +448,10 @@ def build_stl_laminate(config: ProcessConfig):
         if summary:
             info.append(summary)
     info.extend(dict.fromkeys(p.note for p in plans if p.note))
+    if tally:
+        info.append(_recipe_note(config, tally))
+    if use_recipe and config.wrap_holes:
+        info.append("Wrap Holes: not used on STL slices (their holes are not wrapped yet).")
     if chosen:
         info.append(auto.summary(chosen))
     if strict.note():

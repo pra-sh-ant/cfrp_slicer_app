@@ -151,7 +151,7 @@ def field_states(p: dict) -> dict[str, OptionState]:
         s["include_boundary"] = _off("Corner-Step's outer ring already runs along the boundary.")
     elif (_recipe_layers(p, family) == "all" and int(_num(p, "edge_rings", 0)) > 0 and infill != AUTO
           and p.get("first_layer_infill") != AUTO
-          and not (shape == CUSTOM and p.get("stl_islands") == "all")):    # (pieces: no recipe)
+          and not ((shape == CUSTOM or family == "stl") and p.get("stl_islands") == "all")):    # (pieces: no recipe)
         s["include_boundary"] = _off("Edge Rings already run along the outline.")
     else:
         s["include_boundary"] = ON
@@ -237,12 +237,14 @@ def field_states(p: dict) -> dict[str, OptionState]:
     # --- layer recipe (Phase 44) ---------------------------------------------
     recipe = _recipe_layers(p, family)
     s["edge_rings"] = (ON if recipe or (auto and family == "flat")
-                       else _off("Only for flat parts with a zigzag (Oriented Serpentine, 45° Diagonal Hatch), "
-                                 "Fermat or Auto (Best Fit) pattern, on this or the first layer."))
+                       else _off("Only for flat and STL parts with a zigzag (Oriented Serpentine, 45° Diagonal "
+                                 "Hatch) or Fermat pattern (flat parts: or Auto), on this or the first layer."))
     wrap = bool(p.get("wrap_holes", False))
     if not recipe:
         s["wrap_holes"] = (_off("Auto (Best Fit) judges each layer on its own; a wrap takes the recipe on two "
                                 "layers in a row.") if auto and family == "flat" else s["edge_rings"])
+    elif family == "stl":
+        s["wrap_holes"] = _off("Not for STL parts yet: their holes are steered round, not wrapped.")
     elif shape != CUSTOM:
         s["wrap_holes"] = _off("Only for the Custom Outline: other flat shapes have no holes.")
     elif layers <= 1:
@@ -305,9 +307,9 @@ def field_states(p: dict) -> dict[str, OptionState]:
 
 def _recipe_layers(p: dict, family: str) -> str:
     """Which layers the layer recipe can shape: "all", "some" (the first
-    layer / skins or the main pattern only) or "" (none): flat parts, zigzag
-    or Fermat layers."""
-    if family != "flat":
+    layer / skins or the main pattern only) or "" (none): flat and STL
+    parts, zigzag or Fermat layers."""
+    if family not in ("flat", "stl"):
         return ""
     main = p.get("infill_type", ARCHIMEDEAN) in RECIPE_CORES
     first = p.get("first_layer_infill")

@@ -5,6 +5,39 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 45, first part: the layer recipe on STL slices)
+- **Edge Rings on STL parts** (zigzag or Fermat pattern): each slice that is one
+  island with only small holes (bores, bolt holes: none over a tenth of the
+  slice) gets Edge Rings along its outline, bending round its holes, then the
+  core at the layer's angle, laid and judged as on flat parts. A slice whose
+  walls leave the core no room (narrower than about 2 x r_min + gap inside the
+  edge rings) gets rings along its walls instead, as without the recipe.
+  Ring-shaped slices (a tube, a torus: one big hole) and slices in several
+  pieces are laid as before (each piece of a multi-island slice must be entered
+  and left at its edge). One note counts the slices of each kind. Wrap Holes
+  stays off for STL parts.
+- The recipe judge leaves out the hop from the last layer's end (the climb
+  replaces it; it counted crossings that were never laid).
+
+Audit of 13 meshes (cylinder, cube, plate, cone, sphere, tube, thin wall, torus,
+pyramid, two parts, pen holder, tray, plate with a bore) x zigzag / hatch / Fermat
+x strict on / off, Edge Rings 0 -> 2 (coverage, share of each layer):
+- Strict zigzag cores: 0.16 -> 0.29 to 0.36 on the solid parts; the cone and
+  pyramid slices (strict serpentine) went from Fail to Pass.
+- Strict off: within 0.01 to 0.05 either way. Fermat cores lose 0.01 to 0.12
+  (their own outer rings already ran along the edge).
+- Tube, thin wall, torus: unchanged (ring-shaped slices).
+
+### Known limits (Phase 45, first part)
+- Strict climbs between edge rings search longer: a 24 mm sphere at 0.25 mm
+  layers takes 70-90 s with Edge Rings 2 (7-14 s without).
+- The tray (a plate with two 4 mm walls) fails with Edge Rings on (a climb over
+  empty space between the walls): strict climbs on walls narrower than 2 x r_min
+  loop at the radius when consecutive layers run opposite ways; the recipe only
+  changed which way. The torus already fails without the recipe.
+- With strict off, the plate with a 4 mm bore and a 45° hatch core keeps one
+  crossing on its recipe layers.
+
 ### Added (Phase 44, fourth part: Auto weighs the recipe, holes marked on the canvas)
 - **Auto (Best Fit) with Edge Rings**: each layer also weighs that many edge
   rings round a zigzag (at the layup angle or across it) or a Fermat core, and
