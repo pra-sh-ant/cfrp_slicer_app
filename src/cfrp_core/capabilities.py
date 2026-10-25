@@ -149,7 +149,8 @@ def field_states(p: dict) -> dict[str, OptionState]:
         s["include_boundary"] = _off("Z shells and the Mushroom have no separate boundary pass.")
     elif infill == CORNER_STEP:
         s["include_boundary"] = _off("Corner-Step's outer ring already runs along the boundary.")
-    elif (_recipe_layers(p, family) == "all" and int(_num(p, "edge_rings", 0)) > 0
+    elif (_recipe_layers(p, family) == "all" and int(_num(p, "edge_rings", 0)) > 0 and infill != AUTO
+          and p.get("first_layer_infill") != AUTO
           and not (shape == CUSTOM and p.get("stl_islands") == "all")):    # (pieces: no recipe)
         s["include_boundary"] = _off("Edge Rings already run along the outline.")
     else:
@@ -235,12 +236,13 @@ def field_states(p: dict) -> dict[str, OptionState]:
                                    "chooses each layer's pattern by what the layers below left empty."))
     # --- layer recipe (Phase 44) ---------------------------------------------
     recipe = _recipe_layers(p, family)
-    s["edge_rings"] = (ON if recipe else _off("Only for flat parts with a zigzag (Oriented Serpentine, 45° "
-                                               "Diagonal Hatch) or Fermat pattern, on this or the first "
-                                               "layer."))
+    s["edge_rings"] = (ON if recipe or (auto and family == "flat")
+                       else _off("Only for flat parts with a zigzag (Oriented Serpentine, 45° Diagonal Hatch), "
+                                 "Fermat or Auto (Best Fit) pattern, on this or the first layer."))
     wrap = bool(p.get("wrap_holes", False))
     if not recipe:
-        s["wrap_holes"] = s["edge_rings"]
+        s["wrap_holes"] = (_off("Auto (Best Fit) judges each layer on its own; a wrap takes the recipe on two "
+                                "layers in a row.") if auto and family == "flat" else s["edge_rings"])
     elif shape != CUSTOM:
         s["wrap_holes"] = _off("Only for the Custom Outline: other flat shapes have no holes.")
     elif layers <= 1:

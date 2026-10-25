@@ -14,6 +14,7 @@ from .design import (
     board_polygon,
     example_board,
     footprint,
+    hole_marks,
     hole_outlines,
     interdigitated,
     load_design,
@@ -26,7 +27,8 @@ from .validation import drc, trace_resistance
 
 __all__ = [
     "FOOTPRINTS", "BoardDesign", "DiwConfig", "DiwLayerSpec", "DiwResult", "Hole", "Pad", "Trace", "Zone",
-    "board_polygon", "build_diw_config", "default_stack", "drc", "example_board", "footprint", "hole_outlines",
+    "board_polygon", "build_diw_config", "default_stack", "drc", "example_board", "footprint", "hole_marks",
+    "hole_outlines",
     "interdigitated", "layer_stack", "load_design", "meander", "save_design", "slice_diw", "spiral_coil",
     "trace_resistance",
 ]

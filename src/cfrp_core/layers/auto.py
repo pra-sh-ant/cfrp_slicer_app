@@ -1,9 +1,10 @@
 """Auto (Best Fit) infill: on each layer every pattern is tried -- the three
 spirals filled solid, zigzags at the layer's layup angle, across it, along
-the part's long side and at ±45° -- and the one that keeps the fibre rules
-best is laid: never over a hole, no crossings, fewest bends tighter than
-the minimum, most of the layer covered, a short way in from the previous
-layer. Choices are reused for later layers that look the same (same
+the part's long side and at ±45°, and with Edge Rings set the layer recipe
+(that many rings along the outline round a zigzag or Fermat core) -- and
+the one that keeps the fibre rules best is laid: never over a hole, no
+crossings, fewest bends tighter than the minimum, most of the layer
+covered, a short way in from the previous layer. Choices are reused for later layers that look the same (same
 direction, same angle, same outline), so a 20-layer part is judged once
 or twice, not 20 times."""
 from __future__ import annotations
@@ -33,6 +34,7 @@ class Choice:
     crossings: int
     score: float
     fresh: float = 0.0      # share of the layer it covers that every layer below left empty
+    edge: int = 0           # edge rings round the pattern (the layer recipe), or none
 
 
 def zigzag_angles(part, layup_angle):
@@ -86,10 +88,11 @@ def fresh_share(path, empty, gap, part_area):
 
 
 def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=False, repair=None, empty=None):
-    """Best of `candidates` [(pattern, angle)]: `generate(pattern, angle)`
-    returns a path (or None / raises ValueError when it cannot). Returns
-    (Choice, path), or (None, None) if nothing could be laid. `strict`
-    (Strict Bend Radius): a candidate with any bend under r_min is out.
+    """Best of `candidates` [(pattern, angle, edge rings)]:
+    `generate(pattern, angle, edge)` returns a path (or None / raises
+    ValueError when it cannot). Returns (Choice, path), or (None, None) if
+    nothing could be laid. `strict` (Strict Bend Radius): a candidate with
+    any bend under r_min is out.
 
     `repair` (Strict Bend Radius): makes a generated path keep r_min. It is
     costly, so candidates are first judged unrepaired and repaired best
@@ -103,12 +106,12 @@ def choose(generate, candidates, part, holes, gap, r_min, last_pt=None, strict=F
     if repair is not None:
         return _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, repair, empty)
     best = None
-    for pattern, angle in candidates:
+    for pattern, angle, edge in candidates:
         try:
-            path = generate(pattern, angle)
+            path = generate(pattern, angle, edge)
         except ValueError:
             continue
-        best = _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict, empty)
+        best = _better(best, (pattern, angle, edge), path, part, holes, gap, r_min, last_pt, strict, empty)
     return best if best is not None else (None, None)
 
 
@@ -117,9 +120,9 @@ _REPAIR_SLACK = 0.01        # a repair's curve may cover a little more than the 
 
 def _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, repair, empty=None):
     raw = []
-    for pattern, angle in candidates:
+    for cand in candidates:
         try:
-            path = generate(pattern, angle)
+            path = generate(*cand)
         except ValueError:
             continue
         if not path or len(path) < 2:
@@ -131,18 +134,20 @@ def _choose_repaired(generate, candidates, part, holes, gap, r_min, last_pt, rep
         bound = coverage + _REPAIR_SLACK - JUMP_COST * jump
         if empty is not None:
             bound += CAVITY_WEIGHT * (fresh_share(path, empty, gap, part.area) + _REPAIR_SLACK)
-        raw.append((bound, pattern, angle, path))
+        raw.append((bound, cand, path))
     raw.sort(key=lambda r: -r[0])
     best = None
-    for bound, pattern, angle, path in raw:
+    for bound, cand, path in raw:
         if best is not None and bound <= best[0].score + 1e-9:
             break
-        best = _better(best, pattern, angle, repair(path), part, holes, gap, r_min, last_pt, True, empty)
+        best = _better(best, cand, repair(path), part, holes, gap, r_min, last_pt, True, empty)
     return best if best is not None else (None, None)
 
 
-def _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict, empty=None):
-    """`best` or this candidate, whichever scores higher."""
+def _better(best, cand, path, part, holes, gap, r_min, last_pt, strict, empty=None):
+    """`best` or this candidate (pattern, angle, edge rings), whichever
+    scores higher."""
+    pattern, angle, edge = cand
     if not path or len(path) < 2:
         return best
     m = measure(path, part, holes, gap, r_min, last_pt)
@@ -157,7 +162,7 @@ def _better(best, pattern, angle, path, part, holes, gap, r_min, last_pt, strict
     score = (coverage + CAVITY_WEIGHT * fresh - TIGHT_WEIGHT * tight - CROSSING_COST * crossings
              - JUMP_COST * jump)
     if best is None or score > best[0].score + 1e-9:
-        return (Choice(pattern, angle, coverage, tight, crossings, score, fresh), path)
+        return (Choice(pattern, angle, coverage, tight, crossings, score, fresh, edge), path)
     return best
 
 
@@ -171,9 +176,17 @@ def _strict_tight(path, r_min, last_pt):
     return bool(tight_clusters(path, r_min, start))
 
 
-def candidates_for(part, layup_angle):
-    return [(p, 0.0) for p in SPIRAL_CANDIDATES] + [(ORIENTED_SERPENTINE, a)
-                                                     for a in zigzag_angles(part, layup_angle)]
+def candidates_for(part, layup_angle, edges=()):
+    """[(pattern, angle, edge rings)]: the spirals, zigzags at
+    zigzag_angles; and for each count in `edges` (Edge Rings), that many
+    rings along the outline round a zigzag at the layup angle or across it,
+    or round a Fermat spiral (the layer recipe)."""
+    out = [(p, 0.0, 0) for p in SPIRAL_CANDIDATES]
+    out += [(ORIENTED_SERPENTINE, a, 0) for a in zigzag_angles(part, layup_angle)]
+    for e in edges:
+        out += [(ORIENTED_SERPENTINE, a, int(e)) for a in zigzag_angles(part, layup_angle)[:2]]
+        out.append((FERMAT, 0.0, int(e)))
+    return out
 
 
 def summary(chosen) -> str:
@@ -184,6 +197,8 @@ def summary(chosen) -> str:
     groups: dict[tuple, list[int]] = {}
     for layer, c in chosen:
         name = c.pattern if c.pattern != ORIENTED_SERPENTINE else f"zigzag at {c.angle:g}°"
+        if c.edge:
+            name += f" in {c.edge} edge ring(s)"
         tight = "no tight bends" if c.tight < 0.005 else f"{c.tight * 100:.0f} % of the path in tight bends"
         groups.setdefault((name, f"{c.coverage * 100:.0f} % covered, {tight}"), []).append(layer)
     parts = []

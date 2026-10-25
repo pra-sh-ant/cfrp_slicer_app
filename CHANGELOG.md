@@ -5,6 +5,47 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 44, fourth part: Auto weighs the recipe, holes marked on the canvas)
+- **Auto (Best Fit) with Edge Rings**: each layer also weighs that many edge
+  rings round a zigzag (at the layup angle or across it) or a Fermat core, and
+  lays the recipe where it scores best (the summary says "zigzag at 0° in 2 edge
+  ring(s)"). Edge Rings is no longer greyed out for Auto; Wrap Holes is (a wrap
+  takes the recipe on two layers in a row, and Auto judges each layer alone: a
+  note says so if it is set). Off (Edge Rings 0): Auto as before. On the 60 x 40
+  plate with four M3 holes (strict, 4 layers) Auto still lays Archimedean on
+  every layer: a recipe layer covers 30-45 % there, a spiral 63-77 %.
+- **Holes marked on the canvas** (PCB editor, a selected hole): Fibre "Steer
+  round", "Bolt hole (wrap first)" or "Drill after curing", and Rings (laps a
+  wrap gives it; "Hole Rings" = the part's setting). Bolt holes are drawn with a
+  gold ring, drill-after holes crossed out. Slicing the board fills Bolt Holes
+  and Drill After Curing from the marks (the typed lists stay when no hole is
+  marked) and gives each hole its own ring count (`hole_ring_counts`, by hole
+  number; saved with the project). The wrap note names mixed counts ("rings: 3
+  round hole 1, 2 round hole 4").
+- **Cavity check names corner gaps**: a spot mostly within r_min + a gap of a
+  convex corner of the outline is "in a corner" (fibre bent no tighter than the
+  bend radius cannot reach it), no longer "at the edge".
+
+### Fixed (Phase 44, fourth part)
+- Outward recipe layers that unwrap a hole: when the full outer lap and the core
+  entered from its end cross, the core is laid first from the foot of the
+  band's channel (either way round) and the outer lap ends next to its start.
+  Strict sweep of the 30 recipe cases: 30 Pass (28 before).
+- Rings notched round holes (Archimedean, Corner-Step, Fermat on a Custom
+  Outline): when one ring's rounding cut it off at a neck between holes, the
+  next ring could take the other side and cross it; it now keeps to the last
+  ring's side (found by the Phase 42 property test; no change where the rings
+  were nested).
+- Strict climbs at a small bend radius were laid in 0.75 mm chords, which read
+  their arc ~2 % under the radius (a Fail at r_min 1 mm); the climb's points are
+  now at most half the bend radius apart.
+- Fermat seams: a seam whose keep-out penalty alone cannot beat the best so far
+  is no longer scored for crossings (same choice, faster: the slowest strict
+  recipe case 75 s -> 53 s).
+- A recipe's Fermat core turns whichever way its way in from where the layer
+  enters crosses least (it was entered across its own ring after the last
+  layer ended inside the core).
+
 ### Fixed (Phase 44, third part: recipe property test, every bolt hole wrapped)
 - **Property test** on random holed outlines with the layer recipe
   (`tests/test_property_recipe_phase44.py`; Edge Rings, Wrap Holes, Bolt Holes,

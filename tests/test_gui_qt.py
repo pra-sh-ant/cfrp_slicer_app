@@ -213,6 +213,23 @@ def test_outline_hole_pad_footprint_and_delete(editor):
     assert len(editor.design.pads) == 3
 
 
+def test_editor_marks_holes_for_the_fibre(editor):
+    from PySide6.QtCore import Qt
+    from PySide6.QtWidgets import QComboBox, QSpinBox
+    editor.set_tool("select")
+    h = editor.design.holes[0]
+    editor._press(h.x, h.y, Qt.LeftButton)
+    editor._release(h.x, h.y)
+    assert editor._sel == ("hole", 0)
+    fields = [editor.prop_form.itemAt(k).widget() for k in range(editor.prop_form.count())]
+    role = next(w for w in fields if isinstance(w, QComboBox))
+    rings = next(w for w in fields if isinstance(w, QSpinBox))
+    role.setCurrentIndex(1)                       # bolt hole
+    assert editor.design.holes[0].fibre == "bolt"
+    rings.setValue(3)
+    assert editor.design.holes[0].rings == 3
+
+
 def test_editor_drc_flags_a_short(editor):
     from PySide6.QtCore import Qt
     editor.set_tool("trace")
@@ -582,3 +599,19 @@ def test_layer_recipe_fields(panel):
     from cfrp_core import from_legacy_dict
     cfg = from_legacy_dict(p)
     assert cfg.geometry.bolt_holes == (1, 3) and cfg.geometry.drill_holes == (2,)
+
+
+def test_slicing_the_board_carries_its_hole_marks(win, monkeypatch):
+    from cfrp_core.diw import BoardDesign, Hole
+    design = BoardDesign(outline=((0, 0), (50, 0), (50, 30), (0, 30)),
+                         holes=(Hole(x=8, y=8, fibre="drill"), Hole(x=42, y=8, fibre="bolt", rings=4)))
+    monkeypatch.setattr(win, "_slice", lambda *a, **k: None)      # the settings only, no worker thread
+    win._controls.bolt_edit.setText("1")
+    win._slice_board(design, win._editor.diw_config(), "structural")
+    p = win._controls.get_params()
+    assert (p["bolt_holes"], p["drill_holes"], p["hole_ring_counts"]) == ("2", "1", [0, 4])
+    # nothing marked: the typed lists stay
+    win._controls.bolt_edit.setText("1")
+    win._controls.set_hole_marks()
+    p = win._controls.get_params()
+    assert p["bolt_holes"] == "1" and "hole_ring_counts" not in p

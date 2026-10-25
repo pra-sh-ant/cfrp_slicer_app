@@ -22,6 +22,7 @@ import shapely
 import shapely.affinity
 from shapely.geometry import LineString, Point, Polygon
 from shapely.geometry.polygon import orient
+from shapely.ops import nearest_points
 
 from ._common import blend_chain, count_crossings, dedupe_path, largest_polygon, resample_polar_ring
 from .archimedean import archimedean_path
@@ -82,10 +83,12 @@ def wrap_in(band: HoleBand, entry, ccw=True):
     return dedupe_path(first_lap + blend_chain(pts, n) + close)
 
 
-def wrap_out(band: HoleBand, start, ccw=True):
+def wrap_out(band: HoleBand, start, ccw=True, end_near=None):
     """Spiral out of the hole's rings: a full lap of the innermost ring
     from the point nearest `start`, blended one gap outward per lap, ending
-    with a full lap of the outer ring (counter-clockwise if `ccw`)."""
+    with a full lap of the outer ring (counter-clockwise if `ccw`) -- or,
+    given `end_near` (where the stroke goes next), with the outer lap cut
+    at the point nearest it."""
     rings = list(band.rings)                          # innermost first
     n = max(_samples(r) for r in rings)
     pts, at = [], start
@@ -98,6 +101,8 @@ def wrap_out(band: HoleBand, start, ccw=True):
     if len(pts) == 1:
         return dedupe_path(first_lap)
     close = pts[-1][1:] + [pts[-1][0]]
+    if end_near is not None:
+        close = close[:min(range(len(close)), key=lambda k: math.dist(close[k], end_near)) + 1]
     return dedupe_path(first_lap + blend_chain(pts, n) + close)
 
 
@@ -301,15 +306,49 @@ def recipe_layer(part, holes, gap, min_rad, edge_rings, core, layer_idx, last_pt
 
     if band is not None:
         # Start on the innermost ring where the last layer ended, turning the
-        # same way, and spiral out.
-        extend(wrap_out(band, last_pt if last_pt is not None else band.centre, ccw=start_ccw), "wrap")
+        # same way, and spiral out: a full lap of the outer ring, the core
+        # entered from where it ends -- or, when that crosses (a spiral
+        # core's start and end share the band's channel with the way in and
+        # out), the core laid first, entered from the foot of the channel
+        # (its notch in the core zone) either way round, and the wrap's outer
+        # lap cut short next to the core's start. The first that crosses
+        # nothing, else the fewest crossings.
+        start = last_pt if last_pt is not None else band.centre
+        ways = [None]
+        if core_poly is not None:
+            foot = nearest_points(core_poly.exterior, Point(band.centre))[0]
+            rx, ry = foot.x - band.centre[0], foot.y - band.centre[1]
+            r = math.hypot(rx, ry) or 1.0
+            along = (-ry / r, rx / r) if start_ccw else (ry / r, -rx / r)     # the outer lap's way round there
+            ways += [((foot.x, foot.y), along), ((foot.x, foot.y), (-along[0], -along[1]))]
+        best = None
+        for way in ways:
+            path[:], parts[:] = ([last_pt] if last_pt is not None else []), []
+            if way is None:
+                extend(wrap_out(band, start, ccw=start_ccw), "wrap")
+                if core_poly is not None:
+                    body = core(core_poly, path[-1], _heading(path) or last_dir, layer_idx, edge_line)
+                    extend(body[1:] if body else body, "core")
+            else:
+                body = core(core_poly, way[0], way[1], layer_idx, edge_line)
+                to = body[1] if body is not None and len(body) > 1 else None
+                extend(wrap_out(band, start, ccw=start_ccw, end_near=to), "wrap")
+                extend(body[1:] if body else body, "core")
+            edge = _edge_aligned(edge_poly, gap, min_rad, edge_rings, True, path[-1] if path else None, _heading(path))
+            extend(edge, "edge")
+            score = count_crossings(path)
+            if best is None or score < best[0]:
+                best = (score, list(path), list(parts))
+            if not score:
+                break
+        path[:], parts[:] = best[1], best[2]
+        return RecipeLayer(dedupe_path(path), band.index, start_ccw, tuple(notes), tuple(parts))
     if core_poly is not None:
         body = core(core_poly, path[-1] if path else None, _heading(path) or last_dir, layer_idx, edge_line)
         extend(body[1:] if path and body else body, "core")
     edge = _edge_aligned(edge_poly, gap, min_rad, edge_rings, True, path[-1] if path else None, _heading(path))
     extend(edge, "edge")
-    return RecipeLayer(dedupe_path(path), band.index if band is not None else None, start_ccw, tuple(notes),
-                       tuple(parts))
+    return RecipeLayer(dedupe_path(path), None, start_ccw, tuple(notes), tuple(parts))
 
 
 def _channel(band: HoleBand, core_poly, gap):

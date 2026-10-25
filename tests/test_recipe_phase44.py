@@ -178,3 +178,55 @@ def test_every_bolt_hole_is_wrapped_given_two_layers_each(core):
         into = _sweep(_near_run(layers[n], c, reach, from_end=True), c)
         out = _sweep(_near_run(layers[n + 1], c, reach, from_end=False), c)
         assert abs(into) >= 540.0 and abs(out) >= 540.0 and into * out > 0, (hole, into, out)
+
+
+def test_auto_weighs_the_recipe_with_edge_rings(monkeypatch):
+    from cfrp_core.layers import recipe as recipe_mod
+    weighed = []
+    real = recipe_mod.Recipe.layer
+
+    def spy(self, *args, **kw):
+        weighed.append(kw.get("record", True))
+        return real(self, *args, **kw)
+    monkeypatch.setattr(recipe_mod.Recipe, "layer", spy)
+    cfg = _plate(infill_type="Auto (Best Fit)", edge_rings=2, wrap_holes=True, layers=2)
+    res = slice_part(from_legacy_dict(cfg))
+    assert res.validation["status"] == "Pass", res.validation["messages"]
+    assert weighed and not any(weighed)                    # candidates only: nothing noted, no wrap
+    assert any(n.startswith("Auto (Best Fit):") for n in res.info)
+    assert any(n.startswith("Wrap Holes: not used with Auto") for n in res.info)
+    assert not any(n.startswith("Layer recipe:") or n.startswith("Hole wraps") for n in res.info)
+    s = field_states(dict(shape="Custom Outline", infill_type="Auto (Best Fit)", layers=2))
+    assert s["edge_rings"].enabled and not s["wrap_holes"].enabled and not s["hole_rings"].enabled
+
+
+def test_auto_names_the_edge_rings_it_lays():
+    from cfrp_core.layers import auto
+    cands = auto.candidates_for(box(0, 0, 60, 40), 0.0, edges=(2,))
+    assert (ORIENTED_SERPENTINE, 0.0, 2) in cands and (FERMAT, 0.0, 2) in cands
+    assert all(e == 0 for _, _, e in auto.candidates_for(box(0, 0, 60, 40), 0.0))
+    choice = auto.Choice(ORIENTED_SERPENTINE, 90.0, 0.5, 0.0, 0, 0.5, 0.0, 2)
+    assert "zigzag at 90° in 2 edge ring(s)" in auto.summary([(1, choice)])
+
+
+def test_a_hole_can_have_its_own_ring_count():
+    # hole 2 gets 4 laps, hole 1 the part's Hole Rings (2)
+    res = slice_part(from_legacy_dict(_plate(edge_rings=1, bolt_holes="2", hole_ring_counts="0, 4")))
+    assert res.validation["status"] == "Pass", res.validation["messages"]
+    assert any(n.startswith("Hole wraps (4 ring(s)") for n in res.info), res.info
+    layers = _layers(res)
+    c = _centre(res, 2)
+    reach = 3.15 + 3 * 1.2 + 0.8              # four rings round a 6 mm hole, the first pushed to 1.05 x r_min
+    into = _sweep(_near_run(layers[1], c, reach, from_end=True), c)
+    assert abs(into) >= 4 * 360.0, into       # a lap of the outer ring, three blended in, a lap of the inner
+    with pytest.raises(ConfigError):
+        from_legacy_dict(_plate(hole_ring_counts="0, 6"))
+
+
+def test_hole_marks_from_the_board():
+    from cfrp_core.diw import BoardDesign, Hole, hole_marks
+    d = BoardDesign(outline=((0, 0), (50, 0), (50, 30), (0, 30)),
+                    holes=(Hole(x=8, y=8), Hole(x=42, y=8, fibre="bolt", rings=3), Hole(x=25, y=22, fibre="drill")))
+    assert hole_marks(d) == {"bolt_holes": (2,), "drill_holes": (3,), "hole_ring_counts": (0, 3, 0)}
+    assert hole_marks(d.model_copy(update=dict(holes=(Hole(x=8, y=8),)))) == {
+        "bolt_holes": (), "drill_holes": (), "hole_ring_counts": ()}

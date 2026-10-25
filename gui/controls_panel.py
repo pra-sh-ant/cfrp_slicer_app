@@ -273,7 +273,8 @@ class ControlsPanel(QWidget):
     def known_keys(self) -> set[str]:
         """Setting keys this version reads from a parameters file."""
         return set(self.get_params()) | set(self._rows) | {
-            "custom_outline", "custom_holes", "bed_x", "bed_y", "z_max", "bed_margin", "stem_top"}
+            "custom_outline", "custom_holes", "hole_ring_counts", "bed_x", "bed_y", "z_max", "bed_margin",
+            "stem_top"}
 
     # ------------------------------------------------------------------
     # Row registry
@@ -645,6 +646,21 @@ class ControlsPanel(QWidget):
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
+    def set_hole_marks(self, bolt_holes=(), drill_holes=(), hole_ring_counts=()):
+        """The holes' fibre marks from the editor's canvas. Marked bolt /
+        drill-after holes replace the typed lists (left as typed when no
+        hole is marked); the per-hole ring counts go with the outline."""
+        if bolt_holes or drill_holes:
+            for edit, nums in ((self.bolt_edit, bolt_holes), (self.drill_edit, drill_holes)):
+                edit.blockSignals(True)
+                edit.setText(", ".join(map(str, nums)))
+                edit.blockSignals(False)
+        if hole_ring_counts:
+            self._custom["hole_ring_counts"] = [int(k) for k in hole_ring_counts]
+        else:
+            self._custom.pop("hole_ring_counts", None)
+        self._emit()
+
     def set_custom_outline(self, outline, holes=(), name: str = ""):
         """Outline (and holes) for the Custom Outline shape, in mm."""
         self._custom = {"custom_outline": [tuple(map(float, p)) for p in outline],
@@ -849,6 +865,8 @@ class ControlsPanel(QWidget):
         if p.get("custom_outline"):
             self._custom = {"custom_outline": [tuple(q) for q in p["custom_outline"]],
                             "custom_holes": [[tuple(q) for q in h] for h in p.get("custom_holes", [])]}
+            if p.get("hole_ring_counts"):
+                self._custom["hole_ring_counts"] = [int(k) for k in p["hole_ring_counts"]]
             self.custom_lbl.setText(f"outline: {len(self._custom['custom_outline'])} points, "
                                     f"{len(self._custom['custom_holes'])} hole(s)")
 

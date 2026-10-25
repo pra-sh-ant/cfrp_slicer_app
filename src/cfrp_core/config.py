@@ -138,6 +138,16 @@ class GeometryConfig(_Frozen):
     # printed over and drilled after curing (drilling cuts the fibre there).
     bolt_holes: tuple[int, ...] = ()
     drill_holes: tuple[int, ...] = ()
+    # laps a wrap gives each hole (1 to 5), as drawn; 0 or none = Hole Rings
+    hole_ring_counts: tuple[int, ...] = ()
+
+    @field_validator("hole_ring_counts")
+    @classmethod
+    def _hole_ring_counts(cls, v: tuple[int, ...]) -> tuple[int, ...]:
+        for k in v:
+            if not 0 <= k <= 5:
+                raise ValueError(f"a hole's ring count must be 0 (the Hole Rings setting) to 5, not {k}")
+        return v
 
     @field_validator("stl_scale")
     @classmethod

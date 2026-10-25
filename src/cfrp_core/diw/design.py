@@ -11,7 +11,7 @@ import math
 from pathlib import Path
 from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from shapely.affinity import rotate
 from shapely.geometry import LineString, Point, Polygon, box
 from shapely.ops import unary_union
@@ -81,10 +81,15 @@ class Pad(_M):
 
 
 class Hole(_M):
-    """Through hole in the laminate (mounting hole, via); fibre steers round it."""
+    """Through hole in the laminate (mounting hole, via); fibre steers round it.
+    `fibre` (the layer recipe): "bolt" -- wrapped first at layer changes;
+    "drill" -- printed over and drilled after curing; "steer" -- neither.
+    `rings`: laps a wrap gives it (0 = the part's Hole Rings)."""
     x: float
     y: float
     d_mm: float = 3.2
+    fibre: Literal["steer", "bolt", "drill"] = "steer"
+    rings: int = Field(0, ge=0, le=5)
 
 
 class Zone(_M):
@@ -121,6 +126,17 @@ def hole_shape(h: Hole, segments=32):
 def hole_outlines(design: BoardDesign) -> list[list[Pt]]:
     """Holes as closed point lists (for the fibre slicer's custom_holes)."""
     return [list(hole_shape(h).exterior.coords)[:-1] for h in design.holes]
+
+
+def hole_marks(design: BoardDesign) -> dict:
+    """The holes' fibre marks for the slicer, by hole number (1 = the first
+    drawn): {"bolt_holes": (...), "drill_holes": (...), "hole_ring_counts":
+    (laps per hole, 0 = Hole Rings)}; empty tuples when nothing is marked."""
+    holes = design.holes
+    rings = tuple(int(h.rings) for h in holes)
+    return {"bolt_holes": tuple(k for k, h in enumerate(holes, 1) if h.fibre == "bolt"),
+            "drill_holes": tuple(k for k, h in enumerate(holes, 1) if h.fibre == "drill"),
+            "hole_ring_counts": rings if any(rings) else ()}
 
 
 def board_polygon(design: BoardDesign) -> Polygon:

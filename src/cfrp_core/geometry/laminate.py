@@ -225,7 +225,8 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
     one line per layer, moving across the hollow from layer to layer.
     `exit_to` (a line; the layer recipe): where the stroke goes after this
     path. A zigzag then also counts the lines its end would cross on the
-    way there when it picks its start corner.
+    way there when it picks its start corner, and a Fermat spiral turns
+    whichever way its way in from `last_pt` crosses least.
     """
     check_gap_radius(track_gap, min_radius)
     gap = track_gap
@@ -315,9 +316,15 @@ def laminate_layer(base_poly, track_gap, min_radius, infill_type, tracks_per_lay
                 infill_bounds, gap, min_rad, track_count=tracks_per_layer,
                 start_from_inside=is_outward, entry_hint=entry, mirror=mirror,
             )
-            for mirror in ((False, True) if entry_dir is not None else (False,))
+            for mirror in ((False, True) if entry_dir is not None or exit_to is not None else (False,))
         ]
-        infill_path = max(variants, key=lambda p: _start_alignment(p, entry_dir))
+        if exit_to is not None and entry is not None:
+            # (the layer recipe) the way in from the entry point first: a
+            # spiral entered across its own ring crossed it
+            infill_path = min(variants, key=lambda p: (count_crossings([tuple(entry)] + list(p)),
+                                                       -_start_alignment(p, entry_dir)))
+        else:
+            infill_path = max(variants, key=lambda p: _start_alignment(p, entry_dir))
     else:
         # Zigzags. Fixed 45° hatching runs +45°/-45° on alternate layers
         # regardless of the layup angle (balanced cross-ply).

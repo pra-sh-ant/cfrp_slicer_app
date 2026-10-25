@@ -57,6 +57,22 @@ EXAMPLES = int(os.environ.get("RECIPE_EXAMPLES", "10"))      # more for a longer
 # A bend repair's loop across an edge ring that the replaced join ran along.
 @example(shape=_plate(40, 30, (6.5, 7, 2.5)), core=CORES[0], gap=1.59375, r_min=2.5, layers=1, edge=2, wrap=False,
          rings=1, bolt=False, drill=False)
+# An outward Fermat layer whose join from the wrap to the core crossed the
+# wrap's laps (the core's start sat by its own end, across the band).
+@example(shape=_plate(89, 33.9353454668242, (11, 19.472412824713487, 7), (8, 8, 4)), core=CORES[2],
+         gap=1.549858294722576, r_min=1.5, layers=2, edge=2, wrap=True, rings=2, bolt=False, drill=False)
+# A strict climb at a 1 mm bend radius, laid in 0.72 mm chords: its arc
+# read 2 % under the radius.
+@example(shape=([(49.99999999999999, 11.837890625), (25.86998109200906, 25.869981092009066),
+                 (18.3125, 50.00000000000001), (27.593553871151276, 72.40644612884873), (50.0, 84.505859375),
+                 (74.56091210277648, 74.56091210277648), (81.6875, 50.0), (77.57716446627535, 22.42283553372464)], []),
+         core=CORES[0], gap=1.09765625, r_min=1.0, layers=2, edge=1, wrap=False, rings=1, bolt=False, drill=False)
+# An outward Fermat core entered across its own ring from where the last
+# layer ended.
+@example(shape=_plate(60, 30, (6.5, 6.5, 2.5), (28.5, 10.45836206122636, 6.45836206122636),
+                      (39.14536019207296, 8.353900397928317, 4.353900397928314)), core=CORES[2],
+         gap=1.3476922772779811, r_min=2.004380602649835, layers=3, edge=2, wrap=False, rings=1, bolt=False,
+         drill=False)
 @settings(max_examples=EXAMPLES, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(shape=outline(), core=st.sampled_from(CORES), gap=st.floats(0.9, 1.6), r_min=st.floats(1.0, 3.0),
        layers=st.integers(1, 3), edge=st.integers(0, 2), wrap=st.booleans(), rings=st.integers(1, 3),

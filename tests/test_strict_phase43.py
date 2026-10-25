@@ -136,11 +136,11 @@ def test_auto_strict_rejects_tight_candidates():
     tight = [(5, 5), (55, 5), (55, 6.2), (5, 6.2)]                # a 0.6 mm turn
     smooth = list(Point(30, 20).buffer(10, 32).exterior.coords)
 
-    def generate(pattern, angle):
+    def generate(pattern, angle, edge):
         return tight if pattern == SERP else smooth
-    choice, _ = auto.choose(generate, [(SERP, 0.0), (ARCH, 0.0)], part, [], 1.2, 3.0, strict=True)
+    choice, _ = auto.choose(generate, [(SERP, 0.0, 0), (ARCH, 0.0, 0)], part, [], 1.2, 3.0, strict=True)
     assert choice.pattern == ARCH
-    choice, _ = auto.choose(generate, [(SERP, 0.0)], part, [], 1.2, 3.0, strict=True)
+    choice, _ = auto.choose(generate, [(SERP, 0.0, 0)], part, [], 1.2, 3.0, strict=True)
     assert choice is None
 
 

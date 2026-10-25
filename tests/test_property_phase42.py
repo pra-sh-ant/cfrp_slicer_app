@@ -26,6 +26,10 @@ def _plate(w, h, *holes):
 # on the curve round a hole bulged into it.
 @example(shape=_plate(40, 30, (11, 11, 5), (6.5, 18.5, 2.5)), pattern="45° Diagonal Hatch", gap=1.25, r_min=1.5,
          layers=2, centre=False, keep=True)
+# Rings notched round two holes: one ring's rounding cut it off at the neck
+# between them and the next ring took the other side, crossing it.
+@example(shape=_plate(56, 30, (16, 18, 3), (30, 10, 6)), pattern=CORNER, gap=1.0, r_min=3.0, layers=2,
+         centre=False, keep=False)
 @settings(max_examples=12, deadline=None, suppress_health_check=[HealthCheck.too_slow])
 @given(shape=outline(), pattern=st.sampled_from(PATTERNS), gap=st.floats(0.9, 1.8), r_min=st.floats(1.0, 3.5),
        layers=st.integers(1, 2), centre=st.booleans(), keep=st.booleans())

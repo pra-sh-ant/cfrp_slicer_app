@@ -280,7 +280,8 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed,
     if trajectory and layer_trajectory and strict is not None and strict[0] > 0:
         prev_cut, xy, layer_trajectory = strict_climb(trajectory, layer_trajectory, seam_trim, min_run,
                                                       strict[0], strict[1], strict[2])
-        _append_ramp(trajectory, prev_cut, xy, layer_trajectory[0]['z'], layer_num, ramp_speed)
+        _append_ramp(trajectory, prev_cut, xy, layer_trajectory[0]['z'], layer_num, ramp_speed,
+                     step=min(0.75, 0.5 * strict[0]))
         trajectory.extend(layer_trajectory)
         return
     if trajectory and layer_trajectory:
@@ -364,17 +365,18 @@ def append_layer(trajectory, layer_trajectory, layer_num, seam_trim, ramp_speed,
 
 # --- Strict bend radius (Phase 43) -------------------------------------------
 
-def _append_ramp(trajectory, prev_cut, xy, z_to, layer_num, ramp_speed):
+def _append_ramp(trajectory, prev_cut, xy, z_to, layer_num, ramp_speed, step=0.75):
     """Append a climb along the XY polyline `xy` (points after prev_cut,
-    ending where the layer resumes), resampled evenly by length so its
-    slope is uniform; Z rises linearly to z_to."""
+    ending where the layer resumes), resampled evenly by length (at most
+    `step` mm apart: chords much over half the bend radius read a climb's
+    arc ~2 % tight) so its slope is uniform; Z rises linearly to z_to."""
     import numpy as np
     pts = np.asarray([(prev_cut['x'], prev_cut['y'])] + list(xy), dtype=np.float64)
     seg = np.linalg.norm(np.diff(pts, axis=0), axis=1)
     cum = np.concatenate([[0.0], np.cumsum(seg)])
     length = float(cum[-1])
     dzs = z_to - prev_cut['z']
-    steps = max(4 if abs(dzs) > 1e-9 else 1, int(math.ceil(length / 0.75)), int(math.ceil(abs(dzs) / 0.05)))
+    steps = max(4 if abs(dzs) > 1e-9 else 1, int(math.ceil(length / step)), int(math.ceil(abs(dzs) / 0.05)))
     s = np.linspace(0.0, length, steps + 1)[1:]
     xs, ys = np.interp(s, cum, pts[:, 0]), np.interp(s, cum, pts[:, 1])
     for step in range(1, steps + 1):

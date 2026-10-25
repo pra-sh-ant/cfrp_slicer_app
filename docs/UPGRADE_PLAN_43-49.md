@@ -26,7 +26,7 @@ Request (2026-10-20), in short:
 | Phase | Topic | State |
 |---|---|---|
 | 43 | Bend radius everywhere | done (see CHANGELOG) |
-| 44 | Mixed patterns in one layer, wrapped holes, cavity check | in progress: cavity check, Fill Pockets, layer recipe (edge rings, hole wraps, bolt and drill-after holes; opt-in), property test, every bolt hole wrapped (zigzag cores) done; open: Auto trying recipes, lines into leftover slivers, per-hole canvas settings (see CHANGELOG) |
+| 44 | Mixed patterns in one layer, wrapped holes, cavity check | done: cavity check (corner gaps named), Fill Pockets, layer recipe (edge rings, hole wraps, bolt and drill-after holes; opt-in), property test, every bolt hole wrapped (zigzag cores), Auto weighing the recipe, holes marked on the canvas. Not done: lines into leftover slivers (see Phase 44 below, restated) |
 | 45 | STL: mixed patterns per slice | planned |
 | 46 | Three workspaces | planned |
 | 47 | A tool and a cure per material, coordinated | planned |
@@ -216,6 +216,16 @@ the viewer, the canvas (per-hole settings).
   it lists must lie in the ring centre or next to a hole; wrapped bolt holes
   must have no such spot within their hole rings.
 - With at least twice as many layers as holes, every bolt hole gets full wraps.
+- *Restated 2026-10-25 (lines into slivers).* Measured on that plate (strict on,
+  4 layers, Archimedean): 427 mm² empty next to the holes, 159 mm² in the ring
+  centre, 17 mm² in the corners (now named "in a corner") and about 15 mm² of
+  small spots between holes and corners. The corners and the ring centre take no
+  fibre that keeps the bend radius, and the band round the two holes on one side
+  (336 mm²) is left by the spiral generators themselves: their inner rings pass
+  inside those holes on every layer. Filling it means changing the Archimedean
+  and Corner-Step rings round holes, which changes golden outputs, so it waits
+  for a decision. Auto with Fill Pockets and Edge Rings does not fill it either
+  (recipe layers cover less there).
 - No crossings, no bend under r_min and no fibre over a hole.
 - Sweep cases for each recipe and a property test on random holed outlines pass.
 

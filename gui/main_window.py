@@ -283,9 +283,10 @@ class MainWindow(QMainWindow):
     def _slice_board(self, design, diw_cfg, mode="structural"):
         """Editor -> slicer: the outline becomes the Custom Outline part and
         the ink is sliced on top of it."""
-        from cfrp_core.diw import hole_outlines
+        from cfrp_core.diw import hole_marks, hole_outlines
         self._board = (design, diw_cfg, mode)
         self._controls.set_custom_outline(design.outline, hole_outlines(design), design.name)
+        self._controls.set_hole_marks(**hole_marks(design))
         self._modes.setCurrentIndex(0)
         self._slice()
 

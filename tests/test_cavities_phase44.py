@@ -39,6 +39,28 @@ def test_cavity_map_finds_spots_empty_in_every_layer():
     assert cavity_map(_layer(left, 1, 0.2) + _layer(right, 2, 0.4), shapes, 1.2, run=1)["share"] > 0.4
 
 
+def test_corner_gaps_are_named():
+    # lines over a 40 x 20 part rounded at a 3 mm bend radius, stopping 4 mm
+    # short of its right edge: the gaps in the left corners are named, the
+    # strip on the right (with its corners) is at the edge
+    region = box(0.6, 0.6, 39.4, 19.4)
+    shapes = [(0.2, region, 1), (0.4, region, 2)]
+    rounded = box(0.0, 0.0, 40.0, 20.0).buffer(-3.0).buffer(3.0).buffer(-0.6)
+    pts = []
+    for k in range(17):
+        y = 0.6 + 1.2 * k
+        seg = rounded.intersection(box(-1.0, y - 1e-6, 36.0, y + 1e-6))
+        if not seg.is_empty:
+            x0, _, x1, _ = seg.bounds
+            pts += [(x0, y), (x1, y)] if k % 2 == 0 else [(x1, y), (x0, y)]
+    traj = _layer(pts, 1, 0.2) + _layer(pts, 2, 0.4)
+    m = cavity_map(traj, shapes, 1.2, min_radius=3.0)
+    named = [s for s in m["spots"] if s["where"] == "in a corner"]
+    assert named and all(s["x"] < 4.0 for s in named), m["spots"]
+    assert any(s["where"] == "at the edge" and s["x"] > 36.0 for s in m["spots"])
+    assert all(s["where"] != "in a corner" for s in cavity_map(traj, shapes, 1.2)["spots"])   # no radius given
+
+
 def test_slice_reports_cavities_with_holes_numbered_as_drawn():
     holes = [[tuple(q) for q in Point(x, y).buffer(1.6, 16).exterior.coords[:-1]]
              for x, y in ((8, 8), (52, 8), (8, 32), (52, 32))]

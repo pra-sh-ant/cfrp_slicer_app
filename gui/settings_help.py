@@ -65,11 +65,12 @@ HELP = {
                     "layer's pattern is chosen partly by how much of those spots it covers, so layers take "
                     "turns to fill them. A layer may then cover a little less itself. The notes and the 3D "
                     "view (Cavities) show the spots left empty in every layer.",
-    "edge_rings": "Layer recipe, flat parts with a zigzag or Fermat pattern. This many fibre rings run along "
+    "edge_rings": "Layer recipe, flat parts with a zigzag, Fermat or Auto pattern. This many fibre rings run along "
                   "the outline (bending round the holes) before the pattern fills the middle, or after it on "
                   "the layers that run outward. The rings give the edge continuous fibre in the outline's "
                   "direction; the middle keeps the layer's fibre angle. Off = the pattern alone (Print Outer "
-                  "Boundary still adds one ring).",
+                  "Boundary still adds one ring). With Auto (Best Fit), each layer also weighs that many "
+                  "rings round a zigzag or Fermat middle, and lays it where it scores best.",
     "wrap_holes": "Layer recipe, Custom Outline with holes, two layers or more. A layer ends by spiralling "
                   "into a hole (Hole Rings laps round it) and the next layer starts by spiralling out of the "
                   "same hole, turning the same way, so the hole gets full fibre laps with no cut and no "

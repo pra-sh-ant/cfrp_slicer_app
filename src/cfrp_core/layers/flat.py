@@ -88,10 +88,16 @@ def build_flat_laminate(config: ProcessConfig):
     climb_zone = printable.buffer(gap / 2.0 + 0.2) if strict.on else None
     # Fill Pockets: where every layer so far left the part empty
     empty = base_poly if config.fill_pockets else None
-    # Layer recipe: edge rings, a zigzag / Fermat core, hole wraps (one piece)
-    recipe = (Recipe(config, base_poly) if recipe_wanted(config) and not multi
-              and base_poly.geom_type == 'Polygon' else None)
     plans = plan_layers(config, config.layers)
+    one_piece = not multi and base_poly.geom_type == 'Polygon'
+    # Layer recipe: edge rings, a zigzag / Fermat core, hole wraps (one piece)
+    recipe = (Recipe(config, base_poly) if recipe_wanted(config) and one_piece
+              and any(p.pattern in RECIPE_CORES for p in plans) else None)
+    # Auto (Best Fit) with Edge Rings weighs the recipe too: that many rings
+    # along the outline round a zigzag or Fermat core (never a wrap: that
+    # takes the recipe on two layers in a row, and Auto judges each alone)
+    auto_recipe = (Recipe(config.model_copy(update=dict(wrap_holes=False)), base_poly)
+                   if int(config.edge_rings) > 0 and one_piece and any(p.pattern == AUTO for p in plans) else None)
 
     for i, plan in enumerate(plans):
         layer_z = config.z_offset_mm + (i * layer_height)
@@ -104,9 +110,10 @@ def build_flat_laminate(config: ProcessConfig):
             return strict.repair(path, fill_region, keep_head=keep)
 
         def generate(pattern, angle, solid, peek=False, raw=False, plan=plan, last_pt=last_pt,
-                     last_dir=last_dir, num=i + 1):
+                     last_dir=last_dir, num=i + 1, edge=0):
             """The layer's path for this pattern (repaired for Strict Bend
-            Radius unless `raw`)."""
+            Radius unless `raw`); `edge`: in that many edge rings (Auto
+            weighing the layer recipe)."""
             spacing, offset = shifts.next(pattern, plan.index, angle, peek=peek)
             if multi:
                 key = (pattern, solid)
@@ -124,12 +131,15 @@ def build_flat_laminate(config: ProcessConfig):
                     seam_turn=turn, line_spacing=spacing, line_offset=offset, fill_centre=config.fill_centre,
                     strict=strict.on,
                 )
+            def core(poly, at, heading, idx, exit_to):
+                return geo.laminate_layer(
+                    poly, gap, r_min, pattern, count, False, angle, layer_idx=idx, last_pt=at,
+                    last_dir=heading, line_spacing=spacing, line_offset=offset, strict=strict.on,
+                    exit_to=exit_to)
+            if edge and auto_recipe is not None and pattern in RECIPE_CORES:
+                return auto_recipe.layer(num, plan.index, False, last_pt, last_dir, core, plain,
+                                         repair=None if raw else repair, record=False)
             if recipe is not None and recipe.active and pattern in RECIPE_CORES and plan.pattern != AUTO:
-                def core(poly, at, heading, idx, exit_to):
-                    return geo.laminate_layer(
-                        poly, gap, r_min, pattern, count, False, angle, layer_idx=idx, last_pt=at,
-                        last_dir=heading, line_spacing=spacing, line_offset=offset, strict=strict.on,
-                        exit_to=exit_to)
                 # wrap only when the next layer is a recipe layer too (it unwraps)
                 wrap_ok = num < len(plans) and plans[num].pattern in RECIPE_CORES
                 # each candidate judged as repaired (a join laid along an
@@ -149,23 +159,24 @@ def build_flat_laminate(config: ProcessConfig):
                 if key in decided and not pockets:
                     # the same choice for a layer like one judged -- unless it
                     # lays worse here (the start differs: a crossing, a hole)
-                    pattern, angle, cov = decided[key]
-                    path = generate(pattern, angle, True, peek=True)
+                    pattern, angle, cov, edge = decided[key]
+                    path = generate(pattern, angle, True, peek=True, edge=edge)
                     m = auto.measure(path, base_poly, holes, gap, r_min, last_pt) if path else None
                     if m is not None and m[2] == 0 and m[0] >= cov - 0.03:
                         shifts.next(pattern, plan.index, angle)
-                        raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0)
+                        raw_path, reused = path, auto.Choice(pattern, angle, *m[:3], 0.0, edge=edge)
                         chosen.append((i + 1, reused))
                 if reused is None:
-                    choice, raw_path = auto.choose(lambda p, a: generate(p, a, True, peek=True, raw=strict.on),
-                                                   auto.candidates_for(fill_poly, current_angle),
-                                                   base_poly, holes, gap, r_min, last_pt, strict=strict.on,
-                                                   repair=repair if strict.on else None,
-                                                   empty=empty if pockets else None)
+                    edges = (int(config.edge_rings),) if auto_recipe is not None else ()
+                    choice, raw_path = auto.choose(
+                        lambda p, a, e: generate(p, a, True, peek=True, raw=strict.on, edge=e),
+                        auto.candidates_for(fill_poly, current_angle, edges),
+                        base_poly, holes, gap, r_min, last_pt, strict=strict.on,
+                        repair=repair if strict.on else None, empty=empty if pockets else None)
                     if choice is None:
                         raise ValueError("no pattern fits this layer.")
                     shifts.next(choice.pattern, plan.index, choice.angle)
-                    decided[key] = (choice.pattern, choice.angle, choice.coverage)
+                    decided[key] = (choice.pattern, choice.angle, choice.coverage, choice.edge)
                     chosen.append((i + 1, choice))
             else:
                 raw_path = generate(plan.pattern, current_angle, plan.solid)
@@ -177,8 +188,8 @@ def build_flat_laminate(config: ProcessConfig):
         anchor_n = 0
         # A recipe layer starts on its edge ring: the ring's own first mm are
         # the anchor (a straight stub back from there lay across the ring's end).
-        recipe_first = (recipe is not None and recipe.active and plan.pattern in RECIPE_CORES
-                        and 1 not in recipe.plain_layers)
+        recipe_first = ((recipe is not None and recipe.active and plan.pattern in RECIPE_CORES
+                         and 1 not in recipe.plain_layers) or (chosen and chosen[-1][0] == 1 and chosen[-1][1].edge))
         if i == 0 and (plan.lead_in or recipe_first) and not multi:
             anchor_n = _points_within(raw_path, float(config.anchor_length_mm))
         elif i == 0:
@@ -206,8 +217,10 @@ def build_flat_laminate(config: ProcessConfig):
     info = [auto.summary(chosen)] if chosen else []
     if recipe is not None:
         info.extend(recipe.note(config))
-    elif recipe_wanted(config):
+    elif recipe_wanted(config) and not one_piece:
         info.append("Layer recipe (Edge Rings, Wrap Holes): not used on a part in several pieces.")
+    if auto_recipe is not None and config.wrap_holes:
+        info.append("Wrap Holes: not used with Auto (Best Fit), which judges each layer on its own.")
     info.extend(hole_notes(config))
     if strict.note():
         info.append(strict.note())

@@ -123,8 +123,11 @@ other pad. Wires take their name from the pad you start on.</li>
 <i>Slice board</i>.</li></ol>
 Carbon fibre conducts electricity: the slicer puts an insulating layer under every wire for you."""
 
+_HOLE_ROLES = {"steer": "Steer round", "bolt": "Bolt hole (wrap first)", "drill": "Drill after curing"}
+
 _COL = {
     "board": QColor("#2b2f38"), "board_edge": QColor("#8d96b8"), "hole": QColor("#0d0d12"),
+    "hole_bolt": QColor("#e8b04a"), "hole_drill": QColor("#d9534f"),
     "trace": QColor("#c9cdd8"), "pad": QColor("#e2c26a"), "zone_conductor": QColor(201, 205, 216, 90),
     "zone_dielectric": QColor(76, 200, 150, 70), "zone_keepout": QColor(240, 90, 90, 60),
     "sel": QColor("#5b8def"), "draft": QColor("#f5b942"), "grid": QColor(255, 255, 255, 18),
@@ -1304,6 +1307,21 @@ class PcbEditor(QWidget):
             num("h_mm", "Height", 0.05, 50)
         elif kind == "hole":
             num("d_mm", "Diameter", 0.1, 100)
+            role = QComboBox()
+            role.addItems(list(_HOLE_ROLES.values()))
+            role.setCurrentIndex(list(_HOLE_ROLES).index(item.fibre))
+            role.setToolTip("For the fibre (layer recipe): a bolt hole is wrapped first at layer changes "
+                            "(Wrap Holes); a drill-after hole is printed over and drilled after curing.")
+            role.currentIndexChanged.connect(lambda i: setter("fibre", str)(list(_HOLE_ROLES)[i]))
+            self.prop_form.addRow("Fibre", role)
+            rings = QSpinBox()
+            rings.setRange(0, 5)
+            rings.setValue(int(item.rings))
+            rings.setSpecialValueText("Hole Rings")
+            rings.setToolTip("Laps a wrap gives this hole (Wrap Holes); Hole Rings = the part's setting.")
+            rings.setKeyboardTracking(False)
+            rings.valueChanged.connect(setter("rings", int))
+            self.prop_form.addRow("Rings", rings)
         if hasattr(item, "net") and self.advanced:
             e = QLineEdit(item.net)
             e.editingFinished.connect(lambda: setter("net", str)(e.text().strip()))
@@ -1338,6 +1356,13 @@ class PcbEditor(QWidget):
             r = h.d_mm / 2
             self.scene.addEllipse(QRectF(h.x - r, h.y - r, 2 * r, 2 * r), QPen(_COL["board_edge"], 0),
                                   QBrush(_COL["hole"]))
+            if h.fibre == "bolt":            # the laps a wrap lays round it
+                rr = r + 1.2
+                self.scene.addEllipse(QRectF(h.x - rr, h.y - rr, 2 * rr, 2 * rr), QPen(_COL["hole_bolt"], 0.3))
+            elif h.fibre == "drill":         # printed over, drilled after curing
+                pen = QPen(_COL["hole_drill"], 0.3)
+                self.scene.addLine(h.x - r, h.y - r, h.x + r, h.y + r, pen)
+                self.scene.addLine(h.x - r, h.y + r, h.x + r, h.y - r, pen)
         refs = {}
         for p in d.pads:
             ref = ed.part_ref(p.name)

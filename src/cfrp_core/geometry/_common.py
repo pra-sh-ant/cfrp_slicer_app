@@ -161,19 +161,29 @@ def notched_rings(poly, gap, min_radius, max_rings=None):
             region = region.difference(hole.buffer(gap / 2.0 + grow * gap, quad_segs=16))
         if region.is_empty:
             break
-        region = largest_polygon(region)
-        rounded = fillet(Polygon(region.exterior), min_radius) if min_radius > 0 else region
-        if rounded.is_empty or rounded.area < 1.0:
-            break
-        rounded = largest_polygon(rounded)
-        # the fillet grows back over the keep-outs it rounded; cut them again
-        for i, hole in enumerate(holes):
-            if first_touch[i] is not None:
-                rounded = rounded.difference(hole.buffer(gap / 2.0 + (k - first_touch[i]) * gap, quad_segs=16))
-        if rounded.is_empty:
-            break
-        rounded = orient(Polygon(largest_polygon(rounded).exterior), 1.0)
-        if rounded.area < 1.0:
+
+        def ring_of(region, k=k):
+            region = largest_polygon(region)
+            rounded = fillet(Polygon(region.exterior), min_radius) if min_radius > 0 else region
+            if rounded.is_empty or rounded.area < 1.0:
+                return None
+            rounded = largest_polygon(rounded)
+            # the fillet grows back over the keep-outs it rounded; cut them again
+            for i, hole in enumerate(holes):
+                if first_touch[i] is not None:
+                    rounded = rounded.difference(hole.buffer(gap / 2.0 + (k - first_touch[i]) * gap, quad_segs=16))
+            if rounded.is_empty:
+                return None
+            rounded = orient(Polygon(largest_polygon(rounded).exterior), 1.0)
+            return rounded if rounded.area >= 1.0 else None
+        rounded = ring_of(region)
+        if rounded is not None and rings and not rounded.within(rings[-1].buffer(-0.5 * gap)):
+            # The last ring's rounding cut it off at a neck (between holes)
+            # and this one took the other side, crossing it: keep to the last
+            # ring's side, one gap in (found by the property tests).
+            inner = region.intersection(rings[-1].buffer(-gap))
+            rounded = ring_of(inner) if not inner.is_empty else None
+        if rounded is None:
             break
         rings.append(rounded)
         k += 1

@@ -136,7 +136,7 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
             if g.shape == "Custom Outline":
                 holes = [translate(Polygon(h), xoff=g.start_x_mm + shift_x, yoff=g.start_y_mm + shift_y)
                          for h in g.custom_holes if len(h) >= 3]
-            cav = cavity_map(trajectory, target_shapes, cfg.track_gap_mm, holes=holes)
+            cav = cavity_map(trajectory, target_shapes, cfg.track_gap_mm, holes=holes, min_radius=cfg.min_radius_mm)
         except shapely.errors.GEOSException:
             cav = None
         if cav is not None:

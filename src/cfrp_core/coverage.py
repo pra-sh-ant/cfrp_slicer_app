@@ -8,6 +8,8 @@ bridges are excluded: they are not part of the layer's laminate.
 """
 from __future__ import annotations
 
+import math
+
 import shapely
 from shapely.geometry import LineString
 from shapely.ops import unary_union
@@ -86,7 +88,27 @@ def _layer_tow(points, half):
     return unary_union(strips) if strips else None
 
 
-def cavity_map(trajectory, target_shapes, track_gap: float, run: int | None = None, holes=None) -> dict:
+def _corners(part, track_gap):
+    """The outline's convex corners: vertices where it turns 30 degrees or
+    more within one track gap (a rounded corner tighter than the bend
+    radius counts too)."""
+    out = []
+    for g in getattr(part, 'geoms', [part]):
+        if g.geom_type != 'Polygon':
+            continue
+        ring = shapely.geometry.polygon.orient(shapely.geometry.Polygon(g.exterior), 1.0).exterior
+        pts = list(ring.simplify(0.25 * track_gap).coords)[:-1]
+        for k, (x, y) in enumerate(pts):
+            (ax, ay), (bx, by) = pts[k - 1], pts[(k + 1) % len(pts)]
+            turn = math.degrees(math.atan2((x - ax) * (by - y) - (y - ay) * (bx - x),
+                                           (x - ax) * (bx - x) + (y - ay) * (by - y)))
+            if turn >= 30.0:                      # counter-clockwise outline: a left turn is convex
+                out.append(shapely.geometry.Point(x, y))
+    return out
+
+
+def cavity_map(trajectory, target_shapes, track_gap: float, run: int | None = None, holes=None,
+               min_radius: float = 0.0) -> dict:
     """Spots of the part that no layer fills: empty in `run` consecutive
     layers (None: in every layer). Layers stack, so such a spot is a cavity
     through the laminate.
@@ -94,9 +116,11 @@ def cavity_map(trajectory, target_shapes, track_gap: float, run: int | None = No
     Returns {"share": 0..1 of the part, "area_mm2", "layers": n judged,
     "spots": [{"area_mm2", "x", "y", "first", "last", "where"}]}, spots
     largest first; "where" is "next to hole k" (`holes`: polygons in the
-    order the outline lists them; default the part's own), "at the edge" or
-    "inside". Spots under one track width squared are left out (slivers
-    between neighbouring tows)."""
+    order the outline lists them; default the part's own), "in a corner"
+    (mostly within `min_radius` + a gap of a convex corner of the outline:
+    fibre bent no tighter than the bend radius cannot reach into it), "at
+    the edge" or "inside". Spots under one track width squared are left out
+    (slivers between neighbouring tows)."""
     half = float(track_gap) / 2.0
     by_layer: dict[int, list] = {}
     for pt in trajectory:
@@ -126,6 +150,9 @@ def cavity_map(trajectory, target_shapes, track_gap: float, run: int | None = No
     if holes is None:
         holes = [shapely.geometry.Polygon(r) for g in getattr(part, 'geoms', [part]) for r in g.interiors]
     near_hole = max(3.0 * float(track_gap), 3.0)
+    corners = _corners(part, float(track_gap)) if min_radius > 0 else []
+    corner_zone = (shapely.union_all([k.buffer(float(min_radius) + float(track_gap)) for k in corners])
+                   if corners else None)
     spots = []
     covered = None
     for geom, first, last in found:
@@ -138,6 +165,8 @@ def cavity_map(trajectory, target_shapes, track_gap: float, run: int | None = No
             dist = [h.exterior.distance(g) for h in holes]
             if dist and min(dist) <= near_hole:
                 where = f"next to hole {dist.index(min(dist)) + 1}"
+            elif corner_zone is not None and g.difference(corner_zone).area <= 0.2 * g.area:
+                where = "in a corner"
             elif part.exterior.distance(g) <= 2.0 * float(track_gap) if hasattr(part, 'exterior') else False:
                 where = "at the edge"
             else:

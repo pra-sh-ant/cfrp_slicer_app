@@ -343,19 +343,29 @@ def stitch_fermat(rings, gap, r, seam_hint=None, keepouts=()):
     seam_idx = _nearest_index(rings[0], seam_hint) if seam_hint is not None else _seam_index(rings[0])
     path = build(rings[0][seam_idx])
     import shapely
+    from shapely.geometry import LineString
     zones = [k.buffer(gap * 0.25) for k in keepouts if not k.is_empty]
     zone = shapely.union_all(zones) if zones else None
     head = [tuple(seam_hint)] if seam_hint is not None else []
 
-    def score(p):
-        return _lane_score(head + p, zone) if zone is not None else float(count_crossings(head + p))
+    def score(p, bound=math.inf):
+        """_lane_score; past `bound` (the best so far) only its keep-out part,
+        which crossings can only add to (the same choice, without counting
+        the crossings of seams that cannot win)."""
+        if zone is None:
+            return float(count_crossings(head + p))
+        line = LineString(head + p)
+        penalty = 1.0 + 100.0 * line.intersection(zone).length if line.intersects(zone) else 0.0
+        if penalty >= bound:
+            return penalty
+        return float(count_crossings(head + p)) + penalty
 
     best = score(path), path
     if best[0] == 0:
         return path
     for idx in _seam_candidates(rings[0], seam_idx):
         cand = build(rings[0][idx])
-        sc = score(cand)
+        sc = score(cand, best[0])
         if sc < best[0]:
             best = sc, cand
             if sc == 0:

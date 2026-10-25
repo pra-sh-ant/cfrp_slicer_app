@@ -54,18 +54,22 @@ def _length(path):
 
 class Recipe:
     """Builds recipe layers in turn for one flat part (`part`: its outline
-    with holes, as placed)."""
+    with holes, as placed). `holes` ({number: Polygon}): the holes to bend
+    round and wrap (default: a Custom Outline's, as drawn; an STL slice
+    gives its own)."""
 
-    def __init__(self, config: ProcessConfig, part):
+    def __init__(self, config: ProcessConfig, part, holes=None):
         g = config.geometry
         self.part = part
         self.gap, self.r_min = float(config.track_gap_mm), float(config.min_radius_mm)
         self.edge = int(config.edge_rings)
         self.core_pattern = config.infill_type
-        self.holes = drawn_holes(g)
+        self.holes = drawn_holes(g) if holes is None else dict(holes)
         self.wrap = bool(config.wrap_holes) and bool(self.holes)
         count = max(int(config.hole_rings), 1)
-        self.bands = ({k: zones.hole_band(k, h, self.gap, self.r_min, count) for k, h in self.holes.items()}
+        each = g.hole_ring_counts          # per hole, as drawn (0 = Hole Rings)
+        self.rings = {k: each[k - 1] if k <= len(each) and each[k - 1] > 0 else count for k in self.holes}
+        self.bands = ({k: zones.hole_band(k, h, self.gap, self.r_min, self.rings[k]) for k, h in self.holes.items()}
                       if self.wrap else {})
         self.eligible = zones.wrap_order(self.holes, g.bolt_holes) if self.wrap else []
         self.count = Counter()
@@ -86,7 +90,7 @@ class Recipe:
         if self.active and g.include_boundary:
             self.edge = max(self.edge, 1)    # the boundary pass is one edge ring
 
-    def layer(self, layer_num, plan_index, wrap_ok, last_pt, last_dir, core, plain, repair=None):
+    def layer(self, layer_num, plan_index, wrap_ok, last_pt, last_dir, core, plain, repair=None, record=True):
         """The 2D path of layer `layer_num` (1-based). `core(poly, last_pt,
         last_dir, layer_idx, exit_to)` lays the core pattern in `poly`;
         `plain()` the layer without the recipe, laid instead when it is
@@ -94,9 +98,11 @@ class Recipe:
         `wrap_ok`: the next layer is a recipe layer too (it spirals out of
         the hole). `repair(path)`: the layer's bend repair (Strict Bend
         Radius), or None; every candidate is judged as repaired, and the
-        repaired path is returned."""
+        repaired path is returned. `record=False` (a candidate Auto (Best
+        Fit) weighs): no wrap, nothing noted, and the recipe layer even when
+        the layer without it would do better (Auto weighs that one too)."""
         inward = plan_index % 2 == 0
-        start = None if inward else self.band
+        start = None if inward or not record else self.band
 
         def build(band):
             return zones.recipe_layer(self.part, self.holes, self.gap, self.r_min, self.edge, core, plan_index,
@@ -114,7 +120,7 @@ class Recipe:
             over = len(laid) > 1 and self.hole_area is not None and LineString(laid).intersects(self.hole_area)
             return (bool(over), zones.joins_cross(laid)), lost > 0.4 * _length(path), laid
 
-        wrapping = self.wrap and inward and wrap_ok and self.eligible
+        wrapping = self.wrap and inward and wrap_ok and self.eligible and record
         holes = [None]
         if wrapping:
             # Holes wrapped least so far first; of those, where the core ends: a
@@ -139,11 +145,15 @@ class Recipe:
             if faults == (False, 0) and not short:
                 break
         else:
+            if not record:
+                return min(tried, key=lambda t: t[0])[1]
             alt_faults, _, alt = judge(plain())
             tried.append((alt_faults, alt, None))
             longest = max(_length(t[1]) for t in tried)
             tried = [min((t for t in tried if _length(t[1]) >= 0.6 * longest), key=lambda t: t[0])]
         _, laid, lay = tried[-1]
+        if not record:
+            return laid
         if lay is None:
             self.plain_layers.append(layer_num)
             self.band = None
@@ -170,7 +180,10 @@ class Recipe:
         if self.wraps:
             parts = [f"hole {h} at layer {n} (into it only)" if n + 1 in self.plain_layers
                      else f"hole {h} at layers {n}-{n + 1}" for n, h in self.wraps]
-            out.append(f"Hole wraps ({max(int(config.hole_rings), 1)} ring(s), full laps): " + ", ".join(parts) + ".")
+            counts = {self.rings[h] for _, h in self.wraps}
+            rings = (f"{counts.pop()} ring(s)" if len(counts) == 1 else
+                     "rings: " + ", ".join(f"{self.rings[h]} round hole {h}" for h in sorted({h for _, h in self.wraps})))
+            out.append(f"Hole wraps ({rings}, full laps): " + ", ".join(parts) + ".")
         if self.skipped:
             out.append(f"{self.skipped} layer(s) wrap no hole: every hole's wrap there would have crossed "
                        f"that layer's own fibre.")

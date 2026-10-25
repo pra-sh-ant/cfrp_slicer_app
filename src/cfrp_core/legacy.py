@@ -33,6 +33,7 @@ _FIELD_MAP = {
     "custom_holes": ("geometry", "custom_holes"),
     "bolt_holes": ("geometry", "bolt_holes"),
     "drill_holes": ("geometry", "drill_holes"),
+    "hole_ring_counts": ("geometry", "hole_ring_counts"),
     # material
     "needle_dia": ("material", "needle_dia_mm"),
     "e_mult": ("material", "e_multiplier"),
@@ -153,6 +154,8 @@ def to_nested(d: dict, layup=None) -> dict:
         section, field = _FIELD_MAP[key]
         if field == "pressure_advance_table":
             value = parse_pa_table(value)
+        if field == "hole_ring_counts":
+            value = parse_hole_list(value)
         if field in ("bolt_holes", "drill_holes"):
             try:
                 value = parse_hole_list(value)
