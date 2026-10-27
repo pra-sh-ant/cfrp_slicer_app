@@ -147,6 +147,8 @@ class MainWindow(QMainWindow):
         tools_menu = mb.addMenu("Tools")
         act_calib = tools_menu.addAction("Generate Calibration G-code…")
         act_calib.triggered.connect(self._generate_calibration)
+        act_kit = tools_menu.addAction("Wind Turbine Kit…")
+        act_kit.triggered.connect(self._write_turbine_kit)
 
         help_menu = mb.addMenu("Help")
         act_about = help_menu.addAction("About CFRP Slicer Pro…")
@@ -399,6 +401,26 @@ class MainWindow(QMainWindow):
         marked = self._controls.mark_problems(msg)
         hint = f" (see the red setting{'s' if len(marked) > 1 else ''})" if marked else ""
         self._status_lbl.setText(f"Failed: {msg[:80]}{hint}")
+
+    def _write_turbine_kit(self):
+        """Matching projects for the blade, hub disc and nose cone, the hub's
+        drilling template and the assembly notes, from these settings."""
+        from cfrp_core.turbine import write_kit
+
+        folder = QFileDialog.getExistingDirectory(self, "Folder for the wind turbine kit")
+        if not folder:
+            return
+        try:
+            written = write_kit(folder, self._project_params(), app=self.windowTitle())
+        except Exception as exc:
+            QMessageBox.critical(self, "Kit failed", str(exc))
+            return
+        QMessageBox.information(
+            self, "Wind turbine kit written",
+            f"Wrote to {folder}:\n  " + "\n  ".join(p.name for p in written)
+            + "\n\nOpen each project, slice it and save its G-code. assembly.txt lists what to print, buy "
+              "and drill, and how it goes together.",
+        )
 
     def _generate_calibration(self):
         """Write the fibre calibration coupons and the ink flow coupon."""

@@ -81,6 +81,26 @@ PERTURB = {
     "uv_spot": lambda p: 3.0,
     "stl_closing_radius": lambda p: 0.3,
     "stl_stitch": lambda p: 1.0,
+    "blade_chord": lambda p: 60.0,
+    "blade_tip_chord": lambda p: 30.0,
+    "blade_thickness": lambda p: 25.0,
+    "blade_twist": lambda p: -8.0,
+    "blade_pitch": lambda p: 9.0,
+    "blade_root_shape": lambda p: "Square" if p.get("blade_root_shape", "Rectangle") != "Square" else "Round",
+    "blade_root_length": lambda p: 20.0,
+    "blade_root_width": lambda p: 44.0,
+    "blade_root_thickness": lambda p: 24.0,
+    "hub_blades": lambda p: 4,
+    "hub_shaft": lambda p: 10.0,
+    "hub_screw": lambda p: 5,
+    "hub_thickness": lambda p: 3.0,
+    "brim_rings": lambda p: 3,
+    "adaptive_layers": lambda p: not p.get("adaptive_layers", False),
+    "layer_height_step": lambda p: 8.0,
+    "layer_height_limit": lambda p: 0.9,
+    "clean_every_m": lambda p: 0.5,
+    "clean_every_min": lambda p: 1.0,
+    "clean_pause_s": lambda p: 20.0,
 }
 
 
@@ -122,6 +142,14 @@ SETUPS = {
     "cylinder": {"shape": "Hollow Cylinder (Z)", "tracks_per_layer": 2},
     "square_tube": {"shape": "Hollow Square Tube (Z)", "tracks_per_layer": 2},
     "sphere": {"shape": "Hollow Sphere (Z)", "tracks_per_layer": 2, "base_radius": 12.0},
+    "blade": {"shape": "Wind Turbine Blade (Z)", "tracks_per_layer": 2, "stem_height": 10.0,
+              "blade_chord": 50.0, "blade_tip_chord": 25.0, "blade_root_length": 5.0},
+    "blade_round": {"shape": "Wind Turbine Blade (Z)", "tracks_per_layer": 2, "stem_height": 10.0,
+                    "blade_chord": 50.0, "blade_tip_chord": 25.0, "blade_root_length": 5.0,
+                    "blade_root_shape": "Round"},
+    "hub": {"shape": "Wind Turbine Hub", "hub_thickness": 1.0},
+    "hub_square": {"shape": "Wind Turbine Hub", "hub_thickness": 1.0, "blade_root_shape": "Square",
+                   "blade_root_width": 30.0},
     "mushroom": {"shape": "3D Overhang (Mushroom)", "infill_type": "N/A", "stem_height": 8.0},
     "stl_box": {"shape": "STL Import"},
 }
@@ -164,7 +192,7 @@ def test_enabled_settings_are_live():
         assert _path(q) != _path(p), key
 
 
-@pytest.mark.parametrize("shape", ["Hollow Cylinder (Z)", "Hollow Square Tube (Z)"])
+@pytest.mark.parametrize("shape", ["Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Wind Turbine Blade (Z)"])
 def test_unavailable_revolve_patterns_slice_as_archimedean(shape):
     p = dict(BASE, shape=shape, tracks_per_layer=2)
     states = infill_states(p)

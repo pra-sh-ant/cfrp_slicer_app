@@ -37,7 +37,7 @@ FLAT = ["Square/Rectangle", "Triangle", "Hexagon", "Circle"]
 INFILLS = ["Archimedean (Concentric Spiral)", "Fermat Spiral (Connected Double Spiral)",
            "Oriented Serpentine", "45° Diagonal Hatch", "Corner-Step Spiral"]
 REV = ["Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Hollow Sphere (Z)", "Dome (Z)",
-       "Tapered Cylinder (Z)", "Conical Dome (Z)"]
+       "Tapered Cylinder (Z)", "Conical Dome (Z)", "Wind Turbine Blade (Z)"]
 
 
 def cases():

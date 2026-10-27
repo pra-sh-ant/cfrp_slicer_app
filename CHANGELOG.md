@@ -5,6 +5,106 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Wind turbine: blade, hub, kit; holds and pauses; brim; adaptive layer height)
+- **Wind Turbine Blade (Z)** shape: a blade standing on its root, laid as one
+  helical stroke to the tip like the other Z shells. The root is printed first
+  and straight, Root Length long (default 30 mm): a rounded rectangle (Root
+  Width x Root Thickness, default 50 x 28 mm) whose flat faces the hub clamps,
+  a square (Root Width a side), or Round (Outer Radius). Above it, Height (Z)
+  of blade: the root blends into a NACA 4-digit airfoil (2 % camber) over the
+  first 30 %, then the chord tapers from Max Chord (default 80 mm) to Tip
+  Chord and the twist falls to 0 at the tip. The airfoil is set at Pitch
+  (default 4 degrees) + twist against the root's faces, so every blade comes
+  out at the same angle (`geometry/blade.py`). The trailing edge is cut blunt,
+  2 x (1.05 x Min Bend Radius + Track Gap) thick, so the tow can turn round
+  it; the notes say so, and warn when the root transition leans out more than
+  45 degrees (its outer rings lie partly over air).
+- Each blade layer is its rings laid as exact laps, joined by lane changes on
+  the upper surface's flattest stretch (as Corner-Step's stitched rings), and
+  the layers by a lane change along the last lap (`layers/revolve.py`,
+  `_ring_connector`). Blending ring into ring, as the Archimedean spiral does,
+  bent far tighter than either ring near the blunt trailing edge, where each
+  ring is cut back well short of the one outside it. Fermat is not offered on
+  the blade or the hub (a note says so if a saved project asks for it); Seam
+  Stagger does not apply to the blade.
+- **Wind Turbine Hub** shape: a disc, printed twice, that clamps the blades'
+  roots between it (one disc in front, one behind, Root Thickness apart), with
+  two screws beside each root through both discs (`geometry/hub.py`). Settings:
+  Blades (2-6), Shaft Hole (printed, default 8 mm), Screw Size (default M4),
+  Disc Thickness (default 4 mm); its seats come from the blade's root
+  settings. The layout keeps the seats apart and clear of the shaft coupler,
+  every screw 2.5 x its size from the others and 3 x from the edge. The disc
+  is laid as a short Z shell, rings from its edge in to the shaft hole in one
+  helical stroke: as a flat Archimedean laminate with Strict Bend Radius the
+  disc dropped whole layers at some sizes (the inside-out layers that start
+  round the small shaft hole). The screw holes are drilled after curing (the
+  fibre runs over them); the notes list where, which drill and which screw.
+- **Wind Turbine Kit** (Tools menu): writes matching projects for the blade,
+  the hub disc and a nose cone (Conical Dome (Z) sized to cover the screw
+  heads), the hub's 1:1 drilling template (SVG, with each root's seat and its
+  leading edge's direction) and assembly notes (what to print, buy and drill,
+  how it goes together), all from the current settings (`turbine.py`).
+  `tools/make_turbine_kit.py FOLDER --gcode` does the same and slices every
+  part.
+- **Hold Points** (new Holds & Pauses section, any part): e.g. `40: 20 s; 80:
+  30 s, cut`. Where the stroke first reaches each height (mm above the first
+  layer) the head holds still with the UV on (`G4`), so the tow cures where it
+  lies; with `cut`, the UV goes off and the printer pauses (`M0`) so the fibre
+  can be cut there, then the UV comes back on and tacks the tow (`G4 P500`)
+  before the stroke goes on. The path itself stays one stroke; the notes say
+  where each hold landed, and print time counts the holds (`holds.py`).
+- **Cleaning pauses** (Holds & Pauses, any part, off by default): Pause by
+  Distance (every so many metres of path) and / or Pause by Time (every so
+  many minutes of printing). At each, the UV goes off and the head stays
+  exactly where it is for Pause Length (default 10 s) to clean a clogging
+  nozzle, then the UV comes back on and tacks the tow. None in the last half
+  interval; print time counts them.
+- **Brim Rings** (the blade, off by default): rings round the first layer, a
+  track gap apart, flat on the bed, laid first and leading into the part in
+  the same stroke, for a blade one track thick to grip the bed. Trim them off
+  after curing.
+- **Adaptive Layer Height** (Z shells, off by default): each layer Layer Height
+  Step % taller than the one before (negative: thinner), from Layer Height up
+  to Layer Height Limit; each layer's resin follows its height. Layers of one
+  height can stack up taller than planned and meet the nozzle. The notes say
+  how many layers it made.
+- Known limit: a blade whose root transition changes a lot from one layer to
+  the next (a short blade at thick layers, e.g. 24 mm at 1 mm) can show a
+  crossing where consecutive inner rings cross each other.
+
+### Fixed (G-code)
+- **G2/G3 arcs written the wrong way round.** The G-code writer chose clockwise
+  (G2) or anticlockwise (G3) from the open point chain's shoelace sum, which
+  measures the turn round the machine origin, not round the arc's centre:
+  about 40 % of arcs (every arc on the side of a curve facing the origin) had
+  the wrong direction, so the firmware and G-code viewers such as Repetier
+  Host went the long way round, nearly a full circle, instead of along the
+  path. The slicer's own 3D view draws the path points, so it looked right.
+  The direction now comes from the turn round the arc's centre
+  (`gcode/writer.py`).
+- **Arcs of a whole lap, and arcs whose ends sat at two radii.** An arc could
+  run a full ring (round shells, the hub disc) and end a hair past its start:
+  the firmware then drew a sliver instead of the lap. Arcs now turn one way
+  and less than half a turn. Their centre was fitted through three points, so
+  start and end could sit up to 0.02 mm off one radius (GRBL-style firmware
+  refuses that); the centre now sits at one radius from both ends (within
+  0.002 mm as written), and the arc is shortened until its points still fit.
+- **Resin one move late, and moves dropped.** A point's `dist` from the speed
+  planner is the step to the next point, but the writer read it as the move
+  into the point: every move got the next move's resin (a long connector
+  starved, the short step after it a blob of the connector's resin; in a
+  zigzag part up to 129 mm worth in one 0.15 mm step), a point whose next
+  point sat on top of it was not moved to (an arc after it then started from
+  where the head was not: up to 129 mm off the path in zigzag parts), and the
+  path's last move was never written. The writer now takes each move's
+  length from the coordinates. Total resin changes by under 3 % (zigzags
+  less, spirals 0.01-0.1 % more: the last move).
+- `tests/test_gcode_arcs.py` reads the written G-code back: every arc against
+  the points it replaces, one radius, under half a turn, each move's resin
+  from its own length, no move dropped. The 21 golden G-code files were
+  regenerated deliberately (their trajectories and checks are unchanged).
+  Re-slice and save G-code saved before these fixes.
+
 ### Added (Phase 45, last part: material limits, STL property test)
 - Profiles carry the cure: a material profile saves the resin's Cure Dose, a
   machine profile the head's LED Irradiance and Spot Length; together they cap

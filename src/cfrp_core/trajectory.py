@@ -27,6 +27,9 @@ class TrajectoryPoint(TypedDict):
     is_bridge: NotRequired[bool]      # fibre spanning a gap between islands
     is_anchor: NotRequired[bool]      # lead-in anchor
     comment: NotRequired[str]         # G-code comment (calibration coupons)
+    hold_s: NotRequired[float]        # hold point: dwell this long after the move (holds.py)
+    hold_cut: NotRequired[bool]       # hold point: then pause (M0) so the fibre can be cut
+    clean_s: NotRequired[float]       # cleaning pause: UV off, head still this long (holds.py)
     # DIW points:
     feature: NotRequired[str]         # dielectric | conductor | crossover | encapsulation | travel
     cure_after: NotRequired[bool]     # DIW: UV cure once this layer is printed
@@ -37,9 +40,9 @@ class TrajectoryPoint(TypedDict):
 
 REQUIRED = ("x", "y", "z", "dist", "v")
 KNOWN = set(TrajectoryPoint.__annotations__)
-_NUMERIC = {"x", "y", "z", "dist", "v", "e_mult", "z_layer", "width", "height"}
+_NUMERIC = {"x", "y", "z", "dist", "v", "e_mult", "z_layer", "width", "height", "hold_s", "clean_s"}
 _BOOL = {"layer_start", "is_transition", "pump_floored", "cure_dwell", "is_bridge", "is_anchor", "extruding",
-         "cure_after"}
+         "cure_after", "hold_cut"}
 DIW_FEATURES = {"dielectric", "conductor", "crossover", "encapsulation", "travel"}
 
 

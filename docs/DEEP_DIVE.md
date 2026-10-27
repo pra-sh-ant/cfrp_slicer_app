@@ -48,11 +48,11 @@ Entry: `pipeline.slice_part`. Core has no UI imports (`tests/test_core_isolation
 
 ## 6. Speed / extrusion (`kinematics.py`)
 
-Per point: corner-radius cap (v_max at R>=3*r_min down to v_min at R=r_min), heading cap `0.5+0.5cos(theta)`, backward/forward accel scans (kept as exact sequential loops on purpose, see ARCHITECTURE s4), pump floor, then pressure-advance look-ahead by `advance_dist` mm. G-code: `E += dist * e_const * e_mult`.
+Per point: corner-radius cap (v_max at R>=3*r_min down to v_min at R=r_min), heading cap `0.5+0.5cos(theta)`, backward/forward accel scans (kept as exact sequential loops on purpose, see ARCHITECTURE s4), pump floor, then pressure-advance look-ahead by `advance_dist` mm. G-code: `E += step * e_const * e_mult`, `step` the length of the move into the point (a point's `dist` is the step to the next one).
 
 ## 7. G-code and validation
 
-`gcode/writer.py`: Marlin-style, one `G1 F X Y Z E` per point, G2/G3 arc fitting (tol 0.02 mm, >=4 points, breaks at layer starts/transitions). `validation.py`: bounds, seam jump > gap (Fail); pump floor, ramp angle, self-crossing (Z-chunked), curvature (Warning).
+`gcode/writer.py`: Marlin-style, one `G1 F X Y Z E` per point, G2/G3 arc fitting (tol 0.02 mm, >=4 points, one way round and under half a turn, the centre at one radius from both ends, breaks at layer starts/transitions/holds). `validation.py`: bounds, seam jump > gap (Fail); pump floor, ramp angle, self-crossing (Z-chunked), curvature (Warning).
 
 ## 8. Known limits
 

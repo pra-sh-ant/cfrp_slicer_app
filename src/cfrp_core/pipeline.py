@@ -8,10 +8,11 @@ import shapely
 from shapely.affinity import translate
 from shapely.geometry import Polygon
 
-from .config import ARCHIMEDEAN, CORNER_STEP, DIAGONAL_45, FERMAT, ORIENTED_SERPENTINE, ProcessConfig
+from .config import ARCHIMEDEAN, BLADE, CORNER_STEP, DIAGONAL_45, FERMAT, HUB, ORIENTED_SERPENTINE, ProcessConfig
 from .constraints import resolve_process_constraints
 from .coverage import cavity_map, cavity_note, coverage_summary, layer_coverage
 from .gcode import compile_gcode
+from .holds import place_clean_pauses, place_holds
 from .layers import build_flat_laminate, build_revolve_shell, build_stl_laminate, plan_layers, skin_summary
 from .machine import DEFAULT_MACHINE, MachineProfile, fit_trajectory_to_bed
 from .specialty import specialty_shape
@@ -24,6 +25,9 @@ def _compute_stats(trajectory: list[dict], config: ProcessConfig, target_shapes=
     print_time = 0.0
     fiber_length = 0.0
     for pt in trajectory:
+        print_time += float(pt.get("hold_s", 0.0))         # hold points (a cut's pause is open-ended)
+        if pt.get("clean_s"):
+            print_time += float(pt["clean_s"]) + 0.5         # cleaning pause + the tack dwell
         if pt.get("is_transition"):
             continue
         dist = float(pt.get("dist", 0.0))
@@ -96,6 +100,18 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
                     f"the first layer's tow into the bed. A stand-off near the tow thickness is usual.")
     if not g.is_specialty and g.shape != "STL Import":
         info.append(f"Laminate: {cfg.layers} layer(s) x {lh:g} mm = {cfg.layers * lh:.2f} mm thick.")
+    if g.shape == BLADE:
+        from .geometry.blade import blade_notes
+        info.extend(blade_notes(g, cfg.track_gap_mm, cfg.min_radius_mm))
+    if g.shape == HUB:
+        from .geometry.hub import hub_layout, hub_notes
+        info.extend(hub_notes(hub_layout(g), g.hub_thickness_mm))
+    if g.is_revolve and cfg.adaptive_layers:
+        from .layers.revolve import adaptive_note
+        info.append(adaptive_note(cfg))
+    if g.shape == BLADE and cfg.brim_rings:
+        info.append(f"Brim: {cfg.brim_rings} ring(s) round the first layer, on the bed, laid first in the same "
+                    f"stroke; trim them off after curing.")
     if g.shape == "Custom Outline":
         from .geometry import base_polygon
         from .layers.flat import part_pieces
@@ -121,6 +137,8 @@ def slice_part(config: ProcessConfig, machine: MachineProfile = DEFAULT_MACHINE)
             (z, translate(shape, xoff=shift_x, yoff=shift_y), layer)
             for z, shape, layer in target_shapes
         ]
+    info.extend(place_holds(trajectory, cfg))
+    info.extend(place_clean_pauses(trajectory, cfg))
     gcode = compile_gcode(trajectory, cfg)
     validation = validate_trajectory(trajectory, cfg, machine, target_shapes)
 

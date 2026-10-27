@@ -11,9 +11,11 @@ from dataclasses import dataclass
 
 from .config import (
     ARCHIMEDEAN,
+    BLADE,
     CORNER_STEP,
     DIAGONAL_45,
     FERMAT,
+    HUB,
     ORIENTED_SERPENTINE,
     SPECIALTY_SHAPES,
     ProcessConfig,
@@ -104,7 +106,10 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
     # for every ring at >= min bend radius: R >= r_min + (tracks + 0.5) * gap
     # (layers.build_revolve_shell). If even the base radius fails that, every
     # layer would be skipped, so cap the track count instead.
-    shape_is_round_revolve = config.geometry.is_revolve and shape != "Hollow Square Tube (Z)"
+    # The blade stands on a round root: it must fit one ring too (its other
+    # sections are filled with as many rings as fit, so its count stays).
+    shape_is_round_revolve = config.geometry.is_revolve and shape not in ("Hollow Square Tube (Z)", HUB) and not (
+        shape == BLADE and config.geometry.blade_root_shape != "Round")
     if shape_is_round_revolve:
         base_r = max(float(config.geometry.base_radius_mm), 1.0)
         fit = math.floor((base_r - min_radius) / track_gap - 0.5 + 1e-9)
@@ -114,7 +119,7 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
                 f"{min_radius:.1f} mm min bend radius (needs at least "
                 f"{min_radius + 1.5 * track_gap:.1f} mm). Enlarge the part or reduce Min Bend Radius."
             )
-        if int(config.tracks_per_layer) > fit:
+        if int(config.tracks_per_layer) > fit and shape != BLADE:
             update["tracks_per_layer"] = fit
             notes.append(
                 f"Tracks Per Layer reduced from {int(config.tracks_per_layer)} to {fit}: a "
@@ -127,7 +132,15 @@ def resolve_process_constraints(config: ProcessConfig) -> ResolvedConfig:
     # however wide the region. A revolve shell does it on every layer;
     # Archimedean never reverses, so use it there whenever gap < 2·r_min.
     wall_band = int(update.get("tracks_per_layer", config.tracks_per_layer)) * track_gap
-    if config.infill_type == FERMAT and min_radius > 0 and track_gap < 2.0 * min_radius:
+    if config.infill_type == FERMAT and shape == BLADE:
+        update["infill_type"] = ARCHIMEDEAN
+        notes.append("Wind Turbine Blade: each layer is its rings, laid lap by lap with lane changes on the "
+                     "upper surface; the Fermat spiral does not apply.")
+    elif config.infill_type == FERMAT and shape == HUB:
+        update["infill_type"] = ARCHIMEDEAN
+        notes.append("Wind Turbine Hub: the disc is laid as rings from its edge in to the shaft hole; the Fermat "
+                     "spiral does not apply.")
+    elif config.infill_type == FERMAT and min_radius > 0 and track_gap < 2.0 * min_radius:
         if config.geometry.is_revolve:
             update["infill_type"] = ARCHIMEDEAN
             notes.append(

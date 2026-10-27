@@ -36,7 +36,8 @@ INFILLS = ["Archimedean (Concentric Spiral)", "Fermat Spiral (Connected Double S
            "Oriented Serpentine", "45° Diagonal Hatch", "Corner-Step Spiral"]
 FLAT = ["Square/Rectangle", "Triangle", "Hexagon", "Circle"]
 REV = ["Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Hollow Sphere (Z)", "Dome (Z)",
-       "Tapered Cylinder (Z)", "Conical Dome (Z)"]
+       "Tapered Cylinder (Z)", "Conical Dome (Z)", "Wind Turbine Blade (Z)",
+       "Wind Turbine Hub"]
 
 def cases():
     for shape, inf, bnd, layers, layup, tracks, (w, h) in itertools.product(

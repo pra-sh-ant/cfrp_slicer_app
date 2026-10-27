@@ -26,8 +26,8 @@ ShapeName = Literal[
     "Square/Rectangle", "Triangle", "Hexagon", "Circle",
     "Hollow Cylinder (Z)", "Hollow Square Tube (Z)",
     "Hollow Sphere (Z)", "Dome (Z)", "Tapered Cylinder (Z)",
-    "Conical Dome (Z)", "3D Overhang (Mushroom)",
-    "STL Import", "Custom Outline",
+    "Conical Dome (Z)", "Wind Turbine Blade (Z)", "3D Overhang (Mushroom)",
+    "STL Import", "Custom Outline", "Wind Turbine Hub",
 ]
 SHAPES: tuple[str, ...] = ShapeName.__args__
 
@@ -35,8 +35,12 @@ SHAPES: tuple[str, ...] = ShapeName.__args__
 # layer, alternating outside-in/inside-out, like the flat laminate pipeline.
 REVOLVE_SHAPES = frozenset({
     "Hollow Cylinder (Z)", "Hollow Square Tube (Z)", "Hollow Sphere (Z)",
-    "Dome (Z)", "Tapered Cylinder (Z)", "Conical Dome (Z)",
+    "Dome (Z)", "Tapered Cylinder (Z)", "Conical Dome (Z)", "Wind Turbine Blade (Z)", "Wind Turbine Hub",
 })
+BLADE = "Wind Turbine Blade (Z)"
+# The disc the blades' roots are clamped between (geometry/hub.py), laid as
+# a short Z shell: rings from its edge in to the shaft hole, one helical stroke.
+HUB = "Wind Turbine Hub"
 # Fixed-speed specialty generators: no per-layer stitching, no speed planner.
 FLAT_SPECIALTY_SHAPES = frozenset({"3D Overhang (Mushroom)"})
 SPECIALTY_SHAPES = REVOLVE_SHAPES | FLAT_SPECIALTY_SHAPES
@@ -140,6 +144,81 @@ class GeometryConfig(_Frozen):
     drill_holes: tuple[int, ...] = ()
     # laps a wrap gives each hole (1 to 5), as drawn; 0 or none = Hole Rings
     hole_ring_counts: tuple[int, ...] = ()
+    # Wind Turbine Blade (Z), geometry/blade.py: stem_height_mm is the
+    # blade's length above its root. The airfoil's chord at the shoulder
+    # (its widest) and at the tip, its thickness (% of the chord), its twist
+    # at the shoulder (falling to 0 at the tip) and the pitch the whole
+    # airfoil is set at against the root's flat faces.
+    blade_chord_mm: float = 80.0
+    blade_tip_chord_mm: float = 40.0
+    blade_thickness_pct: float = 21.0
+    blade_twist_deg: float = 12.0
+    blade_pitch_deg: float = 4.0
+    # The root, printed first and clamped in the hub: a straight length of
+    # a rounded rectangle (width along the chord x thickness; its flat faces
+    # sit on the hub's discs), a rounded square (root width on every side) or
+    # a circle of base_radius_mm.
+    blade_root_shape: Literal["Rectangle", "Square", "Round"] = "Rectangle"
+    blade_root_length_mm: float = 30.0
+    blade_root_width_mm: float = 50.0
+    blade_root_thickness_mm: float = 28.0
+    # Wind Turbine Hub, geometry/hub.py: how many blades it holds, the shaft
+    # hole (printed), the clamp screws' size (M3 = 3; their holes are
+    # drilled after curing) and the disc's thickness. Its root seats come
+    # from the blade root above.
+    hub_blades: int = 3
+    hub_shaft_mm: float = 8.0
+    hub_screw_mm: float = 4.0
+    hub_thickness_mm: float = 4.0
+
+    @field_validator("blade_chord_mm", "blade_tip_chord_mm")
+    @classmethod
+    def _blade_chord(cls, v: float, info) -> float:
+        return _require(v, "Max Chord" if info.field_name == "blade_chord_mm" else "Tip Chord", unit=" mm")
+
+    @field_validator("blade_thickness_pct")
+    @classmethod
+    def _blade_thickness(cls, v: float) -> float:
+        if not (math.isfinite(v) and 5.0 <= v <= 60.0):
+            raise ValueError(f"Airfoil Thickness must be between 5 and 60 % of the chord (got {v:g}).")
+        return v
+
+    @field_validator("blade_twist_deg", "blade_pitch_deg")
+    @classmethod
+    def _blade_angle(cls, v: float, info) -> float:
+        label = "Twist" if info.field_name == "blade_twist_deg" else "Pitch"
+        if not (math.isfinite(v) and -90.0 <= v <= 90.0):
+            raise ValueError(f"{label} must be between -90 and 90 degrees (got {v:g}).")
+        return v
+
+    @field_validator("blade_root_length_mm")
+    @classmethod
+    def _root_length(cls, v: float) -> float:
+        return _require(v, "Root Length", strict=False, unit=" mm")
+
+    @field_validator("blade_root_width_mm", "blade_root_thickness_mm")
+    @classmethod
+    def _root_size(cls, v: float, info) -> float:
+        return _require(v, "Root Width" if info.field_name == "blade_root_width_mm" else "Root Thickness", unit=" mm")
+
+    @field_validator("hub_blades")
+    @classmethod
+    def _hub_blades(cls, v: int) -> int:
+        if not 2 <= v <= 6:
+            raise ValueError(f"Blades must be between 2 and 6 (got {v}).")
+        return v
+
+    @field_validator("hub_shaft_mm", "hub_thickness_mm")
+    @classmethod
+    def _hub_size(cls, v: float, info) -> float:
+        return _require(v, "Shaft Hole" if info.field_name == "hub_shaft_mm" else "Disc Thickness", unit=" mm")
+
+    @field_validator("hub_screw_mm")
+    @classmethod
+    def _hub_screw(cls, v: float) -> float:
+        if not (math.isfinite(v) and 2.0 <= v <= 12.0):
+            raise ValueError(f"Screw Size must be between M2 and M12 (got M{v:g}).")
+        return v
 
     @field_validator("hole_ring_counts")
     @classmethod
@@ -290,6 +369,27 @@ class HeightRange(_Frozen):
         return self
 
 
+class HoldPoint(_Frozen):
+    """A stop on the stroke where it first reaches `at_mm` above the first
+    layer: the head holds still `seconds` (UV on: the tow cures where it
+    lies), then, with `cut`, pauses (M0) so the fibre can be cut there.
+    The path itself stays one stroke."""
+
+    at_mm: float
+    seconds: float = 0.0
+    cut: bool = False
+
+    @model_validator(mode="after")
+    def _hold(self):
+        if not (math.isfinite(self.at_mm) and self.at_mm >= 0):
+            raise ValueError(f"Hold point at {self.at_mm:g} mm: the height must be 0 or more.")
+        if not (math.isfinite(self.seconds) and self.seconds >= 0):
+            raise ValueError(f"Hold point at {self.at_mm:g} mm: the hold time cannot be negative.")
+        if self.seconds <= 0 and not self.cut:
+            raise ValueError(f"Hold point at {self.at_mm:g} mm: give a hold time (e.g. 20 s), 'cut', or both.")
+        return self
+
+
 class ProcessConfig(_Frozen):
     """Everything one slice needs, apart from the machine profile."""
 
@@ -382,6 +482,29 @@ class ProcessConfig(_Frozen):
     # Edge Rings or Fill Solid (a stiff flange at the bottom, say). The first
     # range that holds a layer's height applies.
     height_ranges: tuple[HeightRange, ...] = ()
+    # Hold points: where the stroke stops for a while (a timed dwell), and
+    # optionally pauses so the fibre can be cut there (holds.py). Any part.
+    hold_points: tuple[HoldPoint, ...] = ()
+    # Cleaning pauses (holds.py), any part: every `clean_every_m` metres of
+    # path and / or every `clean_every_min` minutes of printing, the UV goes
+    # off and the head stays where it is for `clean_pause_s` seconds, to
+    # clean the nozzle; then the UV comes back on and tacks the tow.
+    clean_by_distance: bool = False
+    clean_every_m: float = 5.0
+    clean_by_time: bool = False
+    clean_every_min: float = 30.0
+    clean_pause_s: float = 10.0
+    # Brim (the Wind Turbine Blade): this many rings round the first layer,
+    # on the bed, laid first and leading into the part in the same stroke,
+    # for a part one track thick to grip the bed. Trim them off after curing.
+    brim_rings: int = 0
+    # Adaptive layer height (Z shells): each layer this many percent taller
+    # than the one before (negative: shorter), from Layer Height until it
+    # reaches the limit; the resin follows each layer's height. A stack of
+    # equal layers can outgrow its nominal height and meet the nozzle.
+    adaptive_layers: bool = False
+    layer_height_step_pct: float = 1.0
+    layer_height_limit_mm: float = 0.3
 
     def height_range(self, height: float):
         """The height range that holds `height` (mm above the first layer), or None."""
@@ -454,6 +577,35 @@ class ProcessConfig(_Frozen):
             raise ValueError("Edge Rings and Hole Rings must be between 0 and 5.")
         return v
 
+    @field_validator("clean_every_m", "clean_every_min", "clean_pause_s")
+    @classmethod
+    def _clean(cls, v: float, info) -> float:
+        names = {"clean_every_m": ("Distance Between Pauses", " m"),
+                 "clean_every_min": ("Time Between Pauses", " min"), "clean_pause_s": ("Pause Length", " s")}
+        label, unit = names[info.field_name]
+        return _require(v, label, unit=unit)
+
+    @field_validator("brim_rings")
+    @classmethod
+    def _brim(cls, v: int) -> int:
+        if not 0 <= v <= 20:
+            raise ValueError(f"Brim Rings must be between 0 and 20 (got {v}).")
+        return v
+
+    @field_validator("layer_height_step_pct")
+    @classmethod
+    def _layer_step(cls, v: float) -> float:
+        if not (math.isfinite(v) and -20.0 <= v <= 20.0):
+            raise ValueError(f"Layer Height Step must be between -20 and 20 % (got {v:g}).")
+        return v
+
+    @field_validator("layer_height_limit_mm")
+    @classmethod
+    def _layer_limit(cls, v: float) -> float:
+        if not (math.isfinite(v) and v >= 0.05):
+            raise ValueError(f"Layer Height Limit must be at least 0.05 mm (got {v:g}).")
+        return v
+
     @field_validator("overhang_span_mm")
     @classmethod
     def _span_limit(cls, v: float) -> float:
@@ -511,6 +663,14 @@ class ProcessConfig(_Frozen):
                 raise ValueError(
                     "The custom outline is too narrow for two bend radii plus one track gap. "
                     "Reduce Min Bend Radius or Track Gap, or enlarge the outline."
+                )
+        elif g.shape == BLADE and g.blade_root_shape != "Round":
+            side = g.blade_root_width_mm if g.blade_root_shape == "Square" else min(g.blade_root_width_mm,
+                                                                                  g.blade_root_thickness_mm)
+            if self.min_radius_mm * 2.0 + self.track_gap_mm >= side:
+                raise ValueError(
+                    "The blade root is too thin for two bend radii plus one track gap. Raise Root Width / Root "
+                    "Thickness, or reduce Min Bend Radius or Track Gap."
                 )
         elif g.shape not in SPECIALTY_SHAPES and g.shape != "STL Import":
             width, height = float(g.width_mm), float(g.height_mm)

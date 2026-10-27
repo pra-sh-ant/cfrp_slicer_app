@@ -13,10 +13,12 @@ from dataclasses import dataclass
 from .config import (
     ARCHIMEDEAN,
     AUTO,
+    BLADE,
     CORNER_STEP,
     DIAGONAL_45,
     FERMAT,
     FLAT_SPECIALTY_SHAPES,
+    HUB,
     ORIENTED_SERPENTINE,
     REVOLVE_SHAPES,
 )
@@ -103,6 +105,11 @@ def infill_states(p: dict) -> dict[str, OptionState]:
         if family == "revolve":
             if name == ARCHIMEDEAN:
                 states[name] = ON
+            elif name == FERMAT and shape == BLADE:
+                states[name] = _off("The blade lays each layer as its rings, lap by lap, with lane changes on "
+                                    "the upper surface.")
+            elif name == FERMAT and shape == HUB:
+                states[name] = _off("The hub disc is laid as rings from its edge in to the shaft hole.")
             elif name == FERMAT:
                 states[name] = (_off("On shells the slicer replaces Fermat with Archimedean: Fermat "
                                      "turns back between adjacent tracks on every layer. " + caution)
@@ -161,9 +168,19 @@ def field_states(p: dict) -> dict[str, OptionState]:
     # A Custom Outline can be split into pieces by its holes, like a slice.
     s["stl_islands"] = (ON if family == "stl" or shape == CUSTOM
                         else _off("Only for STL Import and the Custom Outline (pieces split by holes)."))
-    s["base_radius"] = (ON if family in ("revolve", "mushroom")
-                        else _off("Only for Z shells and the Mushroom."))
-    if family == "revolve":
+    root_shape = p.get("blade_root_shape", "Rectangle")
+    rect_root = root_shape != "Round"
+    if shape in (BLADE, HUB) and rect_root:
+        s["base_radius"] = _off(f"A {root_shape.lower()} blade root is sized by Root Width"
+                                + (" and Root Thickness." if root_shape == "Rectangle" else "."))
+    elif shape == HUB:
+        s["base_radius"] = ON             # the round root's radius
+    else:
+        s["base_radius"] = (ON if family in ("revolve", "mushroom")
+                            else _off("Only for Z shells and the Mushroom."))
+    if shape == HUB:
+        s["stem_height"] = _off("The hub's thickness is Disc Thickness.")
+    elif family == "revolve":
         s["stem_height"] = (_off("A sphere's height is twice its radius.") if shape == SPHERE else ON)
     else:
         s["stem_height"] = _off("Only for Z shells.")
@@ -171,6 +188,37 @@ def field_states(p: dict) -> dict[str, OptionState]:
     for key in ("disc_radius", "stem_top"):
         s[key] = ON if family == "mushroom" else mushroom_only
     s["custom_outline"] = ON if shape == CUSTOM else _off("Only for the Custom Outline shape.")
+    for key in ("blade_chord", "blade_tip_chord", "blade_thickness", "blade_twist", "blade_pitch"):
+        s[key] = ON if shape == BLADE else _off("Only for the Wind Turbine Blade.")
+    turbine = _off("Only for the Wind Turbine Blade and Hub (the hub's seats fit the blade's root).")
+    for key in ("blade_root_shape", "blade_root_length"):
+        s[key] = ON if shape in (BLADE, HUB) else turbine
+    for key in ("blade_root_width", "blade_root_thickness"):
+        if shape not in (BLADE, HUB):
+            s[key] = turbine
+        elif not rect_root:
+            s[key] = _off("A round root is sized by Outer Radius.")
+        elif key == "blade_root_thickness" and root_shape == "Square":
+            s[key] = _off("A square root is Root Width on every side.")
+        else:
+            s[key] = ON
+    for key in ("hub_blades", "hub_shaft", "hub_screw", "hub_thickness"):
+        s[key] = ON if shape == HUB else _off("Only for the Wind Turbine Hub.")
+    s["brim_rings"] = ON if shape == BLADE else _off("Only for the Wind Turbine Blade (round its first layer, on the "
+                                                     "bed).")
+    if family != "revolve":
+        adaptive = _off("Only for Z shells (cylinders, tubes, spheres, domes, cones, the blade and the hub): their "
+                        "layers climb in one spiral.")
+        for key in ("adaptive_layers", "layer_height_step", "layer_height_limit"):
+            s[key] = adaptive
+    else:
+        s["adaptive_layers"] = ON
+        for key in ("layer_height_step", "layer_height_limit"):
+            s[key] = ON if p.get("adaptive_layers", False) else _off("Only with Adaptive Layer Height.")
+    s["clean_every_m"] = ON if p.get("clean_by_distance", False) else _off("Only with Pause by Distance.")
+    s["clean_every_min"] = ON if p.get("clean_by_time", False) else _off("Only with Pause by Time.")
+    s["clean_pause_s"] = (ON if p.get("clean_by_distance", False) or p.get("clean_by_time", False)
+                          else _off("Only with Pause by Distance or Pause by Time."))
 
     # --- pattern and layers ------------------------------------------------
     if family == "mushroom":
@@ -183,6 +231,10 @@ def field_states(p: dict) -> dict[str, OptionState]:
             s["layers"] = _off("Layers follow the shell: Height / Layer Height.")
             s["fill_solid"] = _off("A shell's wall thickness is set by Tracks Per Layer.")
             s["tracks_per_layer"] = ON
+            if shape == HUB:
+                s["layers"] = _off("Layers follow the disc: Disc Thickness / Layer Height.")
+                s["fill_solid"] = s["tracks_per_layer"] = _off("The hub disc is filled from its edge to the "
+                                                               "shaft hole.")
             s["layup_seq"] = _off("Shell rings follow the wall; there is no fibre angle to set.")
         else:
             s["layers"] = (_off("Layers follow the model: its height / Layer Height.")
@@ -291,10 +343,12 @@ def field_states(p: dict) -> dict[str, OptionState]:
         seams = ON
     s["transition_angle"] = seams
     s["seam_trim_length"] = seams
-    if family == "revolve" and shape != SQUARE_TUBE:
+    if family == "revolve" and shape not in (SQUARE_TUBE, BLADE):
         s["seam_stagger"] = ON
     elif shape == SQUARE_TUBE:
         s["seam_stagger"] = _off("The square tube keeps its seam on a straight side.")
+    elif shape == BLADE:
+        s["seam_stagger"] = _off("The blade keeps its seam midway along the upper surface, its flattest stretch.")
     elif family == "flat" and infill in (ARCHIMEDEAN, AUTO) and layers > 1:
         s["seam_stagger"] = ON
     elif family == "flat" and infill in (ARCHIMEDEAN, AUTO):

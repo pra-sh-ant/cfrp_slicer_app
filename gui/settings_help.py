@@ -4,8 +4,9 @@ Each entry: what it does, then what changes when you raise or lower it."""
 HELP = {
     # --- part ---------------------------------------------------------------
     "shape": "What you are printing: a flat plate (rectangle, triangle, hexagon, circle), a hollow "
-             "shell that grows upward (cylinder, tube, sphere, dome…), the overhang test, a 3D model "
-             "from a file (STL), or a board you drew in the PCB editor (Custom Outline).",
+             "shell that grows upward (cylinder, tube, sphere, dome…, or a wind turbine blade standing "
+             "on its root), the overhang test, a 3D model from a file (STL), or a board you drew in the "
+             "PCB editor (Custom Outline).",
     "width": "How wide the flat part is (left to right). For a hexagon or circle this is the diameter.",
     "height": "How deep the flat part is (front to back on the bed). This is NOT the thickness; "
               "thickness comes from Total Layers x Layer Height.",
@@ -25,8 +26,38 @@ HELP = {
                           "this are closed. Raise it for a messy model; lower it if real thin slots vanish.",
     "stl_stitch": "Repairs holes in a broken model: open edges closer than this are joined. Raise it "
                   "for badly broken files; 0 turns the repair off.",
-    "base_radius": "How wide the shell is: its outer radius (or the radius of the overhang test's base).",
-    "stem_height": "How tall the shell is.",
+    "base_radius": "How wide the shell is: its outer radius (or the radius of the overhang test's base; "
+                   "for a wind turbine blade or hub with a Round root, the root's radius).",
+    "stem_height": "How tall the shell is (for the wind turbine blade: its length above the root).",
+    "blade_chord": "Wind turbine blade: the airfoil's chord (leading to trailing edge) where the blade is "
+                   "widest, 30 % of the way up the blade; the root blends into it below that.",
+    "blade_tip_chord": "Wind turbine blade: the chord at the tip. The chord narrows evenly from the widest "
+                       "point to the tip.",
+    "blade_thickness": "Wind turbine blade: how thick the airfoil is, as % of its chord (a NACA airfoil with "
+                       "2 % camber). Thicker = stiffer and easier for the fibre; real blades run about 15-25 %. "
+                       "The trailing edge is cut blunt so the fibre can turn round it at the Min Bend Radius.",
+    "blade_twist": "Wind turbine blade: how far the airfoil is turned at its widest point, falling to 0 at "
+                   "the tip (most of the turn near the root, as on real blades).",
+    "blade_pitch": "Wind turbine blade: the angle the whole airfoil is set at against the root's flat faces, "
+                   "which sit flat on the hub: its leading edge turned into the wind. Built into the print, so "
+                   "every blade comes out the same.",
+    "blade_root_shape": "Wind turbine blade and hub: the root the hub's two discs clamp. Rectangle: flat faces "
+                        "sit on the discs, so it grips over its whole face and cannot turn. Square: the same, "
+                        "Root Width on every side (the discs are that far apart). Round: a circle (Outer Radius); "
+                        "you set each blade's angle by hand when you clamp it.",
+    "blade_root_length": "Wind turbine blade and hub: how long the straight root is, below the blade. The hub's "
+                         "discs clamp all of it, so longer = a firmer grip but a taller print.",
+    "blade_root_width": "Wind turbine blade and hub: the rectangular root's width along the chord (a square "
+                        "root's side). It lies flat on the hub's discs, with a screw on either side of it.",
+    "blade_root_thickness": "Wind turbine blade and hub: the rectangular root's thickness: the gap between the "
+                            "hub's two discs.",
+    "hub_blades": "Wind turbine hub: how many blades it holds, evenly spaced round it.",
+    "hub_shaft": "Wind turbine hub: the hole in the middle for the generator's shaft (printed; the fibre runs "
+                 "round it). The shaft coupler bolts to the back disc.",
+    "hub_screw": "Wind turbine hub: the clamp screws' size (M4 = 4 mm). Two per blade, beside its root, through "
+                 "both discs. Their holes are drilled after curing; the slice notes and the kit's template say "
+                 "where.",
+    "hub_thickness": "Wind turbine hub: how thick each of its two discs is. Thicker = stiffer, longer to print.",
     "disc_radius": "Radius of the overhang test's top disc (how far it sticks out).",
     "stem_top": "Height of the overhang test's stem, measured from the bed.",
 
@@ -162,6 +193,32 @@ HELP = {
                     "a layer) don't line up into one weak seam (137.5° spreads them evenly). Round "
                     "shells, and flat Archimedean parts (the spiral is twisted a little; at most 20° "
                     "per ring).",
+
+    "brim_rings": "Wind turbine blade: extra fibre rings round the first layer, flat on the bed, laid first and "
+                  "leading straight into the part in the same stroke. A part one track thick grips the bed far "
+                  "better with a brim. Trim it off after curing. Off = no brim.",
+    "adaptive_layers": "Z shells (cylinders, tubes, spheres, domes, cones, the blade and the hub): each layer a "
+                       "little taller than the one before (Layer Height Step), from Layer Height up to Layer Height "
+                       "Limit. Layers of exactly the same height can stack up taller than planned and meet the "
+                       "nozzle. Each layer's resin follows its height. The notes say how many layers it made.",
+    "layer_height_step": "Adaptive Layer Height: how much taller each layer is than the one before, in percent (1 % "
+                         "of 0.2 mm = 0.002 mm). Negative: each layer a little thinner.",
+    "layer_height_limit": "Adaptive Layer Height: the layer height stops changing once it reaches this.",
+
+    # --- holds & pauses ------------------------------------------------------------------------------
+    "hold_points": "Stops on the one continuous stroke, any part: entries separated by ';', each the "
+                   "height in mm above the first layer, ':', then a hold time and/or 'cut'. E.g. "
+                   "'40: 20 s; 80: 30 s, cut; 120: cut'. A hold time keeps the head still there with the UV "
+                   "on, so the tow cures where it lies. 'cut' then turns the UV off and pauses the printer "
+                   "(M0) so you can cut the fibre there; resuming turns the UV back on and tacks the tow "
+                   "before the stroke goes on. The slice notes say where each hold landed.",
+    "clean_by_distance": "Stop every so many metres of fibre path to clean the nozzle: the UV goes off, the head "
+                         "stays exactly where it is for Pause Length, then the UV comes back on and tacks the tow.",
+    "clean_every_m": "Pause by Distance: metres of fibre path between cleaning pauses.",
+    "clean_by_time": "Stop every so many minutes of printing to clean the nozzle: the UV goes off, the head stays "
+                     "exactly where it is for Pause Length, then the UV comes back on and tacks the tow.",
+    "clean_every_min": "Pause by Time: minutes of printing between cleaning pauses.",
+    "clean_pause_s": "How long each cleaning pause lasts (UV off, head still), in seconds.",
 
     # --- mushroom ----------------------------------------------------------------------------
     "v_z": "Speed of the overhang test's vertical pull.",

@@ -34,7 +34,7 @@ from PySide6.QtWidgets import (
 )
 
 from cfrp_core.capabilities import field_states, first_enabled, infill_states
-from cfrp_core.config import REVOLVE_SHAPES, SHAPES, SPECIALTY_SHAPES
+from cfrp_core.config import BLADE, REVOLVE_SHAPES, SHAPES, SPECIALTY_SHAPES
 
 from .settings_help import HELP
 
@@ -401,10 +401,31 @@ class ControlsPanel(QWidget):
         self.disc_r_spin = self._add(sec, "disc_radius", "Top Disc Radius", _spin(0.1, 200, 1, 15.0, 1, "mm"))
         self.stem_top_spin = self._add(sec, "stem_top", "Stem Top (abs. Z)", _spin(0.1, 500, 1, 25.0, 1, "mm"))
 
+        # Wind turbine blade (Height (Z) = its length above the root) and hub
+        self.chord_spin = self._add(sec, "blade_chord", "Max Chord", _spin(5, 500, 5, 80.0, 1, "mm"))
+        self.tip_chord_spin = self._add(sec, "blade_tip_chord", "Tip Chord", _spin(5, 500, 5, 40.0, 1, "mm"))
+        self.thick_spin = self._add(sec, "blade_thickness", "Airfoil Thickness", _spin(5, 60, 1, 21.0, 0, "%"))
+        self.twist_spin = self._add(sec, "blade_twist", "Twist", _spin(-90, 90, 1, 12.0, 1, "°"))
+        self.pitch_spin = self._add(sec, "blade_pitch", "Pitch", _spin(-90, 90, 1, 4.0, 1, "°"))
+        self.root_shape_cb = QComboBox()
+        self.root_shape_cb.addItems(["Rectangle", "Square", "Round"])
+        self._add(sec, "blade_root_shape", "Root Shape", self.root_shape_cb)
+        self.root_len_spin = self._add(sec, "blade_root_length", "Root Length", _spin(0, 200, 5, 30.0, 1, "mm"))
+        self.root_w_spin = self._add(sec, "blade_root_width", "Root Width", _spin(5, 300, 1, 50.0, 1, "mm"))
+        self.root_t_spin = self._add(sec, "blade_root_thickness", "Root Thickness", _spin(5, 300, 1, 28.0, 1, "mm"))
+        self.hub_blades_spin = self._add(sec, "hub_blades", "Blades", _ispin(2, 6, 3))
+        self.hub_shaft_spin = self._add(sec, "hub_shaft", "Shaft Hole", _spin(1, 100, 1, 8.0, 1, "mm"))
+        self.hub_screw_spin = self._add(sec, "hub_screw", "Screw Size", _ispin(2, 12, 4))
+        self.hub_screw_spin.setPrefix("M")
+        self.hub_disc_spin = self._add(sec, "hub_thickness", "Disc Thickness", _spin(0.5, 50, 0.5, 4.0, 1, "mm"))
+
         for w in (self.w_spin, self.h_spin, self.base_r_spin, self.stem_h_spin,
                   self.disc_r_spin, self.stem_top_spin, self.stl_scale_spin, self.stl_close_spin,
-                  self.stl_stitch_spin, self.span_spin):
+                  self.stl_stitch_spin, self.span_spin, self.chord_spin, self.tip_chord_spin, self.thick_spin,
+                  self.twist_spin, self.pitch_spin, self.root_len_spin, self.root_w_spin, self.root_t_spin,
+                  self.hub_blades_spin, self.hub_shaft_spin, self.hub_screw_spin, self.hub_disc_spin):
             w.valueChanged.connect(self._emit)
+        self.root_shape_cb.currentTextChanged.connect(self._emit)
         self.boundary_chk.toggled.connect(self._emit)
         self.stl_islands_chk.toggled.connect(self._emit)
         self.shape_cb.currentTextChanged.connect(self._on_shape_changed)
@@ -443,6 +464,16 @@ class ControlsPanel(QWidget):
         self.bolt_edit = self._add(sec, "bolt_holes", "Bolt Holes", QLineEdit(""))
         self.bolt_edit.setPlaceholderText("hole numbers, e.g. 1, 3 (empty: every hole)")
         self.layers_spin = self._add(sec, "layers", "Total Layers", _ispin(1, 500, 1))
+        self.brim_spin = self._add(sec, "brim_rings", "Brim Rings", _ispin(0, 20, 0))
+        self.brim_spin.setSpecialValueText("off")
+        self.adaptive_chk = self._add(sec, "adaptive_layers", "",
+                                      QCheckBox("Adaptive Layer Height (each layer a little taller)"))
+        self.lh_step_spin = self._add(sec, "layer_height_step", "Layer Height Step", _spin(-20, 20, 0.5, 1.0, 1, "%"))
+        self.lh_limit_spin = self._add(sec, "layer_height_limit", "Layer Height Limit",
+                                       _spin(0.05, 5, 0.05, 0.3, 2, "mm"))
+        for w in (self.brim_spin, self.lh_step_spin, self.lh_limit_spin):
+            w.valueChanged.connect(self._emit)
+        self.adaptive_chk.toggled.connect(self._emit)
         self.first_solid_chk = self._add(sec, "first_layer_solid", "",
                                          QCheckBox("First Layer Solid (fully filled base)"))
         self.first_solid_chk.setChecked(True)
@@ -544,6 +575,25 @@ class ControlsPanel(QWidget):
         self.seam_trim_spin = self._add(sec, "seam_trim_length", "Seam Trim", _spin(0, 20, 0.5, 3.0, 1, "mm"))
         self.seam_stagger_spin = self._add(sec, "seam_stagger", "Seam Stagger", _spin(0, 360, 5, 0.0, 1, "°"))
 
+        sec = self._section("Holds & Pauses")
+        self.holds_edit = QLineEdit("")
+        self.holds_edit.setPlaceholderText("e.g. 40: 20 s; 80: 30 s, cut")
+        self._add(sec, "hold_points", "Hold Points", self.holds_edit)
+        self.holds_edit.editingFinished.connect(self._emit)
+        self.clean_dist_chk = self._add(sec, "clean_by_distance", "",
+                                        QCheckBox("Pause by Distance (UV off, head still, clean the nozzle)"))
+        self.clean_m_spin = self._add(sec, "clean_every_m", "Distance Between Pauses", _spin(0.1, 1000, 1, 5.0, 1, "m"))
+        self.clean_time_chk = self._add(sec, "clean_by_time", "",
+                                        QCheckBox("Pause by Time (UV off, head still, clean the nozzle)"))
+        self.clean_min_spin = self._add(sec, "clean_every_min", "Time Between Pauses",
+                                        _spin(0.5, 1440, 5, 30.0, 1, "min"))
+        self.clean_s_spin = self._add(sec, "clean_pause_s", "Pause Length", _spin(1, 600, 1, 10.0, 0, "s"))
+        for w in (self.clean_m_spin, self.clean_min_spin, self.clean_s_spin):
+            w.valueChanged.connect(self._emit)
+        self.clean_dist_chk.toggled.connect(self._emit)
+        self.clean_time_chk.toggled.connect(self._emit)
+        sec.set_open(False)
+
         sec = self._section("Mushroom Test")
         self.vz_spin = self._add(sec, "v_z", "Z Pull Speed", _spin(0.1, 50, 0.5, 2.0, 1, "mm/s"))
         self.v_overhang_spin = self._add(sec, "v_overhang", "Overhang Speed", _spin(0.1, 50, 0.5, 5.0, 1, "mm/s"))
@@ -581,6 +631,11 @@ class ControlsPanel(QWidget):
     # Option states (grey-out) and search
     # ------------------------------------------------------------------
     def _on_shape_changed(self, shape):
+        if shape == BLADE and self.stem_h_spin.value() == 25.0:
+            # the shells' default height would make a stub of a blade
+            self.stem_h_spin.blockSignals(True)
+            self.stem_h_spin.setValue(150.0)
+            self.stem_h_spin.blockSignals(False)
         self._emit()
 
     def _browse_stl(self):
@@ -705,6 +760,10 @@ class ControlsPanel(QWidget):
             "edge_rings": self.edge_rings_spin.value(),
             "wrap_holes": self.wrap_chk.isChecked(),
             "stl_islands": "all" if self.stl_islands_chk.isChecked() else "largest",
+            "blade_root_shape": self.root_shape_cb.currentText(),
+            "adaptive_layers": self.adaptive_chk.isChecked(),
+            "clean_by_distance": self.clean_dist_chk.isChecked(),
+            "clean_by_time": self.clean_time_chk.isChecked(),
             "pa_table": self.pa_table_edit.text(),
             "uv_dose": self.uv_dose_spin.value(),
             "track_gap": self.gap_spin.value(),
@@ -757,6 +816,19 @@ class ControlsPanel(QWidget):
             "base_radius": self.base_r_spin.value(),
             "disc_radius": self.disc_r_spin.value(),
             "stem_height": stem_h,
+            "blade_chord": self.chord_spin.value(),
+            "blade_tip_chord": self.tip_chord_spin.value(),
+            "blade_thickness": self.thick_spin.value(),
+            "blade_twist": self.twist_spin.value(),
+            "blade_pitch": self.pitch_spin.value(),
+            "blade_root_shape": self.root_shape_cb.currentText(),
+            "blade_root_length": self.root_len_spin.value(),
+            "blade_root_width": self.root_w_spin.value(),
+            "blade_root_thickness": self.root_t_spin.value(),
+            "hub_blades": self.hub_blades_spin.value(),
+            "hub_shaft": self.hub_shaft_spin.value(),
+            "hub_screw": self.hub_screw_spin.value(),
+            "hub_thickness": self.hub_disc_spin.value(),
             "wall_thickness": 0.0,
             "start_x": self.x_spin.value(),
             "start_y": self.y_spin.value(),
@@ -766,6 +838,16 @@ class ControlsPanel(QWidget):
             "layup_seq": self.layup_edit.text(),
             "load_angle": self.load_angle_spin.value(),
             "height_ranges": self.ranges_edit.text(),
+            "hold_points": self.holds_edit.text(),
+            "clean_by_distance": self.clean_dist_chk.isChecked(),
+            "clean_every_m": self.clean_m_spin.value(),
+            "clean_by_time": self.clean_time_chk.isChecked(),
+            "clean_every_min": self.clean_min_spin.value(),
+            "clean_pause_s": self.clean_s_spin.value(),
+            "brim_rings": self.brim_spin.value(),
+            "adaptive_layers": self.adaptive_chk.isChecked(),
+            "layer_height_step": self.lh_step_spin.value(),
+            "layer_height_limit": self.lh_limit_spin.value(),
             "infill_type": infill,
             "tracks_per_layer": self.tracks_spin.value(),
             "fill_solid": self.fill_chk.isChecked(),
@@ -864,6 +946,19 @@ class ControlsPanel(QWidget):
         _set(self.boundary_chk, "include_boundary")
         _set(self.base_r_spin, "base_radius")
         _set(self.disc_r_spin, "disc_radius")
+        _set(self.chord_spin, "blade_chord")
+        _set(self.tip_chord_spin, "blade_tip_chord")
+        _set(self.thick_spin, "blade_thickness")
+        _set(self.twist_spin, "blade_twist")
+        _set(self.pitch_spin, "blade_pitch")
+        _set(self.root_shape_cb, "blade_root_shape")
+        _set(self.root_len_spin, "blade_root_length")
+        _set(self.root_w_spin, "blade_root_width")
+        _set(self.root_t_spin, "blade_root_thickness")
+        _set(self.hub_blades_spin, "hub_blades", int)
+        _set(self.hub_shaft_spin, "hub_shaft")
+        _set(self.hub_screw_spin, "hub_screw", int)
+        _set(self.hub_disc_spin, "hub_thickness")
         # stem_height maps to stem_h_spin or stem_top_spin depending on shape
         if "stem_height" in p:
             shape = self.shape_cb.currentText()
@@ -934,6 +1029,20 @@ class ControlsPanel(QWidget):
         _set(self.layup_edit, "layup_seq")
         _set(self.load_angle_spin, "load_angle")
         _set(self.ranges_edit, "height_ranges")
+        if not isinstance(p.get("hold_points", ""), str):         # a list (scripts, the CLI)
+            p = dict(p, hold_points="; ".join(
+                f"{h['at_mm']:g}:" + (f" {h['seconds']:g} s" if h.get("seconds") else "")
+                + (" cut" if h.get("cut") else "") for h in p["hold_points"]))
+        _set(self.holds_edit, "hold_points")
+        _set(self.clean_dist_chk, "clean_by_distance")
+        _set(self.clean_m_spin, "clean_every_m")
+        _set(self.clean_time_chk, "clean_by_time")
+        _set(self.clean_min_spin, "clean_every_min")
+        _set(self.clean_s_spin, "clean_pause_s")
+        _set(self.brim_spin, "brim_rings", int)
+        _set(self.adaptive_chk, "adaptive_layers")
+        _set(self.lh_step_spin, "layer_height_step")
+        _set(self.lh_limit_spin, "layer_height_limit")
 
         _set(self.needle_spin, "needle_dia")
         _set(self.lh_spin, "layer_height")

@@ -34,6 +34,19 @@ _FIELD_MAP = {
     "bolt_holes": ("geometry", "bolt_holes"),
     "drill_holes": ("geometry", "drill_holes"),
     "hole_ring_counts": ("geometry", "hole_ring_counts"),
+    "blade_chord": ("geometry", "blade_chord_mm"),
+    "blade_tip_chord": ("geometry", "blade_tip_chord_mm"),
+    "blade_thickness": ("geometry", "blade_thickness_pct"),
+    "blade_twist": ("geometry", "blade_twist_deg"),
+    "blade_pitch": ("geometry", "blade_pitch_deg"),
+    "blade_root_shape": ("geometry", "blade_root_shape"),
+    "blade_root_length": ("geometry", "blade_root_length_mm"),
+    "blade_root_width": ("geometry", "blade_root_width_mm"),
+    "blade_root_thickness": ("geometry", "blade_root_thickness_mm"),
+    "hub_blades": ("geometry", "hub_blades"),
+    "hub_shaft": ("geometry", "hub_shaft_mm"),
+    "hub_screw": ("geometry", "hub_screw_mm"),
+    "hub_thickness": ("geometry", "hub_thickness_mm"),
     # material
     "needle_dia": ("material", "needle_dia_mm"),
     "e_mult": ("material", "e_multiplier"),
@@ -85,6 +98,16 @@ _FIELD_MAP = {
     "load_angle": (None, "load_angle_deg"),
     "overhang_span": (None, "overhang_span_mm"),
     "height_ranges": (None, "height_ranges"),
+    "hold_points": (None, "hold_points"),
+    "clean_by_distance": (None, "clean_by_distance"),
+    "clean_every_m": (None, "clean_every_m"),
+    "clean_by_time": (None, "clean_by_time"),
+    "clean_every_min": (None, "clean_every_min"),
+    "clean_pause_s": (None, "clean_pause_s"),
+    "brim_rings": (None, "brim_rings"),
+    "adaptive_layers": (None, "adaptive_layers"),
+    "layer_height_step": (None, "layer_height_step_pct"),
+    "layer_height_limit": (None, "layer_height_limit_mm"),
     "edge_rings": (None, "edge_rings"),
     "hole_rings": (None, "hole_rings"),
     "wrap_holes": (None, "wrap_holes"),
@@ -170,6 +193,38 @@ def parse_height_ranges(text) -> tuple[dict, ...]:
     return tuple(out)
 
 
+def parse_hold_points(text) -> tuple[dict, ...]:
+    """'40: 20 s; 80: 30 s, cut; 120: cut' -> the hold points as dicts (a
+    list of dicts or models passes through). Each entry: the height (mm
+    above the first layer), then a hold time in seconds ('20', '20 s',
+    '20s') and/or 'cut' (pause so the fibre can be cut there). Raises
+    ValueError naming the bad entry."""
+    if not isinstance(text, str):
+        return tuple(r if isinstance(r, dict) else r.model_dump() for r in (text or ()))
+    out = []
+    for entry in text.split(";"):
+        entry = entry.strip()
+        if not entry:
+            continue
+        at, _, rest = entry.partition(":")
+        try:
+            item = {"at_mm": float(at)}
+        except ValueError:
+            raise ValueError(f"{entry!r}: start with the height in mm, e.g. 40: 20 s") from None
+        for word in rest.replace(",", " ").lower().split():
+            if word == "cut":
+                item["cut"] = True
+            elif word in ("s", "sec", "seconds"):
+                continue
+            else:
+                try:
+                    item["seconds"] = float(word.removesuffix("s"))
+                except ValueError:
+                    raise ValueError(f"{entry!r}: {word!r} is not a hold time (e.g. 20 s) or 'cut'") from None
+        out.append(item)
+    return tuple(out)
+
+
 def parse_pa_table(text) -> tuple[tuple[float, float], ...]:
     """'5:1.0, 10:3.0' -> ((5.0, 1.0), (10.0, 3.0)); empty -> ().
     Raises ValueError naming the bad entry."""
@@ -227,6 +282,11 @@ def to_nested(d: dict, layup=None) -> dict:
             except ValueError as exc:      # named by the GUI label, so the field is marked
                 raise ValueError(f"{'Bolt Holes' if field == 'bolt_holes' else 'Drill After Curing'}: "
                                  f"{exc}") from None
+        if field == "hold_points":
+            try:
+                value = parse_hold_points(value)
+            except ValueError as exc:      # named by the GUI label, so the field is marked
+                raise ValueError(f"Hold Points: {exc}") from None
         if field == "first_layer_infill" and value in ("", "Same as other layers", "N/A"):
             value = None
         (nested[section] if section else nested)[field] = value

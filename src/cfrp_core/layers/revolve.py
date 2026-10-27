@@ -1,5 +1,5 @@
-"""Z-revolve shells (sphere/dome/cylinder/tube/taper/cone): one helical
-stroke with spiral Z (spec §7)."""
+"""Z-revolve shells (sphere/dome/cylinder/tube/taper/cone) and the wind
+turbine blade: one helical stroke with spiral Z (spec §7)."""
 
 from __future__ import annotations
 
@@ -9,8 +9,10 @@ from functools import lru_cache
 import numpy as np
 
 from .. import geometry as geo
-from ..config import FERMAT, ProcessConfig
+from ..config import BLADE, FERMAT, HUB, ProcessConfig
 from ..geometry._common import enforce_min_radius
+from ..geometry.blade import blade_height, blade_planform, blade_trailing_edge
+from ..geometry.hub import hub_layout
 from .common import (
     KinematicsParams,
     _mark_anchor,
@@ -102,6 +104,86 @@ def _helical_connector(prev_path, next_start, cx, cy, step=0.75, next_path=None)
                     (cy + radius * np.sin(theta)).tolist(), strict=False))
 
 
+def _last_lap(points, gap, min_rad):
+    """The last closed lap of a path: from where it last passed (within half
+    a gap) the point it ends at, at least half the smallest ring's length
+    back, to its end. By distance, not by angle about the shell's axis: a
+    blade's innermost ring may be a sliver that does not go round the axis.
+    The whole path if it never comes back."""
+    pts = np.asarray(points, dtype=np.float64)
+    back = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(pts[::-1], axis=0), axis=1))])
+    near = np.linalg.norm(pts[::-1] - pts[-1], axis=1) < 0.5 * gap
+    cand = np.nonzero(near & (back >= max(1.0, math.pi * min_rad)))[0]
+    if not len(cand):
+        return pts
+    k = int(cand[0])
+    dist = np.linalg.norm(pts[::-1] - pts[-1], axis=1)
+    while k + 1 < len(pts) and near[k + 1] and dist[k + 1] <= dist[k]:
+        k += 1                      # the closest pass, one lap back
+    return pts[len(pts) - k:]       # just after it, so the lap runs forward from the end
+
+
+def _ring_connector(prev_path, next_path, gap, min_rad, step=0.75, max_frac=0.3):
+    """Seam between two layers of a shell whose sections are not round (the
+    blade), as a lane change like the spiral's own (blend_chain): forward
+    along the previous layer's last lap A from its end and along the next
+    layer's path B from its start, both by length, P = (1-w)·A + w·B with w
+    a smoothstep, landing on B. Stepping by length, not by angle about the
+    axis, keeps the points evenly spaced where a section runs nearly
+    radially (a blade's trailing edge) or a ring does not go round the axis
+    (a sliver innermost ring).
+
+    B's head lying behind A's end (more than half a lap on) is skipped, as
+    _skip_behind does by angle; where B starts further on, A is followed to
+    it first. The blend needs some run for the move across: the smoothstep's
+    steepest slope (1.5·offset / run) at most 0.25, about 14 degrees -- where
+    the ring count changes from one layer to the next it moves a whole gap,
+    over a ring laid half a layer below, and the crossing check counts
+    anything over 20 degrees -- and its bend (6·offset / run²) no tighter
+    than min_rad. The connector lays that run of B's head itself (at most
+    max_frac of B is skipped in all).
+
+    Returns (connector XY points strictly between prev_path[-1] and the
+    next path's new start, the next path from that start)."""
+    from shapely.geometry import LineString, Point
+    lap = _last_lap(prev_path, gap, min_rad)
+    ring = np.vstack([lap[-1:], lap])                 # from A's end, forward
+    cum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(ring, axis=0), axis=1))])
+    total = float(cum[-1])
+    if total < 1e-6:
+        return [], list(next_path)
+    line = LineString(ring)
+    nxt = np.asarray(next_path, dtype=np.float64)
+    ncum = np.concatenate([[0.0], np.cumsum(np.linalg.norm(np.diff(nxt, axis=0), axis=1))])
+    limit = max(1, int(len(nxt) * max_frac))
+
+    def at(s):
+        s = np.mod(s, total)
+        return np.stack([np.interp(s, cum, ring[:, 0]), np.interp(s, cum, ring[:, 1])], axis=-1)
+
+    k0 = 0
+    for k in range(limit):
+        if float(line.project(Point(nxt[k]))) < 0.5 * total:
+            k0 = k
+            break
+    d0 = float(line.project(Point(nxt[k0])))           # A's run to where B starts
+    off = float(np.linalg.norm(nxt[k0] - at(np.array([d0]))[0]))
+    need = max(6.0 * off, 1.25 * math.sqrt(6.0 * off * min_rad))
+    k1 = min(int(np.searchsorted(ncum - ncum[k0], need)), max(limit, k0 + 1), len(nxt) - 1)
+    run = float(ncum[k1] - ncum[k0])
+    length = d0 + run
+    if length < 1e-9:
+        return [], list(next_path[k1:])
+    m = max(8, int(math.ceil(length / step)))
+    s = np.linspace(0.0, length, m + 1)[1:-1]
+    sig = np.clip(s - d0, 0.0, run) + ncum[k0]
+    b = np.stack([np.interp(sig, ncum, nxt[:, 0]), np.interp(sig, ncum, nxt[:, 1])], axis=-1)
+    u = np.clip((s - d0) / run, 0.0, 1.0) if run > 1e-9 else np.zeros_like(s)
+    w = (3.0 * u ** 2 - 2.0 * u ** 3)[:, None]
+    out = (1.0 - w) * at(s) + w * b
+    return [(float(x), float(y)) for x, y in out], list(next_path[k1:])
+
+
 def _spiral_z(xy, section_starts, z_nodes):
     """Z per point. Section k spans point indices section_starts[k] up to
     section_starts[k+1] (the last one runs to the final point); inside it Z
@@ -131,13 +213,73 @@ def _archimedean_cached(cross_section_wkb, gap, min_rad, start_from_inside, pola
     return tuple(path)
 
 
+@lru_cache(maxsize=2048)
+def _blade_rings_cached(cross_section_wkb, gap, min_rad, outward, chord_axis, brim=0):
+    """A blade layer (geometry.blade_ring_path), cached like _archimedean_cached:
+    (path, how many of its points are brim)."""
+    from shapely import wkb
+    path, brim_n = geo.blade_ring_path(wkb.loads(cross_section_wkb), gap, min_rad, outward, chord_axis, brim)
+    return tuple(path), brim_n
+
+
+def shell_height(config: ProcessConfig) -> float:
+    """The shell's height above its first layer, mm."""
+    g = config.geometry
+    if g.shape == 'Hollow Sphere (Z)':
+        return 2.0 * max(float(g.base_radius_mm), 1.0)
+    if g.shape == BLADE:
+        return blade_height(g)          # its root, then the blade
+    if g.shape == HUB:
+        return max(float(g.hub_thickness_mm), 1e-6)
+    return max(float(g.stem_height_mm), 1e-6)
+
+
+def shell_progress(config: ProcessConfig, height: float) -> list[float]:
+    """Each layer's place, 0 .. 1 of the shell's height. Even layers:
+    n = max(2, round(height / layer_height) + 1), layer i at i / (n - 1).
+    Adaptive Layer Height: each layer `layer_height_step_pct` % taller than
+    the one before (shorter if negative), from Layer Height until it
+    reaches Layer Height Limit; a last layer under half the one before is
+    evened out with it (both then within the limit)."""
+    h0 = max(float(config.layer_height_mm), 0.05)
+    if not config.adaptive_layers:
+        n = max(2, round(height / h0) + 1)
+        return [i / (n - 1) for i in range(n)]
+    lo, hi = sorted((h0, max(float(config.layer_height_limit_mm), 0.05)))
+    grow = 1.0 + float(config.layer_height_step_pct) / 100.0
+    zs, h = [0.0], h0
+    while zs[-1] < height - 1e-9:
+        zs.append(min(zs[-1] + h, height))
+        h = min(max(h * grow, lo), hi)
+    if len(zs) > 2 and zs[-1] - zs[-2] < 0.5 * (zs[-2] - zs[-3]):
+        zs[-2] = 0.5 * (zs[-3] + zs[-1])
+    return [z / height for z in zs]
+
+
+def adaptive_note(config: ProcessConfig) -> str:
+    """What Adaptive Layer Height did, in plain words ('' when off)."""
+    if not config.adaptive_layers:
+        return ""
+    height = shell_height(config)
+    zs = [p * height for p in shell_progress(config, height)]
+    steps = [b - a for a, b in zip(zs, zs[1:], strict=False)] or [height]
+    even = max(2, round(height / max(float(config.layer_height_mm), 0.05)) + 1)
+    return (f"Adaptive layer height: {steps[0]:.3g} mm to {max(steps):.3g} mm thick "
+            f"({float(config.layer_height_step_pct):+g} % a layer, limit {float(config.layer_height_limit_mm):g} mm): "
+            f"{len(zs)} layers instead of {even}; each layer's resin follows its height.")
+
+
 def build_revolve_shell(config: ProcessConfig):
-    """Z-revolve shell (sphere/dome/cylinder/tube/taper/cone) with spiral
+    """Z-revolve shell (sphere/dome/cylinder/tube/taper/cone, or the wind
+    turbine blade: airfoil sections, geometry/blade.py) with spiral
     Z-ramping and arc seam transitions.
 
         num_layers = max(2, round(H / layer_height) + 1),  layer_height ≥ 0.05
         Layer i: Z ramps from z0 + H·i/(n-1) to z0 + H·(i+1)/(n-1)
         Last layer stays flat at z0 + H.
+    (Adaptive Layer Height: the layers' places from shell_progress.) The
+    blade's first layer may start with a brim (blade_ring_path), flat on
+    the bed with the anchor.
 
     Layer-to-layer transitions follow the shell circumference (arc interpolation
     around the shell center) instead of a straight chord.
@@ -151,18 +293,22 @@ def build_revolve_shell(config: ProcessConfig):
     gap = float(config.track_gap_mm)
     min_rad = float(config.min_radius_mm)
     tracks = max(1, int(config.tracks_per_layer))
-    shape_type = 'square' if shape == 'Hollow Square Tube (Z)' else 'round'
+    shape_type = {'Hollow Square Tube (Z)': 'square', BLADE: 'blade'}.get(shape, 'round')
     profile = geo.revolve_radius_profile(shape, g.base_radius_mm, tracks, gap)
+    if shape == HUB:
+        # a disc: filled from its edge to the shaft hole, every ring at the bend radius or more
+        lay = hub_layout(g)
+        outer_radius, bore = lay.radius, lay.shaft / 2.0
+        tracks = max(1, int(min((outer_radius - bore) / gap, (outer_radius - min_rad) / gap - 0.5)))
+
+        def profile(progress):
+            return outer_radius, bore
+    blade_te = blade_trailing_edge(min_rad, gap)
     kin = KinematicsParams.from_config(config)
     use_fermat = config.infill_type == FERMAT
 
-    if shape == 'Hollow Sphere (Z)':
-        height = 2.0 * outer_radius
-    else:
-        height = max(float(g.stem_height_mm), 1e-6)
-
-    layer_height = max(float(config.layer_height_mm), 0.05)
-    num_layers = max(2, round(height / layer_height) + 1)
+    height = shell_height(config)
+    progresses = shell_progress(config, height)
 
     layers_raw = []
     target_shapes = []
@@ -170,34 +316,44 @@ def build_revolve_shell(config: ProcessConfig):
     anchored = False
     anchor_n = 0
     fermat_last_pt = None
+    brim_end = 0
 
-    for i in range(num_layers):
-        progress = i / (num_layers - 1)
+    for i, progress in enumerate(progresses):
         layer_z = z0 + height * progress
         max_z = layer_z
-        current_outer, current_inner = profile(progress)
+        chord_axis = None
+        if shape_type == 'blade':
+            # towards the trailing edge: the seam goes midway along the upper surface
+            angle = math.radians(blade_planform(g, height * progress)[1])
+            chord_axis = (math.cos(angle), math.sin(angle))
+            cross_section = geo.blade_cross_section(g, height * progress, blade_te, tracks * gap, min_rad, gap)
+            target_shapes.append((layer_z, cross_section, i + 1))
+            if cross_section.is_empty or cross_section.area < 1e-6:
+                continue
+        else:
+            current_outer, current_inner = profile(progress)
 
-        wall_depth = (tracks - 0.5) * gap
+            wall_depth = (tracks - 0.5) * gap
 
-        # Skip layers where the cross-section is too small for the spiral
-        # path to maintain min_radius curvature at every ring, including
-        # the innermost ring and its transitions.
-        skip_threshold = min_rad + gap if shape_type == 'square' else min_rad + (tracks + 0.5) * gap
-        if current_outer < skip_threshold:
+            # Skip layers where the cross-section is too small for the spiral
+            # path to maintain min_radius curvature at every ring, including
+            # the innermost ring and its transitions.
+            skip_threshold = min_rad + gap if shape_type == 'square' else min_rad + (tracks + 0.5) * gap
+            if current_outer < skip_threshold:
+                cross_section = geo.revolve_cross_section(
+                    cx, cy, current_outer, current_inner, shape_type,
+                    min_bend_radius=min_rad, wall_depth=wall_depth,
+                )
+                target_shapes.append((layer_z, cross_section, i + 1))
+                continue
+
             cross_section = geo.revolve_cross_section(
                 cx, cy, current_outer, current_inner, shape_type,
                 min_bend_radius=min_rad, wall_depth=wall_depth,
             )
             target_shapes.append((layer_z, cross_section, i + 1))
-            continue
-
-        cross_section = geo.revolve_cross_section(
-            cx, cy, current_outer, current_inner, shape_type,
-            min_bend_radius=min_rad, wall_depth=wall_depth,
-        )
-        target_shapes.append((layer_z, cross_section, i + 1))
-        if cross_section.is_empty or cross_section.area < 1e-6:
-            continue
+            if cross_section.is_empty or cross_section.area < 1e-6:
+                continue
 
         is_outward = (i % 2 != 0)
         try:
@@ -212,6 +368,11 @@ def build_revolve_shell(config: ProcessConfig):
                     cross_section, gap, min_rad, track_count=None,
                     start_from_inside=is_outward, entry_hint=fermat_hint
                 )
+            elif shape_type == 'blade':
+                brim = int(config.brim_rings) if not anchored else 0        # the first layer: on the bed
+                raw_path, brim_n = _blade_rings_cached(cross_section.wkb, gap, min_rad, is_outward, chord_axis,
+                                                       brim)
+                raw_path = list(raw_path)
             else:
                 raw_path = list(_archimedean_cached(
                     cross_section.wkb, gap, min_rad, is_outward,
@@ -223,11 +384,12 @@ def build_revolve_shell(config: ProcessConfig):
 
         if not anchored:
             n_before = len(raw_path)
-            if shape_type == 'round':
+            if shape_type == 'round' or (shape_type == 'blade' and g.blade_root_shape == 'Round'):
                 raw_path = add_arc_lead_in_anchor(raw_path, float(config.anchor_length_mm), cx, cy)
             else:
                 raw_path = add_lead_in_anchor(raw_path, float(config.anchor_length_mm))
             anchor_n = len(raw_path) - n_before
+            brim_end = anchor_n + (brim_n if shape_type == 'blade' else 0)
             anchored = True
 
         layers_raw.append((i + 1, layer_z, enforce_min_radius(raw_path, min_rad)))
@@ -273,15 +435,23 @@ def build_revolve_shell(config: ProcessConfig):
         owner.extend([layer_num] * len(path))
         if k + 1 < len(layers_raw):
             nxt = layers_raw[k + 1]
-            trimmed = _skip_behind(path, nxt[2], cx, cy)
-            layers_raw[k + 1] = (nxt[0], nxt[1], trimmed)
-            link = _helical_connector(path, trimmed[0], cx, cy,
-                                      next_path=trimmed if shape_type == 'square' else None)
+            if shape_type == 'blade':
+                link, trimmed = _ring_connector(path, nxt[2], gap, min_rad)
+                layers_raw[k + 1] = (nxt[0], nxt[1], trimmed)
+            else:
+                trimmed = _skip_behind(path, nxt[2], cx, cy)
+                layers_raw[k + 1] = (nxt[0], nxt[1], trimmed)
+                link = _helical_connector(path, trimmed[0], cx, cy,
+                                          next_path=trimmed if shape_type == 'square' else None)
             xy.extend(link)
             owner.extend([layer_num] * len(link))
     xy = enforce_min_radius(xy, min_rad)   # also rounds ring/connector joins
     z_nodes = [lz for _, lz, _ in layers_raw] + [layers_raw[-1][1]]
-    zs = _spiral_z(xy, starts, z_nodes)
+    if brim_end > anchor_n:
+        # the anchor and the brim lie flat on the bed; the climb starts on the part
+        zs = _spiral_z(xy, [0, brim_end] + starts[1:], [z_nodes[0]] + z_nodes)
+    else:
+        zs = _spiral_z(xy, starts, z_nodes)
 
     layer_z_of = {n: lz for n, lz, _ in layers_raw}
     trajectory = plan_layer(xy, z0, owner[0], kin)
@@ -293,4 +463,13 @@ def build_revolve_shell(config: ProcessConfig):
     for s in starts:
         trajectory[s]['layer_start'] = True
     _mark_anchor(trajectory, anchor_n)
+    if config.adaptive_layers:
+        # resin for each layer's own height (e_const is for Layer Height)
+        h0 = max(float(config.layer_height_mm), 0.05)
+        thick, prev = {}, None
+        for num, lz, _ in layers_raw:
+            thick[num] = h0 if prev is None else lz - prev
+            prev = lz
+        for pt in trajectory:
+            pt['e_mult'] *= thick[pt['layer']] / h0
     return trajectory, target_shapes, max_z

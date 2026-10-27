@@ -14,6 +14,7 @@ from ._common import (
     resample_closed_ring,
 )
 from .archimedean import archimedean_path
+from .blade import blade_cross_section, blade_ring_path, blade_section
 from .corner_step import corner_step_path, is_rectangle, stitch_rings
 from .fermat import fermat_spiral_path
 from .laminate import laminate_layer, max_track_count, ring_from, wall_seam
@@ -23,7 +24,8 @@ from .revolve import revolve_cross_section, revolve_radius_profile
 from .serpentine import oriented_serpentine, zigzag_fits
 
 __all__ = [
-    "arc_along_ring", "archimedean_path", "audit_min_radius", "base_polygon", "blend_chain", "check_gap_radius",
+    "arc_along_ring", "archimedean_path", "audit_min_radius", "base_polygon", "blade_cross_section",
+    "blade_ring_path", "blade_section", "blend_chain", "check_gap_radius",
     "corner_step_path", "dedupe_path", "enforce_min_radius", "fermat_spiral_path", "fillet",
     "hole_keepouts", "inset_components", "is_rectangle", "laminate_layer", "largest_polygon", "load_stl", "max_track_count",
     "mesh_bounds", "oriented_serpentine", "printable_boundary", "resample_closed_ring",

@@ -18,6 +18,8 @@ src/cfrp_core/            UI-free slicing library (no Qt or other UI imports)
                           fit_trajectory_to_bed, check_bounds
   geometry/               _common (fillet, inset rings, resample, blend, dedupe),
                           outlines, archimedean, fermat, serpentine, laminate, revolve,
+                          blade (wind turbine blade sections; rings stitched lap by lap),
+                          hub (wind turbine hub layout, drilling template),
                           strict (Dubins repairs and joins), zones (layer recipe pieces:
                           edge rings, hole bands, wraps into / out of a hole)
   kinematics.py           speed planner (vectorised; exact accel/decel scans), lru-cached
@@ -33,8 +35,12 @@ src/cfrp_core/            UI-free slicing library (no Qt or other UI imports)
                           rules (crossings, holes, tight bends, coverage)
     recipe.py             layer recipe (Phase 44): which hole each layer wraps, the plain
                           layer instead where the recipe's pieces cross, notes
-    revolve.py            build_revolve_shell (helical shells, spiral Z)
+    revolve.py            build_revolve_shell (helical shells, spiral Z; the blade's
+                          layers joined along the last lap, _ring_connector; the hub disc)
   trajectory.py           TrajectoryPoint (the point dict's keys) + check_trajectory
+  holds.py                hold points (dwell / pause for a cut) and cleaning pauses (UV off, head still)
+  turbine.py              wind turbine kit: matching blade / hub disc / nose cone projects,
+                          the hub's drilling template and assembly notes
   hints.py                fix_hint: plain-language fix for each check message
   project.py              .cfrpproj: settings + PCB design + ink settings + print mode
   profiles.py             named machine / fibre-resin / ink profiles (user folder)
@@ -63,7 +69,8 @@ tests/                    pytest + hypothesis; tests/golden = characterization d
   hard-coded 180 × 220 × 200 mm bed with a 1 mm margin.
 - **Trajectory:** still `list[dict]` per point (Phase 1 keeps the shape):
   `x, y, z, dist, v, e_mult, pump_floored, layer_start, is_transition,
-  layer, z_layer, cure_dwell` (+ `is_bridge`, `is_anchor`; DIW adds
+  layer, z_layer, cure_dwell` (+ `is_bridge`, `is_anchor`, `hold_s`,
+  `hold_cut`, `clean_s`; DIW adds
   `feature, extruding, width, height`). `trajectory.TrajectoryPoint` lists
   them; `check_trajectory` reports missing / unknown keys and bad values
   (used by the property tests).
@@ -99,6 +106,7 @@ slice_part(config, machine)
  │               mesh_slicer.slice_mesh_regions, stl_skins + plan_layers,
  │               _stl_layer_path (pattern fallbacks, islands in one stroke)
  ├─ machine.fit_trajectory_to_bed (+ shift target outlines)
+ ├─ holds.place_holds (hold points), holds.place_clean_pauses (cleaning pauses)
  ├─ gcode.compile_gcode
  └─ validation.validate_trajectory -> machine.check_bounds, geometry.dedupe_path
 ```
