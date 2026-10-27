@@ -5,6 +5,32 @@ outputs identical are listed under "Internal".
 
 ## [Unreleased]
 
+### Added (Phase 45, last part: material limits, STL property test)
+- Profiles carry the cure: a material profile saves the resin's Cure Dose, a
+  machine profile the head's LED Irradiance and Spot Length; together they cap
+  the speed (above). The recipe already follows the material's bend radius and
+  track gap: an STL slice too narrow for zigzag lines at that radius gets rings
+  along its walls.
+- **Property test** on random extruded STL parts with bores
+  (`tests/test_property_stl_phase45.py`; Edge Rings, Wrap Holes, zigzag or
+  Fermat core, strict on): one stroke, Z never drops, no layer crosses itself,
+  no fibre over a bore or off the part, no bend under r_min. `STL_EXAMPLES=200`
+  runs it longer.
+
+### Phase 45 against its plan
+- Met: recipe per slice (narrow walls get rings), bores wrapped in turn, height
+  ranges and load direction, overhangs found, slowed and reported, the UV dose
+  cap, material limits, the property test.
+- Partly: "the 25 test meshes have no new Fails or crossings and more coverage
+  per slice" -- of the 13 audit meshes with Edge Rings 2, strict zigzag
+  coverage rises (0.16 -> 0.3), Fermat and strict-off coverage falls a little,
+  and two cases get worse (the tray's climbs, one crossing on the bored plate,
+  see the known limits above). Overhang spans are reported, not left out: one
+  stroke cannot leave a span out.
+- Not met: "the slowest part no more than twice as slow": with Edge Rings and
+  strict on, a sphere slices 7-14 x slower (the climbs between edge rings).
+  Without Edge Rings, run times are unchanged.
+
 ### Added (Phase 45, fifth part: STL overhangs)
 - **Overhangs on STL slices**: the part of a slice more than a gap out from the
   slice below has nothing under it (a tow closer than that still rests on the

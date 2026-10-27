@@ -16,9 +16,12 @@ from pathlib import Path
 from .diw.config import DiwConfig
 
 KINDS: dict[str, tuple[str, ...]] = {
-    "machine": ("bed_x", "bed_y", "z_max", "bed_margin", "uv", "purge_e", "purge_f", "travel_f"),
+    # the head's UV LED (irradiance, spot) belongs to the machine; the dose
+    # its resin needs, to the material (together they cap the speed)
+    "machine": ("bed_x", "bed_y", "z_max", "bed_margin", "uv", "purge_e", "purge_f", "travel_f",
+                "uv_irradiance", "uv_spot"),
     "material": ("needle_dia", "e_mult", "density", "weight", "track_gap", "min_radius", "layer_height",
-                 "v_max", "v_min", "accel", "decel", "p_advance", "pump_stall_floor", "pa_table"),
+                 "v_max", "v_min", "accel", "decel", "p_advance", "pump_stall_floor", "pa_table", "uv_dose"),
     "ink": tuple(DiwConfig.model_fields),
 }
 LABELS = {"machine": "Machine", "material": "Fibre / resin", "ink": "Ink process"}

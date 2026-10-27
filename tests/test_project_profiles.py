@@ -49,6 +49,12 @@ def test_profiles_keep_only_their_settings(tmp_path):
     assert load_profile("machine", "Big bed", root=tmp_path) == {"bed_x": 300.0, "bed_y": 300.0}
     save_profile("material", "CF 1k / UV resin", {"track_gap": 1.0, "min_radius": 2.5}, root=tmp_path)
     assert list_profiles("material", root=tmp_path) == ["CF 1k _ UV resin"]       # '/' is not a file name
+    # the cure: the dose is the resin's, the LED the machine's
+    save_profile("material", "resin", {"uv_dose": 300.0, "uv_irradiance": 600.0}, root=tmp_path)
+    assert load_profile("material", "resin", root=tmp_path) == {"uv_dose": 300.0}
+    save_profile("machine", "head", {"uv_irradiance": 600.0, "uv_spot": 3.0, "uv_dose": 300.0}, root=tmp_path)
+    assert load_profile("machine", "head", root=tmp_path) == {"uv_irradiance": 600.0, "uv_spot": 3.0}
+    delete_profile("machine", "head", root=tmp_path)
     save_profile("ink", "silver", DiwConfig(spread_factor=1.2).model_dump(), root=tmp_path)
     ink = load_profile("ink", "silver", root=tmp_path)
     assert DiwConfig.model_validate(ink).spread_factor == 1.2
